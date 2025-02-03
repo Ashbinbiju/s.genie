@@ -5,3 +5,5 @@ streamlit
 plotly
 tqdm
 requests
+lxml  
+openpyxl 
