@@ -22,12 +22,10 @@ TOOLTIPS = {
     "Stop Loss": "Risk management price level based on ATR",
 }
 
-
 # Tooltip function
 def tooltip(label, explanation):
     """Returns a formatted tooltip string"""
     return f"{label} 🛈 ({explanation})"
-
 
 # Retry decorator for Yahoo Finance requests with jitter
 def retry(max_retries=3, delay=1, backoff_factor=2, jitter=0.5):
@@ -45,12 +43,8 @@ def retry(max_retries=3, delay=1, backoff_factor=2, jitter=0.5):
                     # Exponential backoff with jitter
                     sleep_time = (delay * (backoff_factor ** retries)) + random.uniform(0, jitter)
                     time.sleep(sleep_time)
-            return None
-
         return wrapper
-
     return decorator
-
 
 @retry(max_retries=3, delay=2)
 def fetch_nse_stock_list():
@@ -78,7 +72,6 @@ def fetch_nse_stock_list():
             "ABFRL.NS",
         ]
 
-
 @lru_cache(maxsize=100)
 def fetch_stock_data_cached(symbol, period="5y", interval="1d"):
     """Fetch data with retries and caching"""
@@ -94,7 +87,6 @@ def fetch_stock_data_cached(symbol, period="5y", interval="1d"):
         st.error(f"❌ Failed to fetch data for {symbol} after 3 attempts")
         st.error(f"Error: {str(e)}")
         return pd.DataFrame()
-
 
 def analyze_stock(data):
     """Perform technical analysis on stock data"""
@@ -122,11 +114,13 @@ def analyze_stock(data):
         data['SMA_50'] = ta.trend.SMAIndicator(data['Close'], window=50).sma_indicator()
         data['SMA_200'] = ta.trend.SMAIndicator(data['Close'], window=200).sma_indicator()
         data['EMA_20'] = ta.trend.EMAIndicator(data['Close'], window=20).ema_indicator()
+        data['EMA_50'] = ta.trend.EMAIndicator(data['Close'], window=50).ema_indicator()
     except Exception as e:
         st.warning(f"⚠️ Error calculating Moving Averages: {e}")
         data['SMA_50'] = None
         data['SMA_200'] = None
         data['EMA_20'] = None
+        data['EMA_50'] = None
     try:
         # Bollinger Bands
         bollinger = ta.volatility.BollingerBands(data['Close'], window=20, window_dev=2)
@@ -165,7 +159,6 @@ def analyze_stock(data):
         data['ADX'] = None
     return data
 
-
 def calculate_stop_loss(data, atr_multiplier=2):
     """Calculate stop-loss level based on ATR"""
     if data.empty or 'ATR' not in data.columns or data['ATR'].iloc[-1] is None:
@@ -174,7 +167,6 @@ def calculate_stop_loss(data, atr_multiplier=2):
     last_atr = data['ATR'].iloc[-1]
     stop_loss = last_close - (atr_multiplier * last_atr)
     return round(stop_loss, 2)
-
 
 def calculate_buy_at(data):
     """Calculate optimal buy price based on RSI and current price"""
@@ -188,7 +180,6 @@ def calculate_buy_at(data):
         buy_at = last_close  # Buy at current price
     return round(buy_at, 2)
 
-
 def calculate_target(data, risk_reward_ratio=2):
     """Calculate target price based on risk-reward ratio"""
     if data.empty or 'Close' not in data.columns:
@@ -200,7 +191,6 @@ def calculate_target(data, risk_reward_ratio=2):
     risk = last_close - stop_loss
     target = last_close + (risk * risk_reward_ratio)
     return round(target, 2)
-
 
 def generate_recommendations(data):
     """Generate comprehensive trade recommendations"""
@@ -249,6 +239,14 @@ def generate_recommendations(data):
             elif data['Close'].iloc[-1] > data['Upper_Band'].iloc[-1]:
                 recommendations["Long-Term"] = "Sell (Overbought)"
                 score -= 1
+        # EMA Crossover (20 vs 50)
+        if 'EMA_20' in data and 'EMA_50' in data:
+            if data['EMA_20'].iloc[-1] > data['EMA_50'].iloc[-1]:
+                recommendations["Short-Term"] = "Buy (EMA Golden Cross)"
+                score += 1
+            else:
+                recommendations["Short-Term"] = "Sell (EMA Death Cross)"
+                score -= 1
         # Calculate trade levels
         recommendations["Stop Loss"] = calculate_stop_loss(data)
         recommendations["Buy At"] = calculate_buy_at(data)
@@ -257,7 +255,6 @@ def generate_recommendations(data):
     except Exception as e:
         st.warning(f"⚠️ Recommendation error: {str(e)}")
     return recommendations
-
 
 def analyze_batch(stock_batch):
     """Analyze a batch of stocks in parallel"""
@@ -272,7 +269,6 @@ def analyze_batch(stock_batch):
             except Exception as e:
                 st.warning(f"⚠️ Error processing stock: {e}")
     return results
-
 
 def analyze_stock_parallel(symbol):
     """Analyze a single stock (used in parallel processing)"""
@@ -294,7 +290,6 @@ def analyze_stock_parallel(symbol):
         }
     return None
 
-
 def analyze_all_stocks(stock_list, batch_size=50):
     """Analyze all stocks in the list using batch processing"""
     results = []
@@ -308,7 +303,6 @@ def analyze_all_stocks(stock_list, batch_size=50):
     results_df = results_df.sort_values(by="Score", ascending=False).head(10)
     return results_df
 
-
 def colored_recommendation(recommendation):
     """Returns a color-coded recommendation for Streamlit"""
     if "Buy" in recommendation:
@@ -320,13 +314,11 @@ def colored_recommendation(recommendation):
     else:
         return recommendation  # Default case, no color formatting
 
-
 def display_dashboard(symbol=None, data=None, recommendations=None, NSE_STOCKS=None):
     """Enhanced UI with color coding and tooltips"""
     st.title("📈 StockGenie Pro - NSE Analysis")
     # Current date header
     st.subheader(f"📅 Analysis for {datetime.now().strftime('%d %b %Y')}")
-
     # Daily Suggestions Button
     if st.button("🚀 Generate Daily Top Picks"):
         with st.spinner("🔍 Scanning market..."):
@@ -344,7 +336,6 @@ def display_dashboard(symbol=None, data=None, recommendations=None, NSE_STOCKS=N
                     Short-Term**: {colored_recommendation(row['Short-Term'])}  
                     Long-Term**: {colored_recommendation(row['Long-Term'])}
                     """, unsafe_allow_html=True)
-
     # Intraday Suggestions Button
     if st.button("⚡ Generate Intraday Top 5 Picks"):
         with st.spinner("🔍 Scanning market for intraday opportunities..."):
@@ -358,7 +349,6 @@ def display_dashboard(symbol=None, data=None, recommendations=None, NSE_STOCKS=N
                     Target**: {row['Target']:.2f}  
                     Intraday**: {colored_recommendation(row['Intraday'])}  
                     """, unsafe_allow_html=True)
-
     # Individual Stock Analysis
     if symbol:
         st.header(f"📊 {symbol.split('.')[0]} Analysis")
@@ -388,7 +378,7 @@ def display_dashboard(symbol=None, data=None, recommendations=None, NSE_STOCKS=N
         # Chart Tabs
         tab1, tab2, tab3 = st.tabs(["📈 Price Action", "📊 Indicators", "📉 Volatility"])
         with tab1:
-            fig = px.line(data, y=['Close', 'SMA_50', 'SMA_200', 'EMA_20'],
+            fig = px.line(data, y=['Close', 'SMA_50', 'SMA_200', 'EMA_20', 'EMA_50'],
                           title="Price with Moving Averages")
             st.plotly_chart(fig)
         with tab2:
@@ -399,7 +389,6 @@ def display_dashboard(symbol=None, data=None, recommendations=None, NSE_STOCKS=N
             fig = px.line(data, y=['ATR', 'Upper_Band', 'Lower_Band'],
                           title="Volatility Analysis")
             st.plotly_chart(fig)
-
 
 def analyze_intraday_stocks(stock_list, batch_size=50):
     """Analyze all stocks for intraday trading and return top 5 picks"""
@@ -415,7 +404,6 @@ def analyze_intraday_stocks(stock_list, batch_size=50):
     intraday_df = results_df[results_df["Intraday"].str.contains("Buy", na=False)]
     intraday_df = intraday_df.sort_values(by="Score", ascending=False).head(5)
     return intraday_df
-
 
 def main():
     """Main function with enhanced input validation"""
@@ -443,7 +431,6 @@ def main():
             display_dashboard(symbol, data, recommendations, NSE_STOCKS)  # Pass NSE_STOCKS here
         else:
             st.error("❌ Failed to load data for this symbol")
-
 
 if __name__ == "__main__":
     main()
