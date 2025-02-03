@@ -56,9 +56,7 @@ def fetch_nse_stock_list():
     try:
         response = requests.get(url, timeout=10)
         response.raise_for_status()
-        # Use io.StringIO instead of pd.compat.StringIO
         nse_data = pd.read_csv(io.StringIO(response.text))
-        # Extract symbol column and append ".NS" for Yahoo Finance compatibility
         stock_list = [f"{symbol}.NS" for symbol in nse_data['SYMBOL']]
         st.success("✅ Fetched live NSE stock list successfully!")
         return stock_list
@@ -92,15 +90,17 @@ def analyze_stock(data):
     """Perform technical analysis on stock data"""
     if data.empty or len(data) < 27:  # Ensure enough data points for ADX calculation
         return data
+
     try:
-        # RSI
-        data['RSI'] = ta.momentum.RSIIndicator(data['Close'], window=14).rsi()
+        # RSI (Optimized to 9-period for faster reactions)
+        data['RSI'] = ta.momentum.RSIIndicator(data['Close'], window=9).rsi()
     except Exception as e:
         st.warning(f"⚠️ Error calculating RSI: {e}")
         data['RSI'] = None
+
     try:
-        # MACD
-        macd = ta.trend.MACD(data['Close'], window_slow=26, window_fast=12, window_sign=9)
+        # MACD (Optimized to (8, 17, 9) for earlier signals)
+        macd = ta.trend.MACD(data['Close'], window_slow=17, window_fast=8, window_sign=9)
         data['MACD'] = macd.macd()
         data['MACD_signal'] = macd.macd_signal()
         data['MACD_hist'] = macd.macd_diff()
@@ -109,6 +109,7 @@ def analyze_stock(data):
         data['MACD'] = None
         data['MACD_signal'] = None
         data['MACD_hist'] = None
+
     try:
         # Moving Averages
         data['SMA_50'] = ta.trend.SMAIndicator(data['Close'], window=50).sma_indicator()
@@ -121,6 +122,7 @@ def analyze_stock(data):
         data['SMA_200'] = None
         data['EMA_20'] = None
         data['EMA_50'] = None
+
     try:
         # Bollinger Bands
         bollinger = ta.volatility.BollingerBands(data['Close'], window=20, window_dev=2)
@@ -132,6 +134,7 @@ def analyze_stock(data):
         data['Upper_Band'] = None
         data['Middle_Band'] = None
         data['Lower_Band'] = None
+
     try:
         # Stochastic Oscillator
         stoch = ta.momentum.StochasticOscillator(data['High'], data['Low'], data['Close'], window=14, smooth_window=3)
@@ -141,13 +144,14 @@ def analyze_stock(data):
         st.warning(f"⚠️ Error calculating Stochastic Oscillator: {e}")
         data['SlowK'] = None
         data['SlowD'] = None
+
     try:
         # ATR (Average True Range)
-        data['ATR'] = ta.volatility.AverageTrueRange(data['High'], data['Low'], data['Close'],
-                                                     window=14).average_true_range()
+        data['ATR'] = ta.volatility.AverageTrueRange(data['High'], data['Low'], data['Close'], window=14).average_true_range()
     except Exception as e:
         st.warning(f"⚠️ Error calculating ATR: {e}")
         data['ATR'] = None
+
     try:
         # ADX (Average Directional Index)
         if len(data) >= 27:
@@ -157,14 +161,38 @@ def analyze_stock(data):
     except Exception as e:
         st.warning(f"⚠️ Error calculating ADX: {e}")
         data['ADX'] = None
+
+    try:
+        # OBV (On-Balance Volume)
+        data['OBV'] = ta.volume.OnBalanceVolumeIndicator(data['Close'], data['Volume']).on_balance_volume()
+    except Exception as e:
+        st.warning(f"⚠️ Error calculating OBV: {e}")
+        data['OBV'] = None
+
+    try:
+        # Volume Spike Check
+        data['Avg_Volume'] = data['Volume'].rolling(window=10).mean()
+        data['Volume_Spike'] = data['Volume'] > (data['Avg_Volume'] * 1.5)
+    except Exception as e:
+        st.warning(f"⚠️ Error calculating Volume Spike: {e}")
+        data['Volume_Spike'] = None
+
     return data
 
-def calculate_stop_loss(data, atr_multiplier=2):
+def calculate_stop_loss(data, atr_multiplier=2.5):
     """Calculate stop-loss level based on ATR"""
     if data.empty or 'ATR' not in data.columns or data['ATR'].iloc[-1] is None:
         return None
+
     last_close = data['Close'].iloc[-1]
     last_atr = data['ATR'].iloc[-1]
+
+    # Adjust multiplier based on trend
+    if 'ADX' in data.columns and data['ADX'].iloc[-1] > 25:
+        atr_multiplier = 2.5  # Strong trend
+    else:
+        atr_multiplier = 1.5  # Sideways market
+
     stop_loss = last_close - (atr_multiplier * last_atr)
     return round(stop_loss, 2)
 
@@ -172,23 +200,35 @@ def calculate_buy_at(data):
     """Calculate optimal buy price based on RSI and current price"""
     if data.empty or 'RSI' not in data.columns or data['RSI'].iloc[-1] is None:
         return None
+
     last_close = data['Close'].iloc[-1]
     last_rsi = data['RSI'].iloc[-1]
+
     if last_rsi < 30:  # Oversold condition
         buy_at = last_close * 0.99  # Slightly below current price
     else:
         buy_at = last_close  # Buy at current price
     return round(buy_at, 2)
 
-def calculate_target(data, risk_reward_ratio=2):
+def calculate_target(data, risk_reward_ratio=3):
     """Calculate target price based on risk-reward ratio"""
     if data.empty or 'Close' not in data.columns:
         return None
+
     last_close = data['Close'].iloc[-1]
     stop_loss = calculate_stop_loss(data)
+
     if stop_loss is None:
         return None
+
     risk = last_close - stop_loss
+
+    # Adjust risk-reward ratio based on trend
+    if 'ADX' in data.columns and data['ADX'].iloc[-1] > 25:
+        risk_reward_ratio = 3  # Strong trend
+    else:
+        risk_reward_ratio = 1.5  # Weak trend
+
     target = last_close + (risk * risk_reward_ratio)
     return round(target, 2)
 
@@ -198,62 +238,72 @@ def generate_recommendations(data):
         "Intraday": "Hold", "Swing": "Hold",
         "Short-Term": "Hold", "Long-Term": "Hold",
         "Current Price": None, "Buy At": None,
-        "Stop Loss": None, "Target": None
+        "Stop Loss": None, "Target": None, "Score": 0
     }
     if data.empty:
         return recommendations
+
     try:
         # Current Price
         recommendations["Current Price"] = data['Close'].iloc[-1]
-        # Enhanced scoring system
-        score = 0
-        # Intraday (RSI + ATR)
-        if 'RSI' in data and 'ATR' in data:
-            if data['RSI'].iloc[-1] < 30 and data['ATR'].iloc[-1] > data['ATR'].mean():
-                recommendations["Intraday"] = "Buy (Oversold with High Volatility)"
-                score += 2
+
+        # Multi-Factor Scoring System
+        buy_score = 0
+        sell_score = 0
+
+        # Condition 1: RSI < 30 (Oversold) or > 70 (Overbought)
+        if 'RSI' in data.columns:
+            if data['RSI'].iloc[-1] < 30:
+                buy_score += 1
             elif data['RSI'].iloc[-1] > 70:
-                recommendations["Intraday"] = "Sell (Overbought)"
-                score -= 1
-        # Swing (MACD + ADX)
-        if 'MACD' in data and 'ADX' in data:
-            if data['MACD'].iloc[-1] > data['MACD_signal'].iloc[-1] and data['ADX'].iloc[-1] > 25:
-                recommendations["Swing"] = "Buy (Bullish Crossover with Strong Trend)"
-                score += 2
+                sell_score += 1
+
+        # Condition 2: MACD Crossover
+        if 'MACD' in data.columns and 'MACD_signal' in data.columns:
+            if data['MACD'].iloc[-1] > data['MACD_signal'].iloc[-1]:
+                buy_score += 1
             elif data['MACD'].iloc[-1] < data['MACD_signal'].iloc[-1]:
-                recommendations["Swing"] = "Sell (Bearish Crossover)"
-                score -= 1
-        # Short-Term (SMA crossover)
-        if 'SMA_50' in data and 'SMA_200' in data:
-            if data['SMA_50'].iloc[-1] > data['SMA_200'].iloc[-1]:
-                recommendations["Short-Term"] = "Buy (Golden Cross)"
-                score += 1
-            else:
-                recommendations["Short-Term"] = "Sell (Death Cross)"
-                score -= 1
-        # Long-Term (Bollinger Bands)
-        if 'Close' in data and 'Lower_Band' in data:
-            if data['Close'].iloc[-1] < data['Lower_Band'].iloc[-1]:
-                recommendations["Long-Term"] = "Buy (Oversold)"
-                score += 1
-            elif data['Close'].iloc[-1] > data['Upper_Band'].iloc[-1]:
-                recommendations["Long-Term"] = "Sell (Overbought)"
-                score -= 1
-        # EMA Crossover (20 vs 50)
-        if 'EMA_20' in data and 'EMA_50' in data:
-            if data['EMA_20'].iloc[-1] > data['EMA_50'].iloc[-1]:
-                recommendations["Short-Term"] = "Buy (EMA Golden Cross)"
-                score += 1
-            else:
-                recommendations["Short-Term"] = "Sell (EMA Death Cross)"
-                score -= 1
-        # Calculate trade levels
+                sell_score += 1
+
+        # Condition 3: ADX Trend Strength
+        if 'ADX' in data.columns:
+            if data['ADX'].iloc[-1] > 25:
+                buy_score += 1
+            elif data['ADX'].iloc[-1] < 20:
+                sell_score += 1
+
+        # Condition 4: Bollinger Band Reversion
+        if 'Close' in data.columns and 'Lower_Band' in data.columns and 'Upper_Band' in data.columns:
+            if data['Close'].iloc[-1] > data['Lower_Band'].iloc[-1] and data['Close'].iloc[-1] < data['EMA_20'].iloc[-1]:
+                buy_score += 1
+            elif data['Close'].iloc[-1] < data['Upper_Band'].iloc[-1] and data['Close'].iloc[-1] > data['EMA_20'].iloc[-1]:
+                sell_score += 1
+
+        # Condition 5: Volume Confirmation
+        if 'Volume' in data.columns:
+            avg_volume = data['Volume'].rolling(window=10).mean().iloc[-1]
+            if data['Volume'].iloc[-1] > avg_volume * 1.5:
+                buy_score += 1
+            elif data['Volume'].iloc[-1] < avg_volume * 0.5:
+                sell_score += 1
+
+        # Assign Recommendations Based on Scores
+        if buy_score >= 3:
+            recommendations["Intraday"] = "Strong Buy"
+        elif sell_score >= 3:
+            recommendations["Intraday"] = "Strong Sell"
+
+        # Calculate Trade Levels
         recommendations["Stop Loss"] = calculate_stop_loss(data)
         recommendations["Buy At"] = calculate_buy_at(data)
         recommendations["Target"] = calculate_target(data)
-        recommendations["Score"] = max(0, min(score, 5))  # Keep score between 0-5
+
+        # Final Score (Optional)
+        recommendations["Score"] = max(0, min(buy_score - sell_score, 5))  # Keep score between 0-5
+
     except Exception as e:
         st.warning(f"⚠️ Recommendation error: {str(e)}")
+
     return recommendations
 
 def analyze_batch(stock_batch):
@@ -286,7 +336,7 @@ def analyze_stock_parallel(symbol):
             "Swing": recommendations["Swing"],
             "Short-Term": recommendations["Short-Term"],
             "Long-Term": recommendations["Long-Term"],
-            "Score": recommendations.get("Score", 0)
+            "Score": recommendations.get("Score", 0),
         }
     return None
 
@@ -317,25 +367,25 @@ def colored_recommendation(recommendation):
 def display_dashboard(symbol=None, data=None, recommendations=None, NSE_STOCKS=None):
     """Enhanced UI with color coding and tooltips"""
     st.title("📈 StockGenie Pro - NSE Analysis")
-    # Current date header
     st.subheader(f"📅 Analysis for {datetime.now().strftime('%d %b %Y')}")
+
     # Daily Suggestions Button
     if st.button("🚀 Generate Daily Top Picks"):
         with st.spinner("🔍 Scanning market..."):
             results_df = analyze_all_stocks(NSE_STOCKS)
-            # Display results with color coding
             st.subheader("🏆 Today's Top 10 Stocks")
             for _, row in results_df.iterrows():
                 with st.expander(f"{row['Symbol']} - Score: {row['Score']}/5"):
                     st.markdown(f"""
-                    {tooltip('Current Price', TOOLTIPS['Stop Loss'])}**: {row['Current Price']:.2f}  
-                    Buy At**: {row['Buy At']:.2f} | **Stop Loss**: {row['Stop Loss']:.2f}  
-                    Target**: {row['Target']:.2f}  
-                    Intraday**: {colored_recommendation(row['Intraday'])}  
-                    Swing**: {colored_recommendation(row['Swing'])}  
-                    Short-Term**: {colored_recommendation(row['Short-Term'])}  
-                    Long-Term**: {colored_recommendation(row['Long-Term'])}
+                    {tooltip('Current Price', TOOLTIPS['Stop Loss'])}: ₹{row['Current Price']:.2f}  
+                    Buy At: ₹{row['Buy At']:.2f} | Stop Loss: ₹{row['Stop Loss']:.2f}  
+                    Target: ₹{row['Target']:.2f}  
+                    Intraday: {colored_recommendation(row['Intraday'])}  
+                    Swing: {colored_recommendation(row['Swing'])}  
+                    Short-Term: {colored_recommendation(row['Short-Term'])}  
+                    Long-Term: {colored_recommendation(row['Long-Term'])}
                     """, unsafe_allow_html=True)
+
     # Intraday Suggestions Button
     if st.button("⚡ Generate Intraday Top 5 Picks"):
         with st.spinner("🔍 Scanning market for intraday opportunities..."):
@@ -344,50 +394,42 @@ def display_dashboard(symbol=None, data=None, recommendations=None, NSE_STOCKS=N
             for _, row in intraday_results.iterrows():
                 with st.expander(f"{row['Symbol']} - Score: {row['Score']}/5"):
                     st.markdown(f"""
-                    {tooltip('Current Price', TOOLTIPS['Stop Loss'])}**: {row['Current Price']:.2f}  
-                    Buy At**: {row['Buy At']:.2f} | **Stop Loss**: {row['Stop Loss']:.2f}  
-                    Target**: {row['Target']:.2f}  
-                    Intraday**: {colored_recommendation(row['Intraday'])}  
+                    {tooltip('Current Price', TOOLTIPS['Stop Loss'])}: ₹{row['Current Price']:.2f}  
+                    Buy At: ₹{row['Buy At']:.2f} | Stop Loss: ₹{row['Stop Loss']:.2f}  
+                    Target: ₹{row['Target']:.2f}  
+                    Intraday: {colored_recommendation(row['Intraday'])}  
                     """, unsafe_allow_html=True)
+
     # Individual Stock Analysis
     if symbol:
         st.header(f"📊 {symbol.split('.')[0]} Analysis")
-        # Price Levels Card
         col1, col2, col3, col4 = st.columns(4)
         with col1:
-            st.metric(tooltip("Current Price", TOOLTIPS['RSI']),
-                      f"₹{recommendations['Current Price']:.2f}")
+            st.metric(tooltip("Current Price", TOOLTIPS['RSI']), f"₹{recommendations['Current Price']:.2f}")
         with col2:
-            st.metric(tooltip("Buy At", "Recommended entry price"),
-                      f"₹{recommendations['Buy At']:.2f}")
+            st.metric(tooltip("Buy At", "Recommended entry price"), f"₹{recommendations['Buy At']:.2f}")
         with col3:
-            st.metric(tooltip("Stop Loss", TOOLTIPS['Stop Loss']),
-                      f"₹{recommendations['Stop Loss']:.2f}")
+            st.metric(tooltip("Stop Loss", TOOLTIPS['Stop Loss']), f"₹{recommendations['Stop Loss']:.2f}")
         with col4:
-            st.metric(tooltip("Target", "Price target based on risk/reward"),
-                      f"₹{recommendations['Target']:.2f}")
-        # Recommendations Section
+            st.metric(tooltip("Target", "Price target based on risk/reward"), f"₹{recommendations['Target']:.2f}")
+
         st.subheader("📋 Trading Recommendations")
         cols = st.columns(4)
         strategy_names = ["Intraday", "Swing", "Short-Term", "Long-Term"]
         for col, strategy in zip(cols, strategy_names):
             with col:
                 st.markdown(f"**{strategy}**", unsafe_allow_html=True)
-                st.markdown(colored_recommendation(recommendations[strategy]),
-                            unsafe_allow_html=True)
-        # Chart Tabs
+                st.markdown(colored_recommendation(recommendations[strategy]), unsafe_allow_html=True)
+
         tab1, tab2, tab3 = st.tabs(["📈 Price Action", "📊 Indicators", "📉 Volatility"])
         with tab1:
-            fig = px.line(data, y=['Close', 'SMA_50', 'SMA_200', 'EMA_20', 'EMA_50'],
-                          title="Price with Moving Averages")
+            fig = px.line(data, y=['Close', 'SMA_50', 'SMA_200', 'EMA_20', 'EMA_50'], title="Price with Moving Averages")
             st.plotly_chart(fig)
         with tab2:
-            fig = px.line(data, y=['RSI', 'MACD', 'MACD_signal'],
-                          title="Momentum Indicators")
+            fig = px.line(data, y=['RSI', 'MACD', 'MACD_signal'], title="Momentum Indicators")
             st.plotly_chart(fig)
         with tab3:
-            fig = px.line(data, y=['ATR', 'Upper_Band', 'Lower_Band'],
-                          title="Volatility Analysis")
+            fig = px.line(data, y=['ATR', 'Upper_Band', 'Lower_Band'], title="Volatility Analysis")
             st.plotly_chart(fig)
 
 def analyze_intraday_stocks(stock_list, batch_size=50):
@@ -400,7 +442,6 @@ def analyze_intraday_stocks(stock_list, batch_size=50):
     results_df = pd.DataFrame(results)
     if "Score" not in results_df.columns:
         results_df["Score"] = 0
-    # Filter for intraday-specific criteria
     intraday_df = results_df[results_df["Intraday"].str.contains("Buy", na=False)]
     intraday_df = intraday_df.sort_values(by="Score", ascending=False).head(5)
     return intraday_df
@@ -408,8 +449,8 @@ def analyze_intraday_stocks(stock_list, batch_size=50):
 def main():
     """Main function with enhanced input validation"""
     st.sidebar.title("🔍 Stock Search")
-    # Dynamically fetch NSE stock list or use fallback
     NSE_STOCKS = fetch_nse_stock_list()
+
     # Symbol input with validation
     symbol = st.sidebar.selectbox(
         "Choose or enter stock:",
@@ -419,6 +460,7 @@ def main():
     if symbol == "Custom":
         custom_symbol = st.sidebar.text_input("Enter NSE Symbol (e.g.: RELIANCE):")
         symbol = f"{custom_symbol}.NS" if custom_symbol else None
+
     if symbol:
         if ".NS" not in symbol:
             symbol += ".NS"
@@ -428,7 +470,7 @@ def main():
         if not data.empty:
             data = analyze_stock(data)
             recommendations = generate_recommendations(data)
-            display_dashboard(symbol, data, recommendations, NSE_STOCKS)  # Pass NSE_STOCKS here
+            display_dashboard(symbol, data, recommendations, NSE_STOCKS)
         else:
             st.error("❌ Failed to load data for this symbol")
 
