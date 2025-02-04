@@ -8,6 +8,4 @@ requests
 lxml
 openpyxl
 numpy
-certifi
-kaleido
 smartapi-python
