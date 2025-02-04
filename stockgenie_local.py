@@ -340,8 +340,8 @@ def analyze_stock_parallel(symbol):
         }
     return None
 
-def analyze_all_stocks(stock_list, batch_size=50):
-    """Analyze all stocks in the list using batch processing"""
+def analyze_all_stocks(stock_list, batch_size=50, min_price=0, max_price=float('inf')):
+    """Analyze all stocks in the list using batch processing and filter by price range"""
     results = []
     for i in tqdm(range(0, len(stock_list), batch_size), desc="Processing Batches"):
         batch = stock_list[i:i + batch_size]
@@ -350,6 +350,8 @@ def analyze_all_stocks(stock_list, batch_size=50):
     results_df = pd.DataFrame(results)
     if "Score" not in results_df.columns:
         results_df["Score"] = 0
+    # Filter by price range
+    results_df = results_df[(results_df["Current Price"] >= min_price) & (results_df["Current Price"] <= max_price)]
     results_df = results_df.sort_values(by="Score", ascending=False).head(10)
     return results_df
 
@@ -440,8 +442,9 @@ def display_dashboard(symbol=None, data=None, recommendations=None, NSE_STOCKS=N
             fig = px.line(data, y=['ATR', 'Upper_Band', 'Lower_Band'], title="Volatility Analysis")
             st.plotly_chart(fig)
 
-def analyze_intraday_stocks(stock_list, batch_size=50):
-    """Analyze all stocks for intraday trading and return top 5 picks"""
+
+def analyze_intraday_stocks(stock_list, batch_size=50, min_price=0, max_price=float('inf')):
+    """Analyze all stocks for intraday trading and return top 5 picks filtered by price range"""
     results = []
     for i in tqdm(range(0, len(stock_list), batch_size), desc="Processing Batches for Intraday"):
         batch = stock_list[i:i + batch_size]
@@ -450,7 +453,9 @@ def analyze_intraday_stocks(stock_list, batch_size=50):
     results_df = pd.DataFrame(results)
     if "Score" not in results_df.columns:
         results_df["Score"] = 0
+    # Filter by price range
     intraday_df = results_df[results_df["Intraday"].str.contains("Buy", na=False)]
+    intraday_df = intraday_df[(intraday_df["Current Price"] >= min_price) & (intraday_df["Current Price"] <= max_price)]
     intraday_df = intraday_df.sort_values(by="Score", ascending=False).head(5)
     return intraday_df
 
