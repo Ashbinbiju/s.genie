@@ -10,4 +10,4 @@ openpyxl
 numpy
 certifi
 kaleido
-smartapi-python==1.4.8
+smartapi-python
