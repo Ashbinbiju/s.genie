@@ -2,7 +2,7 @@ import yfinance as yf
 import pandas as pd
 import ta
 import streamlit as st
-from datetime import datetime
+from datetime import datetime, timedelta
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from functools import lru_cache
 from tqdm import tqdm
@@ -11,6 +11,11 @@ import time
 import requests
 import io
 import random
+from smartapi import SmartConnect
+
+# Angel Broking API credentials
+ANGEL_HISTORICAL_API_KEY = "c3C0tMGn"
+ANGEL_MARKET_API_KEY = "PflRFXyd"
 
 # Tooltip explanations
 TOOLTIPS = {
@@ -27,7 +32,7 @@ def tooltip(label, explanation):
     """Returns a formatted tooltip string"""
     return f"{label} 🛈 ({explanation})"
 
-# Retry decorator for Yahoo Finance requests with jitter
+# Retry decorator for API calls with jitter
 def retry(max_retries=3, delay=1, backoff_factor=2, jitter=0.5):
     def decorator(func):
         def wrapper(*args, **kwargs):
@@ -35,7 +40,7 @@ def retry(max_retries=3, delay=1, backoff_factor=2, jitter=0.5):
             while retries < max_retries:
                 try:
                     return func(*args, **kwargs)
-                except (requests.exceptions.RequestException, ConnectionError) as e:
+                except Exception as e:
                     retries += 1
                     if retries == max_retries:
                         st.error(f"❌ Max retries reached for function {func.__name__}")
@@ -46,6 +51,7 @@ def retry(max_retries=3, delay=1, backoff_factor=2, jitter=0.5):
         return wrapper
     return decorator
 
+# Fetch live NSE stock list
 @retry(max_retries=3, delay=2)
 def fetch_nse_stock_list():
     """
@@ -70,34 +76,88 @@ def fetch_nse_stock_list():
             "ABFRL.NS",
         ]
 
+# Fetch data using nsespy
+@retry(max_retries=3, delay=2)
+def fetch_nsespy_data(symbol, period="5Y", interval="1D"):
+    try:
+        data = nsespy.get_history(symbol=symbol, period=period, interval=interval)
+        if data.empty:
+            raise ValueError(f"No data found for {symbol} using nsespy")
+        return data
+    except Exception as e:
+        st.warning(f"⚠️ Failed to fetch data from nsespy for {symbol}: {e}")
+        return None
+
+# Fetch data using Angel Broking SmartAPI
+@retry(max_retries=3, delay=2)
+def fetch_angel_historical_data(symbol, interval="ONE_DAY", duration=365):
+    try:
+        obj = SmartConnect(api_key=ANGEL_HISTORICAL_API_KEY)
+        historic_param = {
+            "exchange": "NSE",
+            "symboltoken": symbol,
+            "interval": interval,
+            "fromdate": (datetime.now() - timedelta(days=duration)).strftime("%Y-%m-%d %H:%M"),
+            "todate": datetime.now().strftime("%Y-%m-%d %H:%M")
+        }
+        response = obj.getCandleData(historic_param)
+        if response["status"] != "OK":
+            raise ValueError(f"Error fetching data from Angel API: {response['message']}")
+        data = pd.DataFrame(response["data"], columns=["timestamp", "open", "high", "low", "close", "volume"])
+        data.set_index("timestamp", inplace=True)
+        return data
+    except Exception as e:
+        st.warning(f"⚠️ Failed to fetch data from Angel API for {symbol}: {e}")
+        return None
+
+# Fetch data using yfinance (fallback)
 @lru_cache(maxsize=100)
-def fetch_stock_data_cached(symbol, period="5y", interval="1d"):
-    """Fetch data with retries and caching"""
+def fetch_yfinance_data(symbol, period="5y", interval="1d"):
     try:
         if ".NS" not in symbol:
             symbol += ".NS"
         stock = yf.Ticker(symbol)
         data = stock.history(period=period, interval=interval)
         if data.empty:
-            raise ValueError(f"No data found for {symbol}")
+            raise ValueError(f"No data found for {symbol} using yfinance")
         return data
     except Exception as e:
         st.error(f"❌ Failed to fetch data for {symbol} after 3 attempts")
         st.error(f"Error: {str(e)}")
         return pd.DataFrame()
 
+# Unified data fetching function
+def fetch_stock_data(symbol, period="5y", interval="1d"):
+    # Try nsespy first
+    data = fetch_nsespy_data(symbol, period, interval)
+    if data is not None and not data.empty:
+        return data
+    
+    # Try Angel Broking API next
+    data = fetch_angel_historical_data(symbol, interval="ONE_DAY", duration=365)
+    if data is not None and not data.empty:
+        return data
+    
+    # Fallback to yfinance
+    data = fetch_yfinance_data(symbol, period, interval)
+    if data is not None and not data.empty:
+        return data
+    
+    # If all fail, return empty DataFrame
+    st.error(f"❌ All data sources failed for {symbol}")
+    return pd.DataFrame()
+
+# Analyze stock data
 def analyze_stock(data):
     """Perform technical analysis on stock data"""
     if data.empty or len(data) < 27:  # Ensure enough data points for ADX calculation
         return data
-
     try:
         # RSI (Optimized to 9-period for faster reactions)
         data['RSI'] = ta.momentum.RSIIndicator(data['Close'], window=9).rsi()
     except Exception as e:
         st.warning(f"⚠️ Error calculating RSI: {e}")
         data['RSI'] = None
-
     try:
         # MACD (Optimized to (8, 17, 9) for earlier signals)
         macd = ta.trend.MACD(data['Close'], window_slow=17, window_fast=8, window_sign=9)
@@ -109,7 +169,6 @@ def analyze_stock(data):
         data['MACD'] = None
         data['MACD_signal'] = None
         data['MACD_hist'] = None
-
     try:
         # Moving Averages
         data['SMA_50'] = ta.trend.SMAIndicator(data['Close'], window=50).sma_indicator()
@@ -122,7 +181,6 @@ def analyze_stock(data):
         data['SMA_200'] = None
         data['EMA_20'] = None
         data['EMA_50'] = None
-
     try:
         # Bollinger Bands
         bollinger = ta.volatility.BollingerBands(data['Close'], window=20, window_dev=2)
@@ -134,7 +192,6 @@ def analyze_stock(data):
         data['Upper_Band'] = None
         data['Middle_Band'] = None
         data['Lower_Band'] = None
-
     try:
         # Stochastic Oscillator
         stoch = ta.momentum.StochasticOscillator(data['High'], data['Low'], data['Close'], window=14, smooth_window=3)
@@ -144,14 +201,12 @@ def analyze_stock(data):
         st.warning(f"⚠️ Error calculating Stochastic Oscillator: {e}")
         data['SlowK'] = None
         data['SlowD'] = None
-
     try:
         # ATR (Average True Range)
         data['ATR'] = ta.volatility.AverageTrueRange(data['High'], data['Low'], data['Close'], window=14).average_true_range()
     except Exception as e:
         st.warning(f"⚠️ Error calculating ATR: {e}")
         data['ATR'] = None
-
     try:
         # ADX (Average Directional Index)
         if len(data) >= 27:
@@ -161,14 +216,12 @@ def analyze_stock(data):
     except Exception as e:
         st.warning(f"⚠️ Error calculating ADX: {e}")
         data['ADX'] = None
-
     try:
         # OBV (On-Balance Volume)
         data['OBV'] = ta.volume.OnBalanceVolumeIndicator(data['Close'], data['Volume']).on_balance_volume()
     except Exception as e:
         st.warning(f"⚠️ Error calculating OBV: {e}")
         data['OBV'] = None
-
     try:
         # Volume Spike Check
         data['Avg_Volume'] = data['Volume'].rolling(window=10).mean()
@@ -176,62 +229,9 @@ def analyze_stock(data):
     except Exception as e:
         st.warning(f"⚠️ Error calculating Volume Spike: {e}")
         data['Volume_Spike'] = None
-
     return data
 
-def calculate_stop_loss(data, atr_multiplier=2.5):
-    """Calculate stop-loss level based on ATR"""
-    if data.empty or 'ATR' not in data.columns or data['ATR'].iloc[-1] is None:
-        return None
-
-    last_close = data['Close'].iloc[-1]
-    last_atr = data['ATR'].iloc[-1]
-
-    # Adjust multiplier based on trend
-    if 'ADX' in data.columns and data['ADX'].iloc[-1] > 25:
-        atr_multiplier = 2.5  # Strong trend
-    else:
-        atr_multiplier = 1.5  # Sideways market
-
-    stop_loss = last_close - (atr_multiplier * last_atr)
-    return round(stop_loss, 2)
-
-def calculate_buy_at(data):
-    """Calculate optimal buy price based on RSI and current price"""
-    if data.empty or 'RSI' not in data.columns or data['RSI'].iloc[-1] is None:
-        return None
-
-    last_close = data['Close'].iloc[-1]
-    last_rsi = data['RSI'].iloc[-1]
-
-    if last_rsi < 30:  # Oversold condition
-        buy_at = last_close * 0.99  # Slightly below current price
-    else:
-        buy_at = last_close  # Buy at current price
-    return round(buy_at, 2)
-
-def calculate_target(data, risk_reward_ratio=3):
-    """Calculate target price based on risk-reward ratio"""
-    if data.empty or 'Close' not in data.columns:
-        return None
-
-    last_close = data['Close'].iloc[-1]
-    stop_loss = calculate_stop_loss(data)
-
-    if stop_loss is None:
-        return None
-
-    risk = last_close - stop_loss
-
-    # Adjust risk-reward ratio based on trend
-    if 'ADX' in data.columns and data['ADX'].iloc[-1] > 25:
-        risk_reward_ratio = 3  # Strong trend
-    else:
-        risk_reward_ratio = 1.5  # Weak trend
-
-    target = last_close + (risk * risk_reward_ratio)
-    return round(target, 2)
-
+# Generate trade recommendations
 def generate_recommendations(data):
     """Generate comprehensive trade recommendations"""
     recommendations = {
@@ -242,43 +242,36 @@ def generate_recommendations(data):
     }
     if data.empty:
         return recommendations
-
     try:
         # Current Price
         recommendations["Current Price"] = data['Close'].iloc[-1]
-
         # Multi-Factor Scoring System
         buy_score = 0
         sell_score = 0
-
         # Condition 1: RSI < 30 (Oversold) or > 70 (Overbought)
         if 'RSI' in data.columns:
             if data['RSI'].iloc[-1] < 30:
                 buy_score += 1
             elif data['RSI'].iloc[-1] > 70:
                 sell_score += 1
-
         # Condition 2: MACD Crossover
         if 'MACD' in data.columns and 'MACD_signal' in data.columns:
             if data['MACD'].iloc[-1] > data['MACD_signal'].iloc[-1]:
                 buy_score += 1
             elif data['MACD'].iloc[-1] < data['MACD_signal'].iloc[-1]:
                 sell_score += 1
-
         # Condition 3: ADX Trend Strength
         if 'ADX' in data.columns:
             if data['ADX'].iloc[-1] > 25:
                 buy_score += 1
             elif data['ADX'].iloc[-1] < 20:
                 sell_score += 1
-
         # Condition 4: Bollinger Band Reversion
         if 'Close' in data.columns and 'Lower_Band' in data.columns and 'Upper_Band' in data.columns:
             if data['Close'].iloc[-1] > data['Lower_Band'].iloc[-1] and data['Close'].iloc[-1] < data['EMA_20'].iloc[-1]:
                 buy_score += 1
             elif data['Close'].iloc[-1] < data['Upper_Band'].iloc[-1] and data['Close'].iloc[-1] > data['EMA_20'].iloc[-1]:
                 sell_score += 1
-
         # Condition 5: Volume Confirmation
         if 'Volume' in data.columns:
             avg_volume = data['Volume'].rolling(window=10).mean().iloc[-1]
@@ -286,26 +279,68 @@ def generate_recommendations(data):
                 buy_score += 1
             elif data['Volume'].iloc[-1] < avg_volume * 0.5:
                 sell_score += 1
-
         # Assign Recommendations Based on Scores
         if buy_score >= 3:
             recommendations["Intraday"] = "Strong Buy"
         elif sell_score >= 3:
             recommendations["Intraday"] = "Strong Sell"
-
         # Calculate Trade Levels
         recommendations["Stop Loss"] = calculate_stop_loss(data)
         recommendations["Buy At"] = calculate_buy_at(data)
         recommendations["Target"] = calculate_target(data)
-
         # Final Score (Optional)
         recommendations["Score"] = max(0, min(buy_score - sell_score, 5))  # Keep score between 0-5
-
     except Exception as e:
         st.warning(f"⚠️ Recommendation error: {str(e)}")
-
     return recommendations
 
+# Calculate stop loss
+def calculate_stop_loss(data, atr_multiplier=2.5):
+    """Calculate stop-loss level based on ATR"""
+    if data.empty or 'ATR' not in data.columns or data['ATR'].iloc[-1] is None:
+        return None
+    last_close = data['Close'].iloc[-1]
+    last_atr = data['ATR'].iloc[-1]
+    # Adjust multiplier based on trend
+    if 'ADX' in data.columns and data['ADX'].iloc[-1] > 25:
+        atr_multiplier = 2.5  # Strong trend
+    else:
+        atr_multiplier = 1.5  # Sideways market
+    stop_loss = last_close - (atr_multiplier * last_atr)
+    return round(stop_loss, 2)
+
+# Calculate buy-at price
+def calculate_buy_at(data):
+    """Calculate optimal buy price based on RSI and current price"""
+    if data.empty or 'RSI' not in data.columns or data['RSI'].iloc[-1] is None:
+        return None
+    last_close = data['Close'].iloc[-1]
+    last_rsi = data['RSI'].iloc[-1]
+    if last_rsi < 30:  # Oversold condition
+        buy_at = last_close * 0.99  # Slightly below current price
+    else:
+        buy_at = last_close  # Buy at current price
+    return round(buy_at, 2)
+
+# Calculate target price
+def calculate_target(data, risk_reward_ratio=3):
+    """Calculate target price based on risk-reward ratio"""
+    if data.empty or 'Close' not in data.columns:
+        return None
+    last_close = data['Close'].iloc[-1]
+    stop_loss = calculate_stop_loss(data)
+    if stop_loss is None:
+        return None
+    risk = last_close - stop_loss
+    # Adjust risk-reward ratio based on trend
+    if 'ADX' in data.columns and data['ADX'].iloc[-1] > 25:
+        risk_reward_ratio = 3  # Strong trend
+    else:
+        risk_reward_ratio = 1.5  # Weak trend
+    target = last_close + (risk * risk_reward_ratio)
+    return round(target, 2)
+
+# Analyze batch of stocks
 def analyze_batch(stock_batch):
     """Analyze a batch of stocks in parallel"""
     results = []
@@ -320,9 +355,10 @@ def analyze_batch(stock_batch):
                 st.warning(f"⚠️ Error processing stock: {e}")
     return results
 
+# Analyze a single stock in parallel
 def analyze_stock_parallel(symbol):
     """Analyze a single stock (used in parallel processing)"""
-    data = fetch_stock_data_cached(symbol)
+    data = fetch_stock_data(symbol)
     if not data.empty:
         data = analyze_stock(data)
         recommendations = generate_recommendations(data)
@@ -340,8 +376,9 @@ def analyze_stock_parallel(symbol):
         }
     return None
 
-def analyze_all_stocks(stock_list, batch_size=50, min_price=0, max_price=float('inf')):
-    """Analyze all stocks in the list using batch processing and filter by price range"""
+# Analyze all stocks
+def analyze_all_stocks(stock_list, batch_size=50):
+    """Analyze all stocks in the list using batch processing"""
     results = []
     for i in tqdm(range(0, len(stock_list), batch_size), desc="Processing Batches"):
         batch = stock_list[i:i + batch_size]
@@ -350,41 +387,18 @@ def analyze_all_stocks(stock_list, batch_size=50, min_price=0, max_price=float('
     results_df = pd.DataFrame(results)
     if "Score" not in results_df.columns:
         results_df["Score"] = 0
-    # Filter by price range
-    results_df = results_df[(results_df["Current Price"] >= min_price) & (results_df["Current Price"] <= max_price)]
     results_df = results_df.sort_values(by="Score", ascending=False).head(10)
     return results_df
 
-def colored_recommendation(recommendation):
-    """Returns a color-coded recommendation for Streamlit"""
-    if "Buy" in recommendation:
-        return f"<span style='color:green;'>{recommendation}</span>"
-    elif "Sell" in recommendation:
-        return f"<span style='color:red;'>{recommendation}</span>"
-    elif "Hold" in recommendation:
-        return f"<span style='color:orange;'>{recommendation}</span>"
-    else:
-        return recommendation  # Default case, no color formatting
-
+# Display dashboard
 def display_dashboard(symbol=None, data=None, recommendations=None, NSE_STOCKS=None):
-    """Enhanced UI with color coding, tooltips, and price range filtering"""
+    """Enhanced UI with color coding and tooltips"""
     st.title("📈 StockGenie Pro - NSE Analysis")
     st.subheader(f"📅 Analysis for {datetime.now().strftime('%d %b %Y')}")
-
-    # Price Range Slider
-    price_range = st.slider(
-        "Select Price Range (₹)",
-        min_value=0,
-        max_value=5000,
-        value=(100, 1000),
-        step=50
-    )
-    min_price, max_price = price_range
-
     # Daily Suggestions Button
     if st.button("🚀 Generate Daily Top Picks"):
         with st.spinner("🔍 Scanning market..."):
-            results_df = analyze_all_stocks(NSE_STOCKS, min_price=min_price, max_price=max_price)
+            results_df = analyze_all_stocks(NSE_STOCKS)
             st.subheader("🏆 Today's Top 10 Stocks")
             for _, row in results_df.iterrows():
                 with st.expander(f"{row['Symbol']} - Score: {row['Score']}/5"):
@@ -397,11 +411,10 @@ def display_dashboard(symbol=None, data=None, recommendations=None, NSE_STOCKS=N
                     Short-Term: {colored_recommendation(row['Short-Term'])}  
                     Long-Term: {colored_recommendation(row['Long-Term'])}
                     """, unsafe_allow_html=True)
-
     # Intraday Suggestions Button
     if st.button("⚡ Generate Intraday Top 5 Picks"):
         with st.spinner("🔍 Scanning market for intraday opportunities..."):
-            intraday_results = analyze_intraday_stocks(NSE_STOCKS, min_price=min_price, max_price=max_price)
+            intraday_results = analyze_intraday_stocks(NSE_STOCKS)
             st.subheader("🏆 Top 5 Intraday Stocks")
             for _, row in intraday_results.iterrows():
                 with st.expander(f"{row['Symbol']} - Score: {row['Score']}/5"):
@@ -411,7 +424,6 @@ def display_dashboard(symbol=None, data=None, recommendations=None, NSE_STOCKS=N
                     Target: ₹{row['Target']:.2f}  
                     Intraday: {colored_recommendation(row['Intraday'])}  
                     """, unsafe_allow_html=True)
-
     # Individual Stock Analysis
     if symbol:
         st.header(f"📊 {symbol.split('.')[0]} Analysis")
@@ -442,9 +454,9 @@ def display_dashboard(symbol=None, data=None, recommendations=None, NSE_STOCKS=N
             fig = px.line(data, y=['ATR', 'Upper_Band', 'Lower_Band'], title="Volatility Analysis")
             st.plotly_chart(fig)
 
-
-def analyze_intraday_stocks(stock_list, batch_size=50, min_price=0, max_price=float('inf')):
-    """Analyze all stocks for intraday trading and return top 5 picks filtered by price range"""
+# Analyze intraday stocks
+def analyze_intraday_stocks(stock_list, batch_size=50):
+    """Analyze all stocks for intraday trading and return top 5 picks"""
     results = []
     for i in tqdm(range(0, len(stock_list), batch_size), desc="Processing Batches for Intraday"):
         batch = stock_list[i:i + batch_size]
@@ -453,17 +465,27 @@ def analyze_intraday_stocks(stock_list, batch_size=50, min_price=0, max_price=fl
     results_df = pd.DataFrame(results)
     if "Score" not in results_df.columns:
         results_df["Score"] = 0
-    # Filter by price range
     intraday_df = results_df[results_df["Intraday"].str.contains("Buy", na=False)]
-    intraday_df = intraday_df[(intraday_df["Current Price"] >= min_price) & (intraday_df["Current Price"] <= max_price)]
     intraday_df = intraday_df.sort_values(by="Score", ascending=False).head(5)
     return intraday_df
 
+# Color-coded recommendations
+def colored_recommendation(recommendation):
+    """Returns a color-coded recommendation for Streamlit"""
+    if "Buy" in recommendation:
+        return f"<span style='color:green;'>{recommendation}</span>"
+    elif "Sell" in recommendation:
+        return f"<span style='color:red;'>{recommendation}</span>"
+    elif "Hold" in recommendation:
+        return f"<span style='color:orange;'>{recommendation}</span>"
+    else:
+        return recommendation  # Default case, no color formatting
+
+# Main function
 def main():
     """Main function with enhanced input validation"""
     st.sidebar.title("🔍 Stock Search")
     NSE_STOCKS = fetch_nse_stock_list()
-
     # Symbol input with validation
     symbol = st.sidebar.selectbox(
         "Choose or enter stock:",
@@ -473,13 +495,12 @@ def main():
     if symbol == "Custom":
         custom_symbol = st.sidebar.text_input("Enter NSE Symbol (e.g.: RELIANCE):")
         symbol = f"{custom_symbol}.NS" if custom_symbol else None
-
     if symbol:
         if ".NS" not in symbol:
             symbol += ".NS"
         if symbol not in NSE_STOCKS and not st.sidebar.warning("⚠️ Unverified symbol - data may be unreliable"):
             return
-        data = fetch_stock_data_cached(symbol)
+        data = fetch_stock_data(symbol)
         if not data.empty:
             data = analyze_stock(data)
             recommendations = generate_recommendations(data)
