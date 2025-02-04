@@ -5,5 +5,8 @@ streamlit
 plotly
 tqdm
 requests
-lxml  
-openpyxl 
+lxml
+openpyxl
+numpy
+certifi
+kaleido
