@@ -342,6 +342,53 @@ def colored_recommendation(recommendation):
     else:
         return recommendation  # Default case, no color formatting
 
+@retry(max_retries=3, delay=2)
+def fetch_top_gainers():
+    """Fetch top gainers from NSE at 9:25 AM."""
+    url = "https://www.nseindia.com/market-data/top-gainers-loosers"
+    headers = {"User-Agent": "Mozilla/5.0"}
+    response = requests.get(url, headers=headers)
+    soup = BeautifulSoup(response.text, 'html.parser')
+    
+    # Parse top gainers
+    top_gainers = []
+    gainer_table = soup.find("table", {"class": "top-gainers"})
+    rows = gainer_table.find_all("tr")[1:]  # Skip header row
+    for row in rows[:2]:  # Get only the top 2 gainers
+        cells = row.find_all("td")
+        symbol = cells[0].text.strip()
+        top_gainers.append(f"{symbol}.NS")
+    
+    return top_gainers
+
+def analyze_925_intraday_stocks(stock_list, batch_size=50, price_range=None):
+    """
+    Analyze stocks for the 9:25 AM intraday strategy.
+    Focuses on top gainers and their 10-minute candle patterns.
+    """
+    results = []
+    top_gainers = fetch_top_gainers()  # Fetch top gainers at 9:25 AM
+    prioritized_stocks = [s for s in stock_list if s in top_gainers]  # Prioritize top gainers
+    
+    for i in tqdm(range(0, len(prioritized_stocks), batch_size), desc="Processing Batches for 9:25 AM Intraday"):
+        batch = prioritized_stocks[i:i + batch_size]
+        batch_results = analyze_batch(batch)
+        results.extend(batch_results)
+    
+    results_df = pd.DataFrame(results)
+    if "Score" not in results_df.columns:
+        results_df["Score"] = 0
+    
+    # Filter by price range if provided
+    if price_range:
+        results_df = results_df[(results_df['Current Price'] >= price_range[0]) & (results_df['Current Price'] <= price_range[1])]
+    
+    # Filter for bullish patterns and sort by score
+    intraday_df = results_df[results_df["Intraday"].str.contains("Buy", na=False)]
+    intraday_df = intraday_df.sort_values(by="Score", ascending=False).head(5)
+    return intraday_df
+
+
 def display_dashboard(symbol=None, data=None, recommendations=None, NSE_STOCKS=None):
     """Enhanced UI with color coding and tooltips"""
     st.title("📈 StockGenie Pro - NSE Analysis")
@@ -370,12 +417,26 @@ def display_dashboard(symbol=None, data=None, recommendations=None, NSE_STOCKS=N
                     Long-Term: {colored_recommendation(row['Long-Term'])}
                     """, unsafe_allow_html=True)
     
-    # Intraday Suggestions Button
+    # Normal Intraday Suggestions Button
     if st.button("⚡ Generate Intraday Top 5 Picks"):
         with st.spinner("🔍 Scanning market for intraday opportunities..."):
             intraday_results = analyze_intraday_stocks(NSE_STOCKS, price_range=price_range)
             st.subheader("🏆 Top 5 Intraday Stocks")
             for _, row in intraday_results.iterrows():
+                with st.expander(f"{row['Symbol']} - Score: {row['Score']}/5"):
+                    st.markdown(f"""
+                    {tooltip('Current Price', TOOLTIPS['Stop Loss'])}: ₹{row['Current Price']:.2f}  
+                    Buy At: ₹{row['Buy At']:.2f} | Stop Loss: ₹{row['Stop Loss']:.2f}  
+                    Target: ₹{row['Target']:.2f}  
+                    Intraday: {colored_recommendation(row['Intraday'])}  
+                    """, unsafe_allow_html=True)
+    
+    # 9:25 AM Intraday Strategy Button
+    if st.button("⏰ Generate 9:25 AM Intraday Picks"):
+        with st.spinner("🔍 Scanning market for 9:25 AM intraday opportunities..."):
+            intraday_925_results = analyze_925_intraday_stocks(NSE_STOCKS, price_range=price_range)
+            st.subheader("🏆 Top 5 9:25 AM Intraday Stocks")
+            for _, row in intraday_925_results.iterrows():
                 with st.expander(f"{row['Symbol']} - Score: {row['Score']}/5"):
                     st.markdown(f"""
                     {tooltip('Current Price', TOOLTIPS['Stop Loss'])}: ₹{row['Current Price']:.2f}  
@@ -413,7 +474,6 @@ def display_dashboard(symbol=None, data=None, recommendations=None, NSE_STOCKS=N
         with tab3:
             fig = px.line(data, y=['ATR', 'Upper_Band', 'Lower_Band'], title="Volatility Analysis")
             st.plotly_chart(fig)
-
 def analyze_intraday_stocks(stock_list, batch_size=50, price_range=None):
     """Analyze all stocks for intraday trading and return top 5 picks"""
     results = []
