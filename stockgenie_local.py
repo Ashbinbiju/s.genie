@@ -48,25 +48,48 @@ def retry(max_retries=3, delay=1, backoff_factor=2, jitter=0.5):
         return wrapper
     return decorator
 
-
 @retry(max_retries=3, delay=2)
 def fetch_top_gainers():
-    """Fetch top gainers from NSE at 9:25 AM."""
-    url = "https://www.nseindia.com/market-data/top-gainers-loosers"
-    headers = {"User-Agent": "Mozilla/5.0"}
-    response = requests.get(url, headers=headers)
-    soup = BeautifulSoup(response.text, 'html.parser')
-    
-    # Parse top gainers
-    top_gainers = []
-    gainer_table = soup.find("table", {"class": "top-gainers"})
-    rows = gainer_table.find_all("tr")[1:]  # Skip header row
-    for row in rows[:2]:  # Get only the top 2 gainers
-        cells = row.find_all("td")
-        symbol = cells[0].text.strip()
-        top_gainers.append(f"{symbol}.NS")
-    
-    return top_gainers
+    """
+    Fetch top gainers from NSE at 9:25 AM.
+    Handles cases where the table is not found or the structure changes.
+    """
+    url = "https://www.nseindia.com/market-data/top-gainers-losers"
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.0.0 Safari/537.36"
+    }
+    try:
+        # Send a GET request to the NSE website
+        response = requests.get(url, headers=headers, timeout=10)
+        response.raise_for_status()  # Raise an exception for HTTP errors
+
+        # Parse the HTML content
+        soup = BeautifulSoup(response.text, 'html.parser')
+
+        # Find the top gainers table
+        gainer_table = soup.find("table", {"class": "top-gainers"})
+        if not gainer_table:
+            st.warning("⚠️ Could not find the top gainers table on the NSE website.")
+            return []
+
+        # Parse the rows of the table
+        rows = gainer_table.find_all("tr")[1:]  # Skip header row
+        top_gainers = []
+        for row in rows[:2]:  # Get only the top 2 gainers
+            cells = row.find_all("td")
+            if len(cells) > 0:
+                symbol = cells[0].text.strip()
+                top_gainers.append(f"{symbol}.NS")
+
+        return top_gainers
+
+    except requests.exceptions.RequestException as e:
+        st.error(f"❌ Failed to fetch top gainers from NSE. Error: {str(e)}")
+        return []
+    except Exception as e:
+        st.error(f"❌ Unexpected error while fetching top gainers: {str(e)}")
+        return []
+
 
 def analyze_925_intraday_stocks(stock_list, batch_size=50, price_range=None):
     """
