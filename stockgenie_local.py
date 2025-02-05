@@ -90,24 +90,22 @@ def analyze_925_intraday_stocks(stock_list, batch_size=50, price_range=None):
     results = []
     top_gainers = fetch_top_gainers()  # Fetch top gainers at 9:25 AM
     prioritized_stocks = [s for s in stock_list if s in top_gainers]  # Prioritize top gainers
-    
     for i in tqdm(range(0, len(prioritized_stocks), batch_size), desc="Processing Batches for 9:25 AM Intraday"):
         batch = prioritized_stocks[i:i + batch_size]
         batch_results = analyze_batch(batch)
         results.extend(batch_results)
-    
     results_df = pd.DataFrame(results)
     if "Score" not in results_df.columns:
         results_df["Score"] = 0
-    
     # Filter by price range if provided
     if price_range:
         results_df = results_df[(results_df['Current Price'] >= price_range[0]) & (results_df['Current Price'] <= price_range[1])]
-    
     # Filter for bullish patterns and sort by score
     intraday_df = results_df[results_df["Intraday"].str.contains("Buy", na=False)]
     intraday_df = intraday_df.sort_values(by="Score", ascending=False).head(5)
     return intraday_df
+
+
 
 @retry(max_retries=3, delay=2)
 def fetch_nse_stock_list():
