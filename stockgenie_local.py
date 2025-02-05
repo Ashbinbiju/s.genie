@@ -20,6 +20,7 @@ TOOLTIPS = {
     "ADX": "Average Directional Index (25+ = Strong Trend)",
     "Bollinger": "Price volatility bands around moving average",
     "Stop Loss": "Risk management price level based on ATR",
+    "VWAP": "Volume Weighted Average Price - Intraday trend indicator",
 }
 
 # Tooltip function
@@ -161,6 +162,14 @@ def analyze_stock(data):
         st.warning(f"⚠️ Error calculating OBV: {e}")
         data['OBV'] = None
     try:
+        # VWAP Calculation
+        data['Cumulative_TP'] = ((data['High'] + data['Low'] + data['Close']) / 3) * data['Volume']
+        data['Cumulative_Volume'] = data['Volume'].cumsum()
+        data['VWAP'] = data['Cumulative_TP'].cumsum() / data['Cumulative_Volume']
+    except Exception as e:
+        st.warning(f"⚠️ Error calculating VWAP: {e}")
+        data['VWAP'] = None
+    try:
         # Volume Spike Check
         data['Avg_Volume'] = data['Volume'].rolling(window=10).mean()
         data['Volume_Spike'] = data['Volume'] > (data['Avg_Volume'] * 1.5)
@@ -177,7 +186,7 @@ def calculate_stop_loss(data, atr_multiplier=2.5):
     last_atr = data['ATR'].iloc[-1]
     # Adjust multiplier based on trend
     if 'ADX' in data.columns and data['ADX'].iloc[-1] > 25:
-        atr_multiplier = 2.5  # Strong trend
+        atr_multiplier = 3.0  # Strong trend
     else:
         atr_multiplier = 1.5  # Sideways market
     stop_loss = last_close - (atr_multiplier * last_atr)
@@ -197,12 +206,10 @@ def calculate_buy_at(data):
 
 def calculate_target(data, risk_reward_ratio=3):
     """Calculate target price based on risk-reward ratio"""
-    if data.empty or 'Close' not in data.columns:
-        return None
-    last_close = data['Close'].iloc[-1]
     stop_loss = calculate_stop_loss(data)
     if stop_loss is None:
         return None
+    last_close = data['Close'].iloc[-1]
     risk = last_close - stop_loss
     # Adjust risk-reward ratio based on trend
     if 'ADX' in data.columns and data['ADX'].iloc[-1] > 25:
@@ -231,38 +238,38 @@ def generate_recommendations(data):
         # Condition 1: RSI < 30 (Oversold) or > 70 (Overbought)
         if 'RSI' in data.columns:
             if data['RSI'].iloc[-1] < 30:
-                buy_score += 1
+                buy_score += 2  # Higher weight for RSI
             elif data['RSI'].iloc[-1] > 70:
-                sell_score += 1
+                sell_score += 2
         # Condition 2: MACD Crossover
         if 'MACD' in data.columns and 'MACD_signal' in data.columns:
             if data['MACD'].iloc[-1] > data['MACD_signal'].iloc[-1]:
                 buy_score += 1
             elif data['MACD'].iloc[-1] < data['MACD_signal'].iloc[-1]:
                 sell_score += 1
-        # Condition 3: ADX Trend Strength
-        if 'ADX' in data.columns:
-            if data['ADX'].iloc[-1] > 25:
-                buy_score += 1
-            elif data['ADX'].iloc[-1] < 20:
-                sell_score += 1
-        # Condition 4: Bollinger Band Reversion
+        # Condition 3: Bollinger Band Reversion
         if 'Close' in data.columns and 'Lower_Band' in data.columns and 'Upper_Band' in data.columns:
-            if data['Close'].iloc[-1] > data['Lower_Band'].iloc[-1] and data['Close'].iloc[-1] < data['EMA_20'].iloc[-1]:
+            if data['Close'].iloc[-1] < data['Lower_Band'].iloc[-1]:  # Oversold condition
                 buy_score += 1
-            elif data['Close'].iloc[-1] < data['Upper_Band'].iloc[-1] and data['Close'].iloc[-1] > data['EMA_20'].iloc[-1]:
+            elif data['Close'].iloc[-1] > data['Upper_Band'].iloc[-1]:  # Overbought condition
+                sell_score += 1
+        # Condition 4: VWAP Trend
+        if 'VWAP' in data.columns:
+            if data['Close'].iloc[-1] > data['VWAP'].iloc[-1]:  # Price above VWAP indicates bullish trend
+                buy_score += 1
+            elif data['Close'].iloc[-1] < data['VWAP'].iloc[-1]:  # Price below VWAP indicates bearish trend
                 sell_score += 1
         # Condition 5: Volume Confirmation
         if 'Volume' in data.columns:
             avg_volume = data['Volume'].rolling(window=10).mean().iloc[-1]
-            if data['Volume'].iloc[-1] > avg_volume * 1.5:
+            if data['Volume'].iloc[-1] > avg_volume * 1.5:  # High volume confirms trend
                 buy_score += 1
-            elif data['Volume'].iloc[-1] < avg_volume * 0.5:
+            elif data['Volume'].iloc[-1] < avg_volume * 0.5:  # Low volume indicates weakness
                 sell_score += 1
         # Assign Recommendations Based on Scores
-        if buy_score >= 3:
+        if buy_score >= 4:  # Require stronger confirmation for "Strong Buy"
             recommendations["Intraday"] = "Strong Buy"
-        elif sell_score >= 3:
+        elif sell_score >= 4:
             recommendations["Intraday"] = "Strong Sell"
         # Calculate Trade Levels
         recommendations["Stop Loss"] = calculate_stop_loss(data)
