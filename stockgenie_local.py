@@ -23,6 +23,71 @@ TOOLTIPS = {
     "VWAP": "Volume Weighted Average Price - Intraday trend indicator",
 }
 
+
+def display_dashboard(symbol=None, data=None, recommendations=None, NSE_STOCKS=None):
+    """Enhanced UI with color coding and tooltips"""
+    st.title("📊 StockGenie Pro - NSE Analysis")
+    st.subheader(f"📅 Analysis for {datetime.now().strftime('%d %b %Y')}")
+
+    # Price Range Slider
+    price_range = st.sidebar.slider(
+        "Select Price Range (₹)",
+        min_value=0, max_value=10000, value=(100, 1000)
+    )
+
+    # Daily Suggestions Button
+    if st.button("🚀 Generate Daily Top Picks"):
+        with st.spinner("⏳ Scanning market..."):
+            results_df = analyze_all_stocks(NSE_STOCKS, price_range=price_range)
+            st.subheader("🏆 Today's Top 10 Stocks")
+            for _, row in results_df.iterrows():
+                with st.expander(f"{row['Symbol']} - Score: {row['Score']}/5"):
+                    st.markdown(f"""
+                    {tooltip('Current Price', TOOLTIPS['Stop Loss'])}: ₹{row['Current Price']:.2f}  
+                    Buy At: ₹{row['Buy At']:.2f} | Stop Loss: ₹{row['Stop Loss']:.2f}  
+                    Target: ₹{row['Target']:.2f}  
+                    Intraday: {colored_recommendation(row['Intraday'])}  
+                    Swing: {colored_recommendation(row['Swing'])}  
+                    Short-Term: {colored_recommendation(row['Short-Term'])}  
+                    Long-Term: {colored_recommendation(row['Long-Term'])}
+                    """, unsafe_allow_html=True)
+
+    # Individual Stock Analysis
+    if symbol:
+        st.header(f"📋 {symbol.split('.')[0]} Analysis")
+        col1, col2, col3, col4 = st.columns(4)
+        with col1:
+            st.metric(tooltip("Current Price", TOOLTIPS['RSI']), f"₹{recommendations['Current Price']:.2f}")
+        with col2:
+            st.metric(tooltip("Buy At", "Recommended entry price"), f"₹{recommendations['Buy At']:.2f}")
+        with col3:
+            st.metric(tooltip("Stop Loss", TOOLTIPS['Stop Loss']), f"₹{recommendations['Stop Loss']:.2f}")
+        with col4:
+            st.metric(tooltip("Target", "Price target based on risk/reward"), f"₹{recommendations['Target']:.2f}")
+
+        st.subheader("📈 Trading Recommendations")
+        cols = st.columns(4)
+        strategy_names = ["Intraday", "Swing", "Short-Term", "Long-Term"]
+        for col, strategy in zip(cols, strategy_names):
+            with col:
+                st.markdown(f"**{strategy}**", unsafe_allow_html=True)
+                st.markdown(colored_recommendation(recommendations[strategy]), unsafe_allow_html=True)
+
+        tab1, tab2, tab3, tab4 = st.tabs(["📊 Price Action", "📉 Indicators", "📊 Volatility", "📊 Volume Profile"])
+        with tab1:
+            fig = px.line(data, y=['Close', 'SMA_50', 'SMA_200', 'EMA_20', 'EMA_50'], title="Price with Moving Averages")
+            st.plotly_chart(fig)
+        with tab2:
+            fig = px.line(data, y=['RSI', 'MACD', 'MACD_signal'], title="Momentum Indicators")
+            st.plotly_chart(fig)
+        with tab3:
+            fig = px.line(data, y=['ATR', 'Upper_Band', 'Lower_Band'], title="Volatility Analysis")
+            st.plotly_chart(fig)
+        with tab4:
+            vpvr = calculate_vpvr(data)
+            if vpvr is not None:
+                fig = px.bar(vpvr, title="Volume Profile Visible Range (VPVR)")
+                st.plotly_chart(fig)
 # Tooltip function
 def tooltip(label, explanation):
     """Returns a formatted tooltip string"""
@@ -178,6 +243,29 @@ def analyze_stock(data):
         data['Volume_Spike'] = None
     return data
 
+def calculate_vpvr(data, num_bins=10):
+    """Calculate Volume Profile Visible Range (VPVR)"""
+    if data.empty:
+        return None
+
+    try:
+        # Calculate price range
+        price_range = data['High'].max() - data['Low'].min()
+        bin_width = price_range / num_bins
+
+        # Initialize bins
+        bins = [data['Low'].min() + i * bin_width for i in range(num_bins + 1)]
+        volume_profile = pd.cut(data['Close'], bins=bins, include_lowest=True).value_counts().sort_index()
+
+        # Normalize volume profile
+        volume_profile = volume_profile / volume_profile.sum()
+
+        return volume_profile
+    except Exception as e:
+        st.warning(f"⚠️ Error calculating VPVR: {e}")
+        return None
+
+
 def calculate_stop_loss(data, atr_multiplier=2.5):
     """Calculate stop-loss level based on ATR"""
     if data.empty or 'ATR' not in data.columns or data['ATR'].iloc[-1] is None:
@@ -191,6 +279,29 @@ def calculate_stop_loss(data, atr_multiplier=2.5):
         atr_multiplier = 1.5  # Sideways market
     stop_loss = last_close - (atr_multiplier * last_atr)
     return round(stop_loss, 2)
+
+def calculate_vpvr(data, num_bins=10):
+    """Calculate Volume Profile Visible Range (VPVR)"""
+    if data.empty:
+        return None
+
+    try:
+        # Calculate price range
+        price_range = data['High'].max() - data['Low'].min()
+        bin_width = price_range / num_bins
+
+        # Initialize bins
+        bins = [data['Low'].min() + i * bin_width for i in range(num_bins + 1)]
+        volume_profile = pd.cut(data['Close'], bins=bins, include_lowest=True).value_counts().sort_index()
+
+        # Normalize volume profile
+        volume_profile = volume_profile / volume_profile.sum()
+
+        return volume_profile
+    except Exception as e:
+        st.warning(f"⚠️ Error calculating VPVR: {e}")
+        return None
+
 
 def calculate_buy_at(data):
     """Calculate optimal buy price based on RSI and current price"""
@@ -219,68 +330,27 @@ def calculate_target(data, risk_reward_ratio=3):
     target = last_close + (risk * risk_reward_ratio)
     return round(target, 2)
 
-def generate_recommendations(data):
-    """Generate comprehensive trade recommendations"""
-    recommendations = {
-        "Intraday": "Hold", "Swing": "Hold",
-        "Short-Term": "Hold", "Long-Term": "Hold",
-        "Current Price": None, "Buy At": None,
-        "Stop Loss": None, "Target": None, "Score": 0
-    }
+def calculate_vpvr(data, num_bins=10):
+    """Calculate Volume Profile Visible Range (VPVR)"""
     if data.empty:
-        return recommendations
-    try:
-        # Current Price
-        recommendations["Current Price"] = data['Close'].iloc[-1]
-        # Multi-Factor Scoring System
-        buy_score = 0
-        sell_score = 0
-        # Condition 1: RSI < 30 (Oversold) or > 70 (Overbought)
-        if 'RSI' in data.columns:
-            if data['RSI'].iloc[-1] < 30:
-                buy_score += 2  # Higher weight for RSI
-            elif data['RSI'].iloc[-1] > 70:
-                sell_score += 2
-        # Condition 2: MACD Crossover
-        if 'MACD' in data.columns and 'MACD_signal' in data.columns:
-            if data['MACD'].iloc[-1] > data['MACD_signal'].iloc[-1]:
-                buy_score += 1
-            elif data['MACD'].iloc[-1] < data['MACD_signal'].iloc[-1]:
-                sell_score += 1
-        # Condition 3: Bollinger Band Reversion
-        if 'Close' in data.columns and 'Lower_Band' in data.columns and 'Upper_Band' in data.columns:
-            if data['Close'].iloc[-1] < data['Lower_Band'].iloc[-1]:  # Oversold condition
-                buy_score += 1
-            elif data['Close'].iloc[-1] > data['Upper_Band'].iloc[-1]:  # Overbought condition
-                sell_score += 1
-        # Condition 4: VWAP Trend
-        if 'VWAP' in data.columns:
-            if data['Close'].iloc[-1] > data['VWAP'].iloc[-1]:  # Price above VWAP indicates bullish trend
-                buy_score += 1
-            elif data['Close'].iloc[-1] < data['VWAP'].iloc[-1]:  # Price below VWAP indicates bearish trend
-                sell_score += 1
-        # Condition 5: Volume Confirmation
-        if 'Volume' in data.columns:
-            avg_volume = data['Volume'].rolling(window=10).mean().iloc[-1]
-            if data['Volume'].iloc[-1] > avg_volume * 1.5:  # High volume confirms trend
-                buy_score += 1
-            elif data['Volume'].iloc[-1] < avg_volume * 0.5:  # Low volume indicates weakness
-                sell_score += 1
-        # Assign Recommendations Based on Scores
-        if buy_score >= 4:  # Require stronger confirmation for "Strong Buy"
-            recommendations["Intraday"] = "Strong Buy"
-        elif sell_score >= 4:
-            recommendations["Intraday"] = "Strong Sell"
-        # Calculate Trade Levels
-        recommendations["Stop Loss"] = calculate_stop_loss(data)
-        recommendations["Buy At"] = calculate_buy_at(data)
-        recommendations["Target"] = calculate_target(data)
-        # Final Score (Optional)
-        recommendations["Score"] = max(0, min(buy_score - sell_score, 5))  # Keep score between 0-5
-    except Exception as e:
-        st.warning(f"⚠️ Recommendation error: {str(e)}")
-    return recommendations
+        return None
 
+    try:
+        # Calculate price range
+        price_range = data['High'].max() - data['Low'].min()
+        bin_width = price_range / num_bins
+
+        # Initialize bins
+        bins = [data['Low'].min() + i * bin_width for i in range(num_bins + 1)]
+        volume_profile = pd.cut(data['Close'], bins=bins, include_lowest=True).value_counts().sort_index()
+
+        # Normalize volume profile
+        volume_profile = volume_profile / volume_profile.sum()
+
+        return volume_profile
+    except Exception as e:
+        st.warning(f"⚠️ Error calculating VPVR: {e}")
+        return None
 def analyze_batch(stock_batch):
     """Analyze a batch of stocks in parallel"""
     results = []
