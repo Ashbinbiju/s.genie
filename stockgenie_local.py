@@ -2,7 +2,7 @@ import yfinance as yf
 import pandas as pd
 import ta
 import streamlit as st
-from datetime import datetime, timedelta
+from datetime import datetime
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from functools import lru_cache
 from tqdm import tqdm
@@ -14,7 +14,6 @@ import random
 from bs4 import BeautifulSoup
 from nltk.sentiment import SentimentIntensityAnalyzer
 import nltk
-import feedparser
 
 nltk.download('vader_lexicon')
 
@@ -71,8 +70,11 @@ def fetch_nse_stock_list():
     except Exception as e:
         st.warning(f"⚠️ Failed to fetch live NSE stock list. Falling back to predefined list. Error: {str(e)}")
         return [
-            "RELIANCE.NS", "TCS.NS", "HDFCBANK.NS", "INFY.NS", "ICICIBANK.NS",
-            "KOTAKBANK.NS", "HINDUNILVR.NS", "SBIN.NS", "BAJFINANCE.NS", "BHARTIARTL.NS"
+            "20MICRONS.NS", "21STCENMGM.NS", "360ONE.NS", "3IINFOLTD.NS", "3MINDIA.NS", "5PAISA.NS", "63MOONS.NS",
+            "A2ZINFRA.NS", "AAATECH.NS", "AADHARHFC.NS", "AAKASH.NS", "AAREYDRUGS.NS", "AARON.NS", "AARTECH.NS",
+            "AARTIDRUGS.NS", "AARTIIND.NS", "AARTIPHARM.NS", "AARTISURF.NS", "AARVEEDEN.NS", "AARVI.NS",
+            "AATMAJ.NS", "AAVAS.NS", "ABAN.NS", "ABB.NS", "ABBOTINDIA.NS", "ABCAPITAL.NS", "ABCOTS.NS", "ABDL.NS",
+            "ABFRL.NS",
         ]
 
 @lru_cache(maxsize=100)
@@ -96,17 +98,11 @@ def fetch_fundamental_data(stock):
     try:
         info = stock.info
         pe_ratio = info.get('trailingPE', None)
-        pb_ratio = info.get('priceToBook', None)
-        dividend_yield = info.get('dividendYield', None)
-        market_cap = info.get('marketCap', None)
         debt_to_equity = info.get('debtToEquity', None)
         earnings_growth = info.get('earningsGrowth', None)
         roe = info.get('returnOnEquity', None)
         return {
             "P/E Ratio": pe_ratio,
-            "P/B Ratio": pb_ratio,
-            "Dividend Yield": dividend_yield,
-            "Market Cap": market_cap,
             "Debt/Equity": debt_to_equity,
             "Earnings Growth": earnings_growth,
             "ROE": roe,
@@ -126,31 +122,11 @@ def filter_fundamentals(fundamentals):
     return True
 
 def scrape_news(stock_name):
-    """Scrape financial news headlines from multiple sources"""
-    sources = {
-        "MoneyControl": f"https://www.moneycontrol.com/news/tags/{stock_name}.html",
-        "EconomicTimes": f"https://economictimes.indiatimes.com/markets/stocks/rssfeeds/{stock_name}.cms",
-        "Yahoo Finance": f"https://finance.yahoo.com/quote/{stock_name}.NS/news",
-        "Google News": f"https://www.google.com/search?q={stock_name}+stock+news&tbm=nws",
-    }
-    headlines = []
-    for source, url in sources.items():
-        try:
-            response = requests.get(url)
-            if source == "EconomicTimes":
-                feed = feedparser.parse(response.text)
-                headlines.extend([entry.title for entry in feed.entries])
-            elif source == "Yahoo Finance":
-                soup = BeautifulSoup(response.text, 'html.parser')
-                headlines.extend([tag.text for tag in soup.find_all('h3')])
-            elif source == "MoneyControl":
-                soup = BeautifulSoup(response.text, 'html.parser')
-                headlines.extend([tag.text for tag in soup.find_all('h2')])
-            elif source == "Google News":
-                soup = BeautifulSoup(response.text, 'html.parser')
-                headlines.extend([tag.text for tag in soup.find_all('a') if "news" in tag.get('href', '')])
-        except Exception as e:
-            st.warning(f"⚠️ Failed to scrape {source}: {str(e)}")
+    """Scrape financial news headlines from MoneyControl"""
+    url = f"https://www.moneycontrol.com/news/tags/{stock_name}.html"
+    response = requests.get(url)
+    soup = BeautifulSoup(response.text, 'html.parser')
+    headlines = [tag.text for tag in soup.find_all('h2')]  # Modify based on site structure
     return headlines
 
 def analyze_sentiment_vader(texts):
@@ -519,3 +495,6 @@ def main():
 
 if __name__ == "__main__":
     main()
+
+
+what do u thinkkk , any suggestion
