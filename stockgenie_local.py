@@ -2,7 +2,7 @@ import yfinance as yf
 import pandas as pd
 import ta
 import streamlit as st
-from datetime import datetime
+from datetime import datetime, timedelta
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from functools import lru_cache
 from tqdm import tqdm
@@ -11,6 +11,12 @@ import time
 import requests
 import io
 import random
+from bs4 import BeautifulSoup
+from nltk.sentiment import SentimentIntensityAnalyzer
+import nltk
+import feedparser
+
+nltk.download('vader_lexicon')
 
 # Tooltip explanations
 TOOLTIPS = {
@@ -21,6 +27,7 @@ TOOLTIPS = {
     "Bollinger": "Price volatility bands around moving average",
     "Stop Loss": "Risk management price level based on ATR",
     "VWAP": "Volume Weighted Average Price - Intraday trend indicator",
+    "Sentiment": "Overall sentiment from financial news"
 }
 
 # Tooltip function
@@ -64,11 +71,8 @@ def fetch_nse_stock_list():
     except Exception as e:
         st.warning(f"⚠️ Failed to fetch live NSE stock list. Falling back to predefined list. Error: {str(e)}")
         return [
-            "20MICRONS.NS", "21STCENMGM.NS", "360ONE.NS", "3IINFOLTD.NS", "3MINDIA.NS", "5PAISA.NS", "63MOONS.NS",
-            "A2ZINFRA.NS", "AAATECH.NS", "AADHARHFC.NS", "AAKASH.NS", "AAREYDRUGS.NS", "AARON.NS", "AARTECH.NS",
-            "AARTIDRUGS.NS", "AARTIIND.NS", "AARTIPHARM.NS", "AARTISURF.NS", "AARVEEDEN.NS", "AARVI.NS",
-            "AATMAJ.NS", "AAVAS.NS", "ABAN.NS", "ABB.NS", "ABBOTINDIA.NS", "ABCAPITAL.NS", "ABCOTS.NS", "ABDL.NS",
-            "ABFRL.NS",
+            "RELIANCE.NS", "TCS.NS", "HDFCBANK.NS", "INFY.NS", "ICICIBANK.NS",
+            "KOTAKBANK.NS", "HINDUNILVR.NS", "SBIN.NS", "BAJFINANCE.NS", "BHARTIARTL.NS"
         ]
 
 @lru_cache(maxsize=100)
@@ -92,11 +96,17 @@ def fetch_fundamental_data(stock):
     try:
         info = stock.info
         pe_ratio = info.get('trailingPE', None)
+        pb_ratio = info.get('priceToBook', None)
+        dividend_yield = info.get('dividendYield', None)
+        market_cap = info.get('marketCap', None)
         debt_to_equity = info.get('debtToEquity', None)
         earnings_growth = info.get('earningsGrowth', None)
         roe = info.get('returnOnEquity', None)
         return {
             "P/E Ratio": pe_ratio,
+            "P/B Ratio": pb_ratio,
+            "Dividend Yield": dividend_yield,
+            "Market Cap": market_cap,
             "Debt/Equity": debt_to_equity,
             "Earnings Growth": earnings_growth,
             "ROE": roe,
@@ -114,6 +124,48 @@ def filter_fundamentals(fundamentals):
     if fundamentals["Earnings Growth"] is not None and fundamentals["Earnings Growth"] < 0:
         return False
     return True
+
+def scrape_news(stock_name):
+    """Scrape financial news headlines from multiple sources"""
+    sources = {
+        "MoneyControl": f"https://www.moneycontrol.com/news/tags/{stock_name}.html",
+        "EconomicTimes": f"https://economictimes.indiatimes.com/markets/stocks/rssfeeds/{stock_name}.cms",
+        "Yahoo Finance": f"https://finance.yahoo.com/quote/{stock_name}.NS/news",
+        "Google News": f"https://www.google.com/search?q={stock_name}+stock+news&tbm=nws",
+    }
+    headlines = []
+    for source, url in sources.items():
+        try:
+            response = requests.get(url)
+            if source == "EconomicTimes":
+                feed = feedparser.parse(response.text)
+                headlines.extend([entry.title for entry in feed.entries])
+            elif source == "Yahoo Finance":
+                soup = BeautifulSoup(response.text, 'html.parser')
+                headlines.extend([tag.text for tag in soup.find_all('h3')])
+            elif source == "MoneyControl":
+                soup = BeautifulSoup(response.text, 'html.parser')
+                headlines.extend([tag.text for tag in soup.find_all('h2')])
+            elif source == "Google News":
+                soup = BeautifulSoup(response.text, 'html.parser')
+                headlines.extend([tag.text for tag in soup.find_all('a') if "news" in tag.get('href', '')])
+        except Exception as e:
+            st.warning(f"⚠️ Failed to scrape {source}: {str(e)}")
+    return headlines
+
+def analyze_sentiment_vader(texts):
+    """Perform sentiment analysis using Vader"""
+    sia = SentimentIntensityAnalyzer()
+    positive, negative, neutral = 0, 0, 0
+    for text in texts:
+        score = sia.polarity_scores(text)
+        if score['compound'] > 0:
+            positive += 1
+        elif score['compound'] < 0:
+            negative += 1
+        else:
+            neutral += 1
+    return {"Positive": positive, "Negative": negative, "Neutral": neutral}
 
 def analyze_stock(data):
     """Perform technical analysis on stock data"""
@@ -247,24 +299,14 @@ def calculate_target(data, risk_reward_ratio=3):
     target = last_close + (risk * risk_reward_ratio)
     return round(target, 2)
 
-def detect_market_condition(data):
-    """Detect market condition based on volatility"""
-    atr = data['ATR'].iloc[-1]
-    avg_atr = data['ATR'].mean()
-    if atr > avg_atr * 1.5:
-        return "High Volatility"
-    elif atr < avg_atr * 0.7:
-        return "Low Volatility"
-    else:
-        return "Normal"
-
-def generate_recommendations(data):
+def generate_recommendations(data, sentiment_scores):
     """Generate comprehensive trade recommendations with dynamic weighting"""
     recommendations = {
         "Intraday": "Hold", "Swing": "Hold",
         "Short-Term": "Hold", "Long-Term": "Hold",
         "Current Price": None, "Buy At": None,
-        "Stop Loss": None, "Target": None, "Score": 0
+        "Stop Loss": None, "Target": None, "Score": 0,
+        "Sentiment": sentiment_scores
     }
     if data.empty:
         return recommendations
@@ -274,36 +316,30 @@ def generate_recommendations(data):
         # Multi-Factor Scoring System
         buy_score = 0
         sell_score = 0
-        market_condition = detect_market_condition(data)
-        
         # Condition 1: RSI < 30 (Oversold) or > 70 (Overbought)
         if 'RSI' in data.columns:
             if data['RSI'].iloc[-1] < 30:
                 buy_score += 2  # Higher weight for RSI
             elif data['RSI'].iloc[-1] > 70:
                 sell_score += 2
-        
         # Condition 2: MACD Crossover
         if 'MACD' in data.columns and 'MACD_signal' in data.columns:
             if data['MACD'].iloc[-1] > data['MACD_signal'].iloc[-1]:
                 buy_score += 1
             elif data['MACD'].iloc[-1] < data['MACD_signal'].iloc[-1]:
                 sell_score += 1
-        
         # Condition 3: Bollinger Band Reversion
         if 'Close' in data.columns and 'Lower_Band' in data.columns and 'Upper_Band' in data.columns:
             if data['Close'].iloc[-1] < data['Lower_Band'].iloc[-1]:  # Oversold condition
                 buy_score += 1
             elif data['Close'].iloc[-1] > data['Upper_Band'].iloc[-1]:  # Overbought condition
                 sell_score += 1
-        
         # Condition 4: VWAP Trend
         if 'VWAP' in data.columns:
             if data['Close'].iloc[-1] > data['VWAP'].iloc[-1]:  # Price above VWAP indicates bullish trend
                 buy_score += 1
             elif data['Close'].iloc[-1] < data['VWAP'].iloc[-1]:  # Price below VWAP indicates bearish trend
                 sell_score += 1
-        
         # Condition 5: Volume Confirmation
         if 'Volume' in data.columns:
             avg_volume = data['Volume'].rolling(window=10).mean().iloc[-1]
@@ -311,26 +347,15 @@ def generate_recommendations(data):
                 buy_score += 1
             elif data['Volume'].iloc[-1] < avg_volume * 0.5:  # Low volume indicates weakness
                 sell_score += 1
-        
-        # Dynamic Weighting Based on Market Condition
-        if market_condition == "High Volatility":
-            if data['Volume_Spike'].iloc[-1]:
-                buy_score += 2  # Extra weight for volume spikes in high volatility
-        elif market_condition == "Low Volatility":
-            if data['RSI'].iloc[-1] < 30:
-                buy_score += 1  # Extra weight for oversold RSI in low volatility
-        
         # Assign Recommendations Based on Scores
         if buy_score >= 4:  # Require stronger confirmation for "Strong Buy"
             recommendations["Intraday"] = "Strong Buy"
         elif sell_score >= 4:
             recommendations["Intraday"] = "Strong Sell"
-        
         # Calculate Trade Levels
         recommendations["Stop Loss"] = calculate_stop_loss(data)
         recommendations["Buy At"] = calculate_buy_at(data)
         recommendations["Target"] = calculate_target(data)
-        
         # Final Score (Optional)
         recommendations["Score"] = max(0, min(buy_score - sell_score, 5))  # Keep score between 0-5
     except Exception as e:
@@ -360,7 +385,11 @@ def analyze_stock_parallel(symbol):
         if not filter_fundamentals(fundamentals):
             return None  # Exclude fundamentally weak stocks
         data = analyze_stock(data)
-        recommendations = generate_recommendations(data)
+        # Scrape and analyze sentiment
+        stock_name = symbol.split('.')[0]
+        news_headlines = scrape_news(stock_name)
+        sentiment_scores = analyze_sentiment_vader(news_headlines)
+        recommendations = generate_recommendations(data, sentiment_scores)
         return {
             "Symbol": symbol,
             "Current Price": recommendations["Current Price"],
@@ -372,6 +401,7 @@ def analyze_stock_parallel(symbol):
             "Short-Term": recommendations["Short-Term"],
             "Long-Term": recommendations["Long-Term"],
             "Score": recommendations.get("Score", 0),
+            "Sentiment": sentiment_scores
         }
     return None
 
@@ -425,7 +455,8 @@ def display_dashboard(symbol=None, data=None, recommendations=None, NSE_STOCKS=N
                     Intraday: {colored_recommendation(row['Intraday'])}  
                     Swing: {colored_recommendation(row['Swing'])}  
                     Short-Term: {colored_recommendation(row['Short-Term'])}  
-                    Long-Term: {colored_recommendation(row['Long-Term'])}
+                    Long-Term: {colored_recommendation(row['Long-Term'])}  
+                    Sentiment: Positive={row['Sentiment']['Positive']}, Negative={row['Sentiment']['Negative']}, Neutral={row['Sentiment']['Neutral']}
                     """, unsafe_allow_html=True)
     # Individual Stock Analysis
     if symbol:
@@ -478,7 +509,10 @@ def main():
         data = fetch_stock_data_cached(symbol)
         if not data.empty:
             data = analyze_stock(data)
-            recommendations = generate_recommendations(data)
+            stock_name = symbol.split('.')[0]
+            news_headlines = scrape_news(stock_name)
+            sentiment_scores = analyze_sentiment_vader(news_headlines)
+            recommendations = generate_recommendations(data, sentiment_scores)
             display_dashboard(symbol, data, recommendations, NSE_STOCKS)
         else:
             st.error("❌ Failed to load data for this symbol")
