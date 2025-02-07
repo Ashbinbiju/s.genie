@@ -9,4 +9,5 @@ lxml
 openpyxl
 numpy
 nltk
+feedparser
 beautifulsoup4
