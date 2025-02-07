@@ -87,6 +87,34 @@ def fetch_stock_data_cached(symbol, period="5y", interval="1d"):
         st.error(f"Error: {str(e)}")
         return pd.DataFrame()
 
+def fetch_fundamental_data(stock):
+    """Fetch fundamental metrics using yfinance"""
+    try:
+        info = stock.info
+        pe_ratio = info.get('trailingPE', None)
+        debt_to_equity = info.get('debtToEquity', None)
+        earnings_growth = info.get('earningsGrowth', None)
+        roe = info.get('returnOnEquity', None)
+        return {
+            "P/E Ratio": pe_ratio,
+            "Debt/Equity": debt_to_equity,
+            "Earnings Growth": earnings_growth,
+            "ROE": roe,
+        }
+    except Exception as e:
+        st.warning(f"⚠️ Error fetching fundamental data: {str(e)}")
+        return {}
+
+def filter_fundamentals(fundamentals):
+    """Filter stocks based on fundamental criteria"""
+    if fundamentals["P/E Ratio"] is None or fundamentals["P/E Ratio"] > 30:
+        return False
+    if fundamentals["Debt/Equity"] is not None and fundamentals["Debt/Equity"] > 100:
+        return False
+    if fundamentals["Earnings Growth"] is not None and fundamentals["Earnings Growth"] < 0:
+        return False
+    return True
+
 def analyze_stock(data):
     """Perform technical analysis on stock data"""
     if data.empty or len(data) < 27:  # Ensure enough data points for ADX calculation
@@ -219,8 +247,19 @@ def calculate_target(data, risk_reward_ratio=3):
     target = last_close + (risk * risk_reward_ratio)
     return round(target, 2)
 
+def detect_market_condition(data):
+    """Detect market condition based on volatility"""
+    atr = data['ATR'].iloc[-1]
+    avg_atr = data['ATR'].mean()
+    if atr > avg_atr * 1.5:
+        return "High Volatility"
+    elif atr < avg_atr * 0.7:
+        return "Low Volatility"
+    else:
+        return "Normal"
+
 def generate_recommendations(data):
-    """Generate comprehensive trade recommendations"""
+    """Generate comprehensive trade recommendations with dynamic weighting"""
     recommendations = {
         "Intraday": "Hold", "Swing": "Hold",
         "Short-Term": "Hold", "Long-Term": "Hold",
@@ -235,30 +274,36 @@ def generate_recommendations(data):
         # Multi-Factor Scoring System
         buy_score = 0
         sell_score = 0
+        market_condition = detect_market_condition(data)
+        
         # Condition 1: RSI < 30 (Oversold) or > 70 (Overbought)
         if 'RSI' in data.columns:
             if data['RSI'].iloc[-1] < 30:
                 buy_score += 2  # Higher weight for RSI
             elif data['RSI'].iloc[-1] > 70:
                 sell_score += 2
+        
         # Condition 2: MACD Crossover
         if 'MACD' in data.columns and 'MACD_signal' in data.columns:
             if data['MACD'].iloc[-1] > data['MACD_signal'].iloc[-1]:
                 buy_score += 1
             elif data['MACD'].iloc[-1] < data['MACD_signal'].iloc[-1]:
                 sell_score += 1
+        
         # Condition 3: Bollinger Band Reversion
         if 'Close' in data.columns and 'Lower_Band' in data.columns and 'Upper_Band' in data.columns:
             if data['Close'].iloc[-1] < data['Lower_Band'].iloc[-1]:  # Oversold condition
                 buy_score += 1
             elif data['Close'].iloc[-1] > data['Upper_Band'].iloc[-1]:  # Overbought condition
                 sell_score += 1
+        
         # Condition 4: VWAP Trend
         if 'VWAP' in data.columns:
             if data['Close'].iloc[-1] > data['VWAP'].iloc[-1]:  # Price above VWAP indicates bullish trend
                 buy_score += 1
             elif data['Close'].iloc[-1] < data['VWAP'].iloc[-1]:  # Price below VWAP indicates bearish trend
                 sell_score += 1
+        
         # Condition 5: Volume Confirmation
         if 'Volume' in data.columns:
             avg_volume = data['Volume'].rolling(window=10).mean().iloc[-1]
@@ -266,15 +311,26 @@ def generate_recommendations(data):
                 buy_score += 1
             elif data['Volume'].iloc[-1] < avg_volume * 0.5:  # Low volume indicates weakness
                 sell_score += 1
+        
+        # Dynamic Weighting Based on Market Condition
+        if market_condition == "High Volatility":
+            if data['Volume_Spike'].iloc[-1]:
+                buy_score += 2  # Extra weight for volume spikes in high volatility
+        elif market_condition == "Low Volatility":
+            if data['RSI'].iloc[-1] < 30:
+                buy_score += 1  # Extra weight for oversold RSI in low volatility
+        
         # Assign Recommendations Based on Scores
         if buy_score >= 4:  # Require stronger confirmation for "Strong Buy"
             recommendations["Intraday"] = "Strong Buy"
         elif sell_score >= 4:
             recommendations["Intraday"] = "Strong Sell"
+        
         # Calculate Trade Levels
         recommendations["Stop Loss"] = calculate_stop_loss(data)
         recommendations["Buy At"] = calculate_buy_at(data)
         recommendations["Target"] = calculate_target(data)
+        
         # Final Score (Optional)
         recommendations["Score"] = max(0, min(buy_score - sell_score, 5))  # Keep score between 0-5
     except Exception as e:
@@ -299,6 +355,10 @@ def analyze_stock_parallel(symbol):
     """Analyze a single stock (used in parallel processing)"""
     data = fetch_stock_data_cached(symbol)
     if not data.empty:
+        stock = yf.Ticker(symbol)
+        fundamentals = fetch_fundamental_data(stock)
+        if not filter_fundamentals(fundamentals):
+            return None  # Exclude fundamentally weak stocks
         data = analyze_stock(data)
         recommendations = generate_recommendations(data)
         return {
@@ -367,19 +427,6 @@ def display_dashboard(symbol=None, data=None, recommendations=None, NSE_STOCKS=N
                     Short-Term: {colored_recommendation(row['Short-Term'])}  
                     Long-Term: {colored_recommendation(row['Long-Term'])}
                     """, unsafe_allow_html=True)
-    # Intraday Suggestions Button
-    if st.button("⚡ Generate Intraday Top 5 Picks"):
-        with st.spinner("⏳ Scanning market for intraday opportunities..."):
-            intraday_results = analyze_intraday_stocks(NSE_STOCKS, price_range=price_range)
-            st.subheader("🏆 Top 5 Intraday Stocks")
-            for _, row in intraday_results.iterrows():
-                with st.expander(f"{row['Symbol']} - Score: {row['Score']}/5"):
-                    st.markdown(f"""
-                    {tooltip('Current Price', TOOLTIPS['Stop Loss'])}: ₹{row['Current Price']:.2f}  
-                    Buy At: ₹{row['Buy At']:.2f} | Stop Loss: ₹{row['Stop Loss']:.2f}  
-                    Target: ₹{row['Target']:.2f}  
-                    Intraday: {colored_recommendation(row['Intraday'])}  
-                    """, unsafe_allow_html=True)
     # Individual Stock Analysis
     if symbol:
         st.header(f"📋 {symbol.split('.')[0]} Analysis")
@@ -409,23 +456,6 @@ def display_dashboard(symbol=None, data=None, recommendations=None, NSE_STOCKS=N
         with tab3:
             fig = px.line(data, y=['ATR', 'Upper_Band', 'Lower_Band'], title="Volatility Analysis")
             st.plotly_chart(fig)
-
-def analyze_intraday_stocks(stock_list, batch_size=50, price_range=None):
-    """Analyze all stocks for intraday trading and return top 5 picks"""
-    results = []
-    for i in tqdm(range(0, len(stock_list), batch_size), desc="Processing Batches for Intraday"):
-        batch = stock_list[i:i + batch_size]
-        batch_results = analyze_batch(batch)
-        results.extend(batch_results)
-    results_df = pd.DataFrame(results)
-    if "Score" not in results_df.columns:
-        results_df["Score"] = 0
-    # Filter by price range if provided
-    if price_range:
-        results_df = results_df[(results_df['Current Price'] >= price_range[0]) & (results_df['Current Price'] <= price_range[1])]
-    intraday_df = results_df[results_df["Intraday"].str.contains("Buy", na=False)]
-    intraday_df = intraday_df.sort_values(by="Score", ascending=False).head(5)
-    return intraday_df
 
 def main():
     """Main function with enhanced input validation"""
