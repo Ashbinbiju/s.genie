@@ -451,6 +451,9 @@ def display_dashboard(symbol=None, data=None, recommendations=None, NSE_STOCKS=N
     if st.button("🚀 Generate Daily Top Picks"):
         with st.spinner("⏳ Scanning market..."):
             results_df = analyze_all_stocks(NSE_STOCKS, price_range=price_range)
+        
+        # Display results only if the button is clicked and results are available
+        if not results_df.empty:
             st.subheader("🏆 Today's Top 10 Stocks")
             for _, row in results_df.iterrows():
                 with st.expander(f"{row['Symbol']} - Score: {row['Score']}/5"):
@@ -464,21 +467,6 @@ def display_dashboard(symbol=None, data=None, recommendations=None, NSE_STOCKS=N
                     Long-Term: {colored_recommendation(row['Long-Term'])}
                     """, unsafe_allow_html=True)
     
-    # Check if results_df is not empty before accessing it
-    if not results_df.empty:
-        st.subheader("🏆 Today's Top 10 Stocks")
-        for _, row in results_df.iterrows():
-            with st.expander(f"{row['Symbol']} - Score: {row['Score']}/5"):
-                st.markdown(f"""
-                {tooltip('Current Price', TOOLTIPS['Stop Loss'])}: ₹{row['Current Price']:.2f}  
-                Buy At: ₹{row['Buy At']:.2f} | Stop Loss: ₹{row['Stop Loss']:.2f}  
-                Target: ₹{row['Target']:.2f}  
-                Intraday: {colored_recommendation(row['Intraday'])}  
-                Swing: {colored_recommendation(row['Swing'])}  
-                Short-Term: {colored_recommendation(row['Short-Term'])}  
-                Long-Term: {colored_recommendation(row['Long-Term'])}
-                """, unsafe_allow_html=True)
-    
     # Individual Stock Analysis
     if symbol:
         st.header(f"📋 {symbol.split('.')[0]} Analysis")
@@ -491,6 +479,7 @@ def display_dashboard(symbol=None, data=None, recommendations=None, NSE_STOCKS=N
             st.metric(tooltip("Stop Loss", TOOLTIPS['Stop Loss']), f"₹{recommendations['Stop Loss']:.2f}")
         with col4:
             st.metric(tooltip("Target", "Price target based on risk/reward"), f"₹{recommendations['Target']:.2f}")
+        
         st.subheader("📈 Trading Recommendations")
         cols = st.columns(4)
         strategy_names = ["Intraday", "Swing", "Short-Term", "Long-Term"]
@@ -498,6 +487,7 @@ def display_dashboard(symbol=None, data=None, recommendations=None, NSE_STOCKS=N
             with col:
                 st.markdown(f"**{strategy}**", unsafe_allow_html=True)
                 st.markdown(colored_recommendation(recommendations[strategy]), unsafe_allow_html=True)
+        
         tab1, tab2, tab3 = st.tabs(["📊 Price Action", "📉 Indicators", "📊 Volatility"])
         with tab1:
             fig = px.line(data, y=['Close', 'SMA_50', 'SMA_200', 'EMA_20', 'EMA_50'], title="Price with Moving Averages")
