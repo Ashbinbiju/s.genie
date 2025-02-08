@@ -4,7 +4,7 @@ import ta
 import streamlit as st
 from datetime import datetime
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from functools import lru_cache
+from diskcache import Cache  # Persistent caching
 from tqdm import tqdm
 import plotly.express as px
 import time
@@ -47,6 +47,9 @@ def retry(max_retries=3, delay=1, backoff_factor=2, jitter=0.5):
         return wrapper
     return decorator
 
+# Persistent caching with diskcache
+cache = Cache('stock_data_cache')
+
 @retry(max_retries=3, delay=2)
 def fetch_nse_stock_list():
     """
@@ -71,24 +74,25 @@ def fetch_nse_stock_list():
             "ABFRL.NS",
         ]
 
-@lru_cache(maxsize=100)
 def fetch_stock_data_cached(symbol, period="5y", interval="1d"):
-    """Fetch data with retries and caching"""
+    """Fetch data with retries and persistent caching"""
+    cache_key = f"{symbol}_{period}_{interval}"
+    if cache_key in cache:
+        return cache[cache_key]
     try:
         if ".NS" not in symbol:
             symbol += ".NS"
         stock = yf.Ticker(symbol)
         data = stock.history(period=period, interval=interval)
-        
         # Data validation: Ensure required columns are present
         required_columns = {'Close', 'High', 'Low', 'Volume'}
         if not required_columns.issubset(data.columns):
             missing_cols = required_columns - set(data.columns)
             st.error(f"❌ Missing required columns for {symbol}: {missing_cols}")
             return pd.DataFrame()
-        
         if data.empty:
             raise ValueError(f"No data found for {symbol}")
+        cache[cache_key] = data
         return data
     except Exception as e:
         st.error(f"❌ Failed to fetch data for {symbol} after 3 attempts")
@@ -215,16 +219,14 @@ def analyze_stock(data):
     return data
 
 def calculate_stop_loss(data, atr_multiplier=2.5):
-    """Calculate stop-loss level based on ATR"""
+    """Calculate stop-loss level based on dynamic ATR multiplier"""
     if data.empty or 'ATR' not in data.columns or data['ATR'].iloc[-1] is None:
         return None
     last_close = data['Close'].iloc[-1]
     last_atr = data['ATR'].iloc[-1]
     # Adjust multiplier based on trend
-    if 'ADX' in data.columns and data['ADX'].iloc[-1] > 25:
-        atr_multiplier = 3.0  # Strong trend
-    else:
-        atr_multiplier = 1.5  # Sideways market
+    adx = data['ADX'].iloc[-1] if 'ADX' in data.columns else None
+    atr_multiplier = 3.0 if adx and adx > 25 else 1.5  # Strong trend vs. sideways
     stop_loss = last_close - (atr_multiplier * last_atr)
     return round(stop_loss, 2)
 
@@ -241,17 +243,14 @@ def calculate_buy_at(data):
     return round(buy_at, 2)
 
 def calculate_target(data, risk_reward_ratio=3):
-    """Calculate target price based on risk-reward ratio"""
+    """Calculate target price based on dynamic risk-reward ratio"""
     stop_loss = calculate_stop_loss(data)
     if stop_loss is None:
         return None
     last_close = data['Close'].iloc[-1]
     risk = last_close - stop_loss
-    # Adjust risk-reward ratio based on trend
-    if 'ADX' in data.columns and data['ADX'].iloc[-1] > 25:
-        risk_reward_ratio = 3  # Strong trend
-    else:
-        risk_reward_ratio = 1.5  # Weak trend
+    adx = data['ADX'].iloc[-1] if 'ADX' in data.columns else None
+    risk_reward_ratio = 3 if adx and adx > 25 else 1.5  # Strong trend vs. sideways
     target = last_close + (risk * risk_reward_ratio)
     return round(target, 2)
 
@@ -375,12 +374,15 @@ def analyze_stock_parallel(symbol):
     return None
 
 def analyze_all_stocks(stock_list, batch_size=50, price_range=None):
-    """Analyze all stocks in the list using batch processing"""
+    """Analyze all stocks in the list using batch processing with progress bar"""
     results = []
-    for i in tqdm(range(0, len(stock_list), batch_size), desc="Processing Batches"):
-        batch = stock_list[i:i + batch_size]
+    total_batches = (len(stock_list) // batch_size) + 1
+    progress_bar = st.progress(0)
+    for i, batch_start in enumerate(range(0, len(stock_list), batch_size)):
+        batch = stock_list[batch_start:batch_start + batch_size]
         batch_results = analyze_batch(batch)
         results.extend(batch_results)
+        progress_bar.progress((i + 1) / total_batches)
     results_df = pd.DataFrame(results)
     if "Score" not in results_df.columns:
         results_df["Score"] = 0
@@ -389,6 +391,26 @@ def analyze_all_stocks(stock_list, batch_size=50, price_range=None):
         results_df = results_df[(results_df['Current Price'] >= price_range[0]) & (results_df['Current Price'] <= price_range[1])]
     results_df = results_df.sort_values(by="Score", ascending=False).head(10)
     return results_df
+
+def calculate_win_rate(trades):
+    """Calculate win rate based on trade outcomes"""
+    profitable_trades = sum(1 for _, row in trades.iterrows() if row['Target'] > row['Current Price'])
+    total_trades = len(trades)
+    return (profitable_trades / total_trades) * 100 if total_trades > 0 else 0
+
+def calculate_risk_reward_ratio(trades):
+    """Calculate average risk-reward ratio"""
+    total_reward = sum(row['Target'] - row['Current Price'] for _, row in trades.iterrows())
+    total_risk = sum(row['Current Price'] - row['Stop Loss'] for _, row in trades.iterrows())
+    return total_reward / total_risk if total_risk > 0 else 0
+
+def calculate_sharpe_ratio(trades, risk_free_rate=0.0):
+    """Calculate Sharpe ratio"""
+    returns = [(row['Target'] - row['Current Price']) / row['Current Price'] for _, row in trades.iterrows()]
+    excess_returns = [r - risk_free_rate for r in returns]
+    mean_excess_return = sum(excess_returns) / len(excess_returns)
+    std_dev = (sum((r - mean_excess_return) ** 2 for r in excess_returns) / len(excess_returns)) ** 0.5
+    return mean_excess_return / std_dev if std_dev > 0 else 0
 
 def colored_recommendation(recommendation):
     """Returns a color-coded recommendation for Streamlit"""
@@ -402,14 +424,16 @@ def colored_recommendation(recommendation):
         return recommendation  # Default case, no color formatting
 
 def display_dashboard(symbol=None, data=None, recommendations=None, NSE_STOCKS=None):
-    """Enhanced UI with color coding and tooltips"""
+    """Enhanced UI with color coding, tooltips, and performance metrics"""
     st.title("📊 StockGenie Pro - NSE Analysis")
     st.subheader(f"📅 Analysis for {datetime.now().strftime('%d %b %Y')}")
+    
     # Price Range Slider
     price_range = st.sidebar.slider(
         "Select Price Range (₹)",
         min_value=0, max_value=10000, value=(100, 1000)
     )
+    
     # Daily Suggestions Button
     if st.button("🚀 Generate Daily Top Picks"):
         with st.spinner("⏳ Scanning market..."):
@@ -426,6 +450,17 @@ def display_dashboard(symbol=None, data=None, recommendations=None, NSE_STOCKS=N
                     Short-Term: {colored_recommendation(row['Short-Term'])}  
                     Long-Term: {colored_recommendation(row['Long-Term'])}
                     """, unsafe_allow_html=True)
+    
+    # Performance Metrics
+    if not results_df.empty:
+        st.subheader("📊 Performance Metrics")
+        win_rate = calculate_win_rate(results_df)
+        risk_reward_ratio = calculate_risk_reward_ratio(results_df)
+        sharpe_ratio = calculate_sharpe_ratio(results_df)
+        st.metric("Win Rate (%)", f"{win_rate:.2f}%")
+        st.metric("Risk-Reward Ratio", f"{risk_reward_ratio:.2f}")
+        st.metric("Sharpe Ratio", f"{sharpe_ratio:.2f}")
+
     # Individual Stock Analysis
     if symbol:
         st.header(f"📋 {symbol.split('.')[0]} Analysis")
@@ -460,6 +495,7 @@ def main():
     """Main function with enhanced input validation"""
     st.sidebar.title("🔍 Stock Search")
     NSE_STOCKS = fetch_nse_stock_list()
+    
     # Symbol input with validation
     symbol = st.sidebar.selectbox(
         "Choose or enter stock:",
