@@ -119,12 +119,22 @@ def fetch_fundamental_data(stock):
 
 def filter_fundamentals(fundamentals):
     """Filter stocks based on fundamental criteria"""
-    if fundamentals["P/E Ratio"] is None or fundamentals["P/E Ratio"] > 30:
+    # Check if P/E Ratio is valid and within range
+    pe_ratio = fundamentals.get("P/E Ratio")
+    if pe_ratio is None or pe_ratio > 30:
         return False
-    if fundamentals["Debt/Equity"] is not None and fundamentals["Debt/Equity"] > 100:
+
+    # Check if Debt/Equity is valid and within range
+    debt_to_equity = fundamentals.get("Debt/Equity")
+    if debt_to_equity is not None and debt_to_equity > 100:
         return False
-    if fundamentals["Earnings Growth"] is not None and fundamentals["Earnings Growth"] < 0:
+
+    # Check if Earnings Growth is valid and positive
+    earnings_growth = fundamentals.get("Earnings Growth")
+    if earnings_growth is not None and earnings_growth < 0:
         return False
+
+    # If all checks pass, return True
     return True
 
 def analyze_stock(data):
