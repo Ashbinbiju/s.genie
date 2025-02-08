@@ -424,7 +424,7 @@ def colored_recommendation(recommendation):
         return recommendation  # Default case, no color formatting
 
 def display_dashboard(symbol=None, data=None, recommendations=None, NSE_STOCKS=None):
-    """Enhanced UI with color coding, tooltips, and performance metrics"""
+    """Enhanced UI with color coding and tooltips"""
     st.title("📊 StockGenie Pro - NSE Analysis")
     st.subheader(f"📅 Analysis for {datetime.now().strftime('%d %b %Y')}")
     
@@ -433,6 +433,9 @@ def display_dashboard(symbol=None, data=None, recommendations=None, NSE_STOCKS=N
         "Select Price Range (₹)",
         min_value=0, max_value=10000, value=(100, 1000)
     )
+    
+    # Initialize results_df to avoid UnboundLocalError
+    results_df = pd.DataFrame()  # Default empty DataFrame
     
     # Daily Suggestions Button
     if st.button("🚀 Generate Daily Top Picks"):
@@ -451,16 +454,21 @@ def display_dashboard(symbol=None, data=None, recommendations=None, NSE_STOCKS=N
                     Long-Term: {colored_recommendation(row['Long-Term'])}
                     """, unsafe_allow_html=True)
     
-    # Performance Metrics
+    # Check if results_df is not empty before accessing it
     if not results_df.empty:
-        st.subheader("📊 Performance Metrics")
-        win_rate = calculate_win_rate(results_df)
-        risk_reward_ratio = calculate_risk_reward_ratio(results_df)
-        sharpe_ratio = calculate_sharpe_ratio(results_df)
-        st.metric("Win Rate (%)", f"{win_rate:.2f}%")
-        st.metric("Risk-Reward Ratio", f"{risk_reward_ratio:.2f}")
-        st.metric("Sharpe Ratio", f"{sharpe_ratio:.2f}")
-
+        st.subheader("🏆 Today's Top 10 Stocks")
+        for _, row in results_df.iterrows():
+            with st.expander(f"{row['Symbol']} - Score: {row['Score']}/5"):
+                st.markdown(f"""
+                {tooltip('Current Price', TOOLTIPS['Stop Loss'])}: ₹{row['Current Price']:.2f}  
+                Buy At: ₹{row['Buy At']:.2f} | Stop Loss: ₹{row['Stop Loss']:.2f}  
+                Target: ₹{row['Target']:.2f}  
+                Intraday: {colored_recommendation(row['Intraday'])}  
+                Swing: {colored_recommendation(row['Swing'])}  
+                Short-Term: {colored_recommendation(row['Short-Term'])}  
+                Long-Term: {colored_recommendation(row['Long-Term'])}
+                """, unsafe_allow_html=True)
+    
     # Individual Stock Analysis
     if symbol:
         st.header(f"📋 {symbol.split('.')[0]} Analysis")
