@@ -525,8 +525,8 @@ def display_dashboard(symbol=None, data=None, recommendations=None, NSE_STOCKS=N
             news = get_news(symbol)
             st.subheader("📰 Latest News")
             if news:
-            for title, link in news:
-                st.markdown(f"- [{title}]({link})", unsafe_allow_html=True)
+                for title, link in news:
+                    st.markdown(f"- [{title}]({link})", unsafe_allow_html=True)
             else:
                 st.info("ℹ️ No news available for this stock.")
 
