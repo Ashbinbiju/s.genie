@@ -92,6 +92,36 @@ def fetch_stock_data_cached(symbol, period="5y", interval="1d"):
         st.error(f"Error: {str(e)}")
         return pd.DataFrame()
 
+@st.cache_data(ttl=300)  # 5-minute cache
+def get_real_time_price(symbol):
+    """Get real-time price from Yahoo Finance"""
+    stock = yf.Ticker(symbol)
+    return stock.info.get('regularMarketPrice', None)
+
+def get_sector_performance(symbol):
+    """Compare against sector performance"""
+    SECTOR_ETFS = {
+        'Technology': 'XLK',
+        'Healthcare': 'XLV',
+        'Financial Services': 'XLF',
+        'Consumer Cyclical': 'XLY',
+        'Industrials': 'XLI',
+        'Basic Materials': 'XLB',
+        'Energy': 'XLE',
+        'Utilities': 'XLU',
+        'Real Estate': 'XLRE',
+        'Communication Services': 'XLC',
+        'Consumer Defensive': 'XLP'
+    }
+    sector = yf.Ticker(symbol).info.get('sector', 'N/A')
+    sector_etf = SECTOR_ETFS.get(sector, '^NSEI')  # Map to sector ETFs
+    return fetch_stock_data_cached(sector_etf)
+
+def get_news(symbol):
+    """Get relevant news articles"""
+    news = yf.Ticker(symbol).news
+    return [(n['title'], n['link']) for n in news[:3]]
+
 def analyze_stock(data):
     """Perform technical analysis on stock data"""
     if data.empty:
@@ -385,7 +415,6 @@ def analyze_all_stocks(stock_list, batch_size=50, price_range=None):
     results_df = pd.DataFrame(results)
     if "Score" not in results_df.columns:
         results_df["Score"] = 0
-
     # Filter by price range if provided
     if price_range:
         results_df = results_df[(results_df['Current Price'] >= price_range[0]) & (results_df['Current Price'] <= price_range[1])]
@@ -466,7 +495,7 @@ def display_dashboard(symbol=None, data=None, recommendations=None, NSE_STOCKS=N
                 st.markdown(f"**{strategy}**", unsafe_allow_html=True)
                 st.markdown(colored_recommendation(recommendations[strategy]), unsafe_allow_html=True)
 
-        tab1, tab2, tab3, tab4 = st.tabs(["📊 Price Action", "📉 Indicators", "📊 Volatility", "📏 Fibonacci"])
+        tab1, tab2, tab3, tab4, tab5 = st.tabs(["📊 Price Action", "📉 Indicators", "📊 Volatility", "📏 Fibonacci", "📰 News"])
         with tab1:
             fig = px.line(data, y=['Close', 'SMA_50', 'SMA_200', 'EMA_20', 'EMA_50'], title="Price with Moving Averages")
             st.plotly_chart(fig)
@@ -479,6 +508,11 @@ def display_dashboard(symbol=None, data=None, recommendations=None, NSE_STOCKS=N
         with tab4:
             fig = px.line(data, y=['Fib_23.6', 'Fib_38.2', 'Fib_50.0', 'Fib_61.8', 'Fib_78.6'], title="Fibonacci Retracement Levels")
             st.plotly_chart(fig)
+        with tab5:
+            news = get_news(symbol)
+            st.subheader("📰 Latest News")
+            for title, link in news:
+                st.markdown(f"- [{title}]({link})", unsafe_allow_html=True)
 
 def analyze_intraday_stocks(stock_list, batch_size=50, price_range=None):
     """Analyze all stocks for intraday trading and return top 5 picks"""
@@ -490,7 +524,6 @@ def analyze_intraday_stocks(stock_list, batch_size=50, price_range=None):
     results_df = pd.DataFrame(results)
     if "Score" not in results_df.columns:
         results_df["Score"] = 0
-
     # Filter by price range if provided
     if price_range:
         results_df = results_df[(results_df['Current Price'] >= price_range[0]) & (results_df['Current Price'] <= price_range[1])]
