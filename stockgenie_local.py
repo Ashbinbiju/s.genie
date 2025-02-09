@@ -118,9 +118,22 @@ def get_sector_performance(symbol):
     return fetch_stock_data_cached(sector_etf)
 
 def get_news(symbol):
-    """Get relevant news articles"""
-    news = yf.Ticker(symbol).news
-    return [(n['title'], n['link']) for n in news[:3]]
+    """Get relevant news articles with error handling"""
+    try:
+        news = yf.Ticker(symbol).news
+        if not isinstance(news, list):  # Ensure news is a list
+            st.warning("⚠️ Unexpected news data format. Skipping news integration.")
+            return []
+        # Filter news items to include only those with 'title' and 'link'
+        valid_news = [
+            (n['title'], n['link']) 
+            for n in news 
+            if isinstance(n, dict) and 'title' in n and 'link' in n
+        ]
+        return valid_news[:3]  # Return up to 3 valid news articles
+    except Exception as e:
+        st.warning(f"⚠️ Error fetching news for {symbol}: {str(e)}")
+        return []
 
 def analyze_stock(data):
     """Perform technical analysis on stock data"""
@@ -509,10 +522,13 @@ def display_dashboard(symbol=None, data=None, recommendations=None, NSE_STOCKS=N
             fig = px.line(data, y=['Fib_23.6', 'Fib_38.2', 'Fib_50.0', 'Fib_61.8', 'Fib_78.6'], title="Fibonacci Retracement Levels")
             st.plotly_chart(fig)
         with tab5:
-            news = get_news(symbol)
-            st.subheader("📰 Latest News")
-            for title, link in news:
-                st.markdown(f"- [{title}]({link})", unsafe_allow_html=True)
+    news = get_news(symbol)
+    st.subheader("📰 Latest News")
+    if news:
+        for title, link in news:
+            st.markdown(f"- [{title}]({link})", unsafe_allow_html=True)
+    else:
+        st.info("ℹ️ No news available for this stock.")
 
 def analyze_intraday_stocks(stock_list, batch_size=50, price_range=None):
     """Analyze all stocks for intraday trading and return top 5 picks"""
