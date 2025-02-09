@@ -522,13 +522,13 @@ def display_dashboard(symbol=None, data=None, recommendations=None, NSE_STOCKS=N
             fig = px.line(data, y=['Fib_23.6', 'Fib_38.2', 'Fib_50.0', 'Fib_61.8', 'Fib_78.6'], title="Fibonacci Retracement Levels")
             st.plotly_chart(fig)
         with tab5:
-    news = get_news(symbol)
-    st.subheader("📰 Latest News")
-    if news:
-        for title, link in news:
-            st.markdown(f"- [{title}]({link})", unsafe_allow_html=True)
-    else:
-        st.info("ℹ️ No news available for this stock.")
+            news = get_news(symbol)
+            st.subheader("📰 Latest News")
+            if news:
+            for title, link in news:
+                st.markdown(f"- [{title}]({link})", unsafe_allow_html=True)
+            else:
+                st.info("ℹ️ No news available for this stock.")
 
 def analyze_intraday_stocks(stock_list, batch_size=50, price_range=None):
     """Analyze all stocks for intraday trading and return top 5 picks"""
