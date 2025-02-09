@@ -21,6 +21,9 @@ TOOLTIPS = {
     "Bollinger": "Price volatility bands around moving average",
     "Stop Loss": "Risk management price level based on ATR",
     "VWAP": "Volume Weighted Average Price - Intraday trend indicator",
+    "Current Price": "Latest closing price of the stock",
+    "Buy At": "Recommended entry price based on RSI and current price",
+    "Target": "Price target based on risk-reward ratio",
 }
 
 # Tooltip function
@@ -89,7 +92,13 @@ def fetch_stock_data_cached(symbol, period="5y", interval="1d"):
 
 def analyze_stock(data):
     """Perform technical analysis on stock data"""
-    if data.empty or len(data) < 27:  # Ensure enough data points for ADX calculation
+    if data.empty:
+        st.warning("⚠️ No data available for analysis.")
+        return data
+    # Ensure enough data points for calculations
+    min_data_points = max(27, 50)  # ADX requires 27, SMA_200 requires 50
+    if len(data) < min_data_points:
+        st.warning(f"⚠️ Insufficient data points ({len(data)}). At least {min_data_points} required for full analysis.")
         return data
     try:
         # RSI (Optimized to 9-period for faster reactions)
@@ -228,6 +237,7 @@ def generate_recommendations(data):
         "Stop Loss": None, "Target": None, "Score": 0
     }
     if data.empty:
+        st.warning("⚠️ No data available for generating recommendations.")
         return recommendations
     try:
         # Current Price
@@ -236,9 +246,9 @@ def generate_recommendations(data):
         buy_score = 0
         sell_score = 0
         # Condition 1: RSI < 30 (Oversold) or > 70 (Overbought)
-        if 'RSI' in data.columns:
+        if 'RSI' in data.columns and not pd.isna(data['RSI'].iloc[-1]):
             if data['RSI'].iloc[-1] < 30:
-                buy_score += 2  # Higher weight for RSI
+                buy_score += 2
             elif data['RSI'].iloc[-1] > 70:
                 sell_score += 2
         # Condition 2: MACD Crossover
@@ -359,7 +369,7 @@ def display_dashboard(symbol=None, data=None, recommendations=None, NSE_STOCKS=N
             for _, row in results_df.iterrows():
                 with st.expander(f"{row['Symbol']} - Score: {row['Score']}/5"):
                     st.markdown(f"""
-                    {tooltip('Current Price', TOOLTIPS['Stop Loss'])}: ₹{row['Current Price']:.2f}  
+                    {tooltip('Current Price', TOOLTIPS['Current Price'])}: ₹{row['Current Price']:.2f}  
                     Buy At: ₹{row['Buy At']:.2f} | Stop Loss: ₹{row['Stop Loss']:.2f}  
                     Target: ₹{row['Target']:.2f}  
                     Intraday: {colored_recommendation(row['Intraday'])}  
@@ -375,7 +385,7 @@ def display_dashboard(symbol=None, data=None, recommendations=None, NSE_STOCKS=N
             for _, row in intraday_results.iterrows():
                 with st.expander(f"{row['Symbol']} - Score: {row['Score']}/5"):
                     st.markdown(f"""
-                    {tooltip('Current Price', TOOLTIPS['Stop Loss'])}: ₹{row['Current Price']:.2f}  
+                    {tooltip('Current Price', TOOLTIPS['Current Price'])}: ₹{row['Current Price']:.2f}  
                     Buy At: ₹{row['Buy At']:.2f} | Stop Loss: ₹{row['Stop Loss']:.2f}  
                     Target: ₹{row['Target']:.2f}  
                     Intraday: {colored_recommendation(row['Intraday'])}  
@@ -385,13 +395,13 @@ def display_dashboard(symbol=None, data=None, recommendations=None, NSE_STOCKS=N
         st.header(f"📋 {symbol.split('.')[0]} Analysis")
         col1, col2, col3, col4 = st.columns(4)
         with col1:
-            st.metric(tooltip("Current Price", TOOLTIPS['RSI']), f"₹{recommendations['Current Price']:.2f}")
+            st.metric(tooltip("Current Price", TOOLTIPS['Current Price']), f"₹{recommendations['Current Price']:.2f}")
         with col2:
-            st.metric(tooltip("Buy At", "Recommended entry price"), f"₹{recommendations['Buy At']:.2f}")
+            st.metric(tooltip("Buy At", TOOLTIPS['Buy At']), f"₹{recommendations['Buy At']:.2f}")
         with col3:
             st.metric(tooltip("Stop Loss", TOOLTIPS['Stop Loss']), f"₹{recommendations['Stop Loss']:.2f}")
         with col4:
-            st.metric(tooltip("Target", "Price target based on risk/reward"), f"₹{recommendations['Target']:.2f}")
+            st.metric(tooltip("Target", TOOLTIPS['Target']), f"₹{recommendations['Target']:.2f}")
         st.subheader("📈 Trading Recommendations")
         cols = st.columns(4)
         strategy_names = ["Intraday", "Swing", "Short-Term", "Long-Term"]
@@ -439,19 +449,22 @@ def main():
     )
     if symbol == "Custom":
         custom_symbol = st.sidebar.text_input("Enter NSE Symbol (e.g.: RELIANCE):")
-        symbol = f"{custom_symbol}.NS" if custom_symbol else None
+        if custom_symbol:
+            symbol = f"{custom_symbol.strip().upper()}.NS"
+        else:
+            symbol = None
     if symbol:
-        if ".NS" not in symbol:
-            symbol += ".NS"
-        if symbol not in NSE_STOCKS and not st.sidebar.warning("⚠️ Unverified symbol - data may be unreliable"):
-            return
+        # Validate symbol
+        if symbol not in NSE_STOCKS:
+            st.sidebar.warning("⚠️ Unverified symbol - data may be unreliable.")
+        # Fetch and analyze data
         data = fetch_stock_data_cached(symbol)
         if not data.empty:
             data = analyze_stock(data)
             recommendations = generate_recommendations(data)
             display_dashboard(symbol, data, recommendations, NSE_STOCKS)
         else:
-            st.error("❌ Failed to load data for this symbol")
+            st.error("❌ Failed to load data for this symbol. Please check the symbol and try again.")
 
 if __name__ == "__main__":
     main()
