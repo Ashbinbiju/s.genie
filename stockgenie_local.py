@@ -92,65 +92,6 @@ def fetch_stock_data_cached(symbol, period="5y", interval="1d"):
         st.error(f"Error: {str(e)}")
         return pd.DataFrame()
 
-@st.cache_data(ttl=300)  # 5-minute cache
-def get_real_time_price(symbol):
-    """Get real-time price from Yahoo Finance"""
-    stock = yf.Ticker(symbol)
-    return stock.info.get('regularMarketPrice', None)
-
-def get_sector_performance(symbol):
-    """Compare against sector performance"""
-    SECTOR_ETFS = {
-        'Technology': 'XLK',
-        'Healthcare': 'XLV',
-        'Financial Services': 'XLF',
-        'Consumer Cyclical': 'XLY',
-        'Industrials': 'XLI',
-        'Basic Materials': 'XLB',
-        'Energy': 'XLE',
-        'Utilities': 'XLU',
-        'Real Estate': 'XLRE',
-        'Communication Services': 'XLC',
-        'Consumer Defensive': 'XLP'
-    }
-    sector = yf.Ticker(symbol).info.get('sector', 'N/A')
-    sector_etf = SECTOR_ETFS.get(sector, '^NSEI')  # Map to sector ETFs
-    return fetch_stock_data_cached(sector_etf)
-
-def get_news(symbol):
-    """Get relevant news articles with enhanced error handling and debugging"""
-    try:
-        # Fetch news using yfinance
-        ticker = yf.Ticker(symbol)
-        news = ticker.news
-
-        # Debugging: Log the raw news data for inspection
-        if not news:
-            st.warning(f"⚠️ No news data returned for {symbol}. Raw response: {news}")
-            return []
-
-        # Validate and filter news items
-        valid_news = [
-            (
-                n['content'].get('title', 'No Title'),  # Extract title from 'content'
-                n['content']['clickThroughUrl'].get('url', '#')  # Extract link from 'clickThroughUrl'
-            )
-            for n in news
-            if isinstance(n, dict) and 'content' in n  # Ensure 'content' exists
-        ]
-
-        # Debugging: Log valid news items
-        if not valid_news:
-            st.warning(f"⚠️ No valid news articles found for {symbol}. Raw news data: {news}")
-            return []
-
-        # Return up to 3 valid news articles
-        return valid_news[:3]
-
-    except Exception as e:
-        st.warning(f"⚠️ Error fetching news for {symbol}: {str(e)}")
-        return []
-
 def analyze_stock(data):
     """Perform technical analysis on stock data"""
     if data.empty:
@@ -444,6 +385,7 @@ def analyze_all_stocks(stock_list, batch_size=50, price_range=None):
     results_df = pd.DataFrame(results)
     if "Score" not in results_df.columns:
         results_df["Score"] = 0
+
     # Filter by price range if provided
     if price_range:
         results_df = results_df[(results_df['Current Price'] >= price_range[0]) & (results_df['Current Price'] <= price_range[1])]
@@ -465,13 +407,13 @@ def display_dashboard(symbol=None, data=None, recommendations=None, NSE_STOCKS=N
     """Enhanced UI with color coding and tooltips"""
     st.title("📊 StockGenie Pro - NSE Analysis")
     st.subheader(f"📅 Analysis for {datetime.now().strftime('%d %b %Y')}")
-    
+
     # Price Range Slider
     price_range = st.sidebar.slider(
         "Select Price Range (₹)",
         min_value=0, max_value=10000, value=(100, 1000)
     )
-    
+
     # Daily Suggestions Button
     if st.button("🚀 Generate Daily Top Picks"):
         with st.spinner("⏳ Scanning market..."):
@@ -481,14 +423,14 @@ def display_dashboard(symbol=None, data=None, recommendations=None, NSE_STOCKS=N
                 with st.expander(f"{row['Symbol']} - Score: {row['Score']}/5"):
                     st.markdown(f"""
                     {tooltip('Current Price', TOOLTIPS['Current Price'])}: ₹{row['Current Price']:.2f}  
-                    Buy At: {format_value(row['Buy At'])} | Stop Loss: {format_value(row['Stop Loss'])}  
-                    Target: {format_value(row['Target'])}  
+                    Buy At: ₹{row['Buy At']:.2f} | Stop Loss: ₹{row['Stop Loss']:.2f}  
+                    Target: ₹{row['Target']:.2f}  
                     Intraday: {colored_recommendation(row['Intraday'])}  
                     Swing: {colored_recommendation(row['Swing'])}  
                     Short-Term: {colored_recommendation(row['Short-Term'])}  
                     Long-Term: {colored_recommendation(row['Long-Term'])}
                     """, unsafe_allow_html=True)
-    
+
     # Intraday Suggestions Button
     if st.button("⚡ Generate Intraday Top 5 Picks"):
         with st.spinner("⏳ Scanning market for intraday opportunities..."):
@@ -498,28 +440,24 @@ def display_dashboard(symbol=None, data=None, recommendations=None, NSE_STOCKS=N
                 with st.expander(f"{row['Symbol']} - Score: {row['Score']}/5"):
                     st.markdown(f"""
                     {tooltip('Current Price', TOOLTIPS['Current Price'])}: ₹{row['Current Price']:.2f}  
-                    Buy At: {format_value(row['Buy At'])} | Stop Loss: {format_value(row['Stop Loss'])}  
-                    Target: {format_value(row['Target'])}  
+                    Buy At: ₹{row['Buy At']:.2f} | Stop Loss: ₹{row['Stop Loss']:.2f}  
+                    Target: ₹{row['Target']:.2f}  
                     Intraday: {colored_recommendation(row['Intraday'])}  
                     """, unsafe_allow_html=True)
-    
+
     # Individual Stock Analysis
     if symbol:
         st.header(f"📋 {symbol.split('.')[0]} Analysis")
         col1, col2, col3, col4 = st.columns(4)
-        
-        # Current Price
-        st.metric(tooltip("Current Price", TOOLTIPS['Current Price']), f"₹{format_value(recommendations['Current Price'])}")
-        
-        # Buy At
-        st.metric(tooltip("Buy At", TOOLTIPS['Buy At']), f"₹{format_value(recommendations['Buy At'])}")
-        
-        # Stop Loss
-        st.metric(tooltip("Stop Loss", TOOLTIPS['Stop Loss']), f"₹{format_value(recommendations['Stop Loss'])}")
-        
-        # Target
-        st.metric(tooltip("Target", TOOLTIPS['Target']), f"₹{format_value(recommendations['Target'])}")
-        
+        with col1:
+            st.metric(tooltip("Current Price", TOOLTIPS['Current Price']), f"₹{recommendations['Current Price']:.2f}")
+        with col2:
+            st.metric(tooltip("Buy At", TOOLTIPS['Buy At']), f"₹{recommendations['Buy At']:.2f}")
+        with col3:
+            st.metric(tooltip("Stop Loss", TOOLTIPS['Stop Loss']), f"₹{recommendations['Stop Loss']:.2f}")
+        with col4:
+            st.metric(tooltip("Target", TOOLTIPS['Target']), f"₹{recommendations['Target']:.2f}")
+
         st.subheader("📈 Trading Recommendations")
         cols = st.columns(4)
         strategy_names = ["Intraday", "Swing", "Short-Term", "Long-Term"]
@@ -527,8 +465,8 @@ def display_dashboard(symbol=None, data=None, recommendations=None, NSE_STOCKS=N
             with col:
                 st.markdown(f"**{strategy}**", unsafe_allow_html=True)
                 st.markdown(colored_recommendation(recommendations[strategy]), unsafe_allow_html=True)
-        
-        tab1, tab2, tab3, tab4, tab5 = st.tabs(["📊 Price Action", "📉 Indicators", "📊 Volatility", "📏 Fibonacci", "📰 News"])
+
+        tab1, tab2, tab3, tab4 = st.tabs(["📊 Price Action", "📉 Indicators", "📊 Volatility", "📏 Fibonacci"])
         with tab1:
             fig = px.line(data, y=['Close', 'SMA_50', 'SMA_200', 'EMA_20', 'EMA_50'], title="Price with Moving Averages")
             st.plotly_chart(fig)
@@ -541,27 +479,6 @@ def display_dashboard(symbol=None, data=None, recommendations=None, NSE_STOCKS=N
         with tab4:
             fig = px.line(data, y=['Fib_23.6', 'Fib_38.2', 'Fib_50.0', 'Fib_61.8', 'Fib_78.6'], title="Fibonacci Retracement Levels")
             st.plotly_chart(fig)
-        with tab5:
-            news = get_news(symbol)
-            st.subheader("📰 Latest News")
-            if news:
-                for title, link in news:
-                    st.markdown(f"- [{title}]({link})", unsafe_allow_html=True)
-            else:
-                st.info("ℹ️ No news available for this stock.")
-
-def format_value(value):
-    """
-    Formats a numeric value for display.
-    Returns "N/A" if the value is None or invalid.
-    """
-    if value is None:
-        return "N/A"
-    try:
-        return f"{value:.2f}"  # Format as a float with 2 decimal places
-    except (TypeError, ValueError):
-        return "N/A"  # Fallback for unexpected types
-
 
 def analyze_intraday_stocks(stock_list, batch_size=50, price_range=None):
     """Analyze all stocks for intraday trading and return top 5 picks"""
@@ -573,6 +490,7 @@ def analyze_intraday_stocks(stock_list, batch_size=50, price_range=None):
     results_df = pd.DataFrame(results)
     if "Score" not in results_df.columns:
         results_df["Score"] = 0
+
     # Filter by price range if provided
     if price_range:
         results_df = results_df[(results_df['Current Price'] >= price_range[0]) & (results_df['Current Price'] <= price_range[1])]
