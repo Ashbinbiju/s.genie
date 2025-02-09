@@ -131,9 +131,12 @@ def get_news(symbol):
 
         # Validate and filter news items
         valid_news = [
-            (n.get('title', 'No Title'), n.get('link', '#'))  # Use .get() to avoid KeyError
+            (
+                n['content'].get('title', 'No Title'),  # Extract title from 'content'
+                n['content']['clickThroughUrl'].get('url', '#')  # Extract link from 'clickThroughUrl'
+            )
             for n in news
-            if isinstance(n, dict) and ('title' in n or 'link' in n)
+            if isinstance(n, dict) and 'content' in n  # Ensure 'content' exists
         ]
 
         # Debugging: Log valid news items
@@ -147,6 +150,7 @@ def get_news(symbol):
     except Exception as e:
         st.warning(f"⚠️ Error fetching news for {symbol}: {str(e)}")
         return []
+
 def analyze_stock(data):
     """Perform technical analysis on stock data"""
     if data.empty:
