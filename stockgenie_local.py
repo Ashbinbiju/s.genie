@@ -24,6 +24,10 @@ TOOLTIPS = {
     "Current Price": "Latest closing price of the stock",
     "Buy At": "Recommended entry price based on RSI and current price",
     "Target": "Price target based on risk-reward ratio",
+    "SuperTrend": "Trend-following indicator (above = uptrend, below = downtrend)",
+    "RVOL": "Relative Volume - Identifies unusual trading activity",
+    "Fibonacci": "Dynamic support/resistance levels based on price swings",
+    "Ichimoku": "Comprehensive trend, support, and resistance indicator",
 }
 
 # Tooltip function
@@ -92,14 +96,11 @@ def fetch_stock_data_cached(symbol, period="5y", interval="1d"):
 
 def analyze_stock(data):
     """Perform technical analysis on stock data"""
-    if data.empty:
+    if data.empty or len(data) < 27:  # Ensure enough data points for ADX calculation
         st.warning("⚠️ No data available for analysis.")
         return data
-    # Ensure enough data points for calculations
-    min_data_points = max(27, 50)  # ADX requires 27, SMA_200 requires 50
-    if len(data) < min_data_points:
-        st.warning(f"⚠️ Insufficient data points ({len(data)}). At least {min_data_points} required for full analysis.")
-        return data
+    
+    # Existing Indicators
     try:
         # RSI (Optimized to 9-period for faster reactions)
         data['RSI'] = ta.momentum.RSIIndicator(data['Close'], window=9).rsi()
@@ -141,35 +142,11 @@ def analyze_stock(data):
         data['Middle_Band'] = None
         data['Lower_Band'] = None
     try:
-        # Stochastic Oscillator
-        stoch = ta.momentum.StochasticOscillator(data['High'], data['Low'], data['Close'], window=14, smooth_window=3)
-        data['SlowK'] = stoch.stoch()
-        data['SlowD'] = stoch.stoch_signal()
-    except Exception as e:
-        st.warning(f"⚠️ Error calculating Stochastic Oscillator: {e}")
-        data['SlowK'] = None
-        data['SlowD'] = None
-    try:
         # ATR (Average True Range)
         data['ATR'] = ta.volatility.AverageTrueRange(data['High'], data['Low'], data['Close'], window=14).average_true_range()
     except Exception as e:
         st.warning(f"⚠️ Error calculating ATR: {e}")
         data['ATR'] = None
-    try:
-        # ADX (Average Directional Index)
-        if len(data) >= 27:
-            data['ADX'] = ta.trend.ADXIndicator(data['High'], data['Low'], data['Close'], window=14).adx()
-        else:
-            data['ADX'] = None
-    except Exception as e:
-        st.warning(f"⚠️ Error calculating ADX: {e}")
-        data['ADX'] = None
-    try:
-        # OBV (On-Balance Volume)
-        data['OBV'] = ta.volume.OnBalanceVolumeIndicator(data['Close'], data['Volume']).on_balance_volume()
-    except Exception as e:
-        st.warning(f"⚠️ Error calculating OBV: {e}")
-        data['OBV'] = None
     try:
         # VWAP Calculation
         data['Cumulative_TP'] = ((data['High'] + data['Low'] + data['Close']) / 3) * data['Volume']
@@ -178,13 +155,59 @@ def analyze_stock(data):
     except Exception as e:
         st.warning(f"⚠️ Error calculating VWAP: {e}")
         data['VWAP'] = None
+
+    # New Indicators
     try:
-        # Volume Spike Check
-        data['Avg_Volume'] = data['Volume'].rolling(window=10).mean()
-        data['Volume_Spike'] = data['Volume'] > (data['Avg_Volume'] * 1.5)
+        # SuperTrend Indicator
+        super_trend = ta.trend.SuperTrendIndicator(data['High'], data['Low'], data['Close'], window=10, multiplier=3)
+        data['SuperTrend'] = super_trend.supertrend()
+        data['SuperTrend_Direction'] = 1 if data['Close'].iloc[-1] > data['SuperTrend'].iloc[-1] else -1
     except Exception as e:
-        st.warning(f"⚠️ Error calculating Volume Spike: {e}")
-        data['Volume_Spike'] = None
+        st.warning(f"⚠️ Error calculating SuperTrend: {e}")
+        data['SuperTrend'] = None
+        data['SuperTrend_Direction'] = 0
+    try:
+        # Relative Volume (RVOL)
+        data['RVOL'] = data['Volume'] / data['Volume'].rolling(window=20).mean()
+    except Exception as e:
+        st.warning(f"⚠️ Error calculating RVOL: {e}")
+        data['RVOL'] = None
+    try:
+        # Fibonacci Retracement Levels
+        recent_data = data.tail(200)  # Look at the last 200 data points
+        swing_high = recent_data['High'].max()
+        swing_low = recent_data['Low'].min()
+        diff = swing_high - swing_low
+        data['Fib_23.6'] = swing_high - 0.236 * diff
+        data['Fib_38.2'] = swing_high - 0.382 * diff
+        data['Fib_50'] = swing_high - 0.5 * diff
+        data['Fib_61.8'] = swing_high - 0.618 * diff
+        data['Fib_78.6'] = swing_high - 0.786 * diff
+    except Exception as e:
+        st.warning(f"⚠️ Error calculating Fibonacci levels: {e}")
+        data['Fib_23.6'] = None
+        data['Fib_38.2'] = None
+        data['Fib_50'] = None
+        data['Fib_61.8'] = None
+        data['Fib_78.6'] = None
+    try:
+        # Ichimoku Cloud
+        ichimoku = ta.trend.IchimokuIndicator(
+            high=data['High'], low=data['Low'], window1=9, window2=26, window3=52
+        )
+        data['Ichimoku_Base_Line'] = ichimoku.ichimoku_base_line()
+        data['Ichimoku_Conversion_Line'] = ichimoku.ichimoku_conversion_line()
+        data['Ichimoku_A'] = ichimoku.ichimoku_a()
+        data['Ichimoku_B'] = ichimoku.ichimoku_b()
+        data['Ichimoku_Lagging_Span'] = ichimoku.ichimoku_lagging_span()
+    except Exception as e:
+        st.warning(f"⚠️ Error calculating Ichimoku Cloud: {e}")
+        data['Ichimoku_Base_Line'] = None
+        data['Ichimoku_Conversion_Line'] = None
+        data['Ichimoku_A'] = None
+        data['Ichimoku_B'] = None
+        data['Ichimoku_Lagging_Span'] = None
+
     return data
 
 def calculate_stop_loss(data, atr_multiplier=2.5):
@@ -275,6 +298,12 @@ def generate_recommendations(data):
             if data['Volume'].iloc[-1] > avg_volume * 1.5:  # High volume confirms trend
                 buy_score += 1
             elif data['Volume'].iloc[-1] < avg_volume * 0.5:  # Low volume indicates weakness
+                sell_score += 1
+        # Condition 6: SuperTrend Direction
+        if 'SuperTrend_Direction' in data.columns:
+            if data['SuperTrend_Direction'].iloc[-1] == 1:  # Uptrend
+                buy_score += 1
+            elif data['SuperTrend_Direction'].iloc[-1] == -1:  # Downtrend
                 sell_score += 1
         # Assign Recommendations Based on Scores
         if buy_score >= 4:  # Require stronger confirmation for "Strong Buy"
@@ -409,7 +438,7 @@ def display_dashboard(symbol=None, data=None, recommendations=None, NSE_STOCKS=N
             with col:
                 st.markdown(f"**{strategy}**", unsafe_allow_html=True)
                 st.markdown(colored_recommendation(recommendations[strategy]), unsafe_allow_html=True)
-        tab1, tab2, tab3 = st.tabs(["📊 Price Action", "📉 Indicators", "📊 Volatility"])
+        tab1, tab2, tab3, tab4 = st.tabs(["📊 Price Action", "📉 Indicators", "📊 Volatility", "🔍 Advanced"])
         with tab1:
             fig = px.line(data, y=['Close', 'SMA_50', 'SMA_200', 'EMA_20', 'EMA_50'], title="Price with Moving Averages")
             st.plotly_chart(fig)
@@ -418,6 +447,9 @@ def display_dashboard(symbol=None, data=None, recommendations=None, NSE_STOCKS=N
             st.plotly_chart(fig)
         with tab3:
             fig = px.line(data, y=['ATR', 'Upper_Band', 'Lower_Band'], title="Volatility Analysis")
+            st.plotly_chart(fig)
+        with tab4:
+            fig = px.line(data, y=['SuperTrend', 'RVOL', 'Ichimoku_Base_Line', 'Ichimoku_Conversion_Line'], title="Advanced Indicators")
             st.plotly_chart(fig)
 
 def analyze_intraday_stocks(stock_list, batch_size=50, price_range=None):
