@@ -465,13 +465,13 @@ def display_dashboard(symbol=None, data=None, recommendations=None, NSE_STOCKS=N
     """Enhanced UI with color coding and tooltips"""
     st.title("📊 StockGenie Pro - NSE Analysis")
     st.subheader(f"📅 Analysis for {datetime.now().strftime('%d %b %Y')}")
-
+    
     # Price Range Slider
     price_range = st.sidebar.slider(
         "Select Price Range (₹)",
         min_value=0, max_value=10000, value=(100, 1000)
     )
-
+    
     # Daily Suggestions Button
     if st.button("🚀 Generate Daily Top Picks"):
         with st.spinner("⏳ Scanning market..."):
@@ -481,14 +481,14 @@ def display_dashboard(symbol=None, data=None, recommendations=None, NSE_STOCKS=N
                 with st.expander(f"{row['Symbol']} - Score: {row['Score']}/5"):
                     st.markdown(f"""
                     {tooltip('Current Price', TOOLTIPS['Current Price'])}: ₹{row['Current Price']:.2f}  
-                    Buy At: ₹{row['Buy At']:.2f} | Stop Loss: ₹{row['Stop Loss']:.2f}  
-                    Target: ₹{row['Target']:.2f}  
+                    Buy At: {format_value(row['Buy At'])} | Stop Loss: {format_value(row['Stop Loss'])}  
+                    Target: {format_value(row['Target'])}  
                     Intraday: {colored_recommendation(row['Intraday'])}  
                     Swing: {colored_recommendation(row['Swing'])}  
                     Short-Term: {colored_recommendation(row['Short-Term'])}  
                     Long-Term: {colored_recommendation(row['Long-Term'])}
                     """, unsafe_allow_html=True)
-
+    
     # Intraday Suggestions Button
     if st.button("⚡ Generate Intraday Top 5 Picks"):
         with st.spinner("⏳ Scanning market for intraday opportunities..."):
@@ -498,24 +498,28 @@ def display_dashboard(symbol=None, data=None, recommendations=None, NSE_STOCKS=N
                 with st.expander(f"{row['Symbol']} - Score: {row['Score']}/5"):
                     st.markdown(f"""
                     {tooltip('Current Price', TOOLTIPS['Current Price'])}: ₹{row['Current Price']:.2f}  
-                    Buy At: ₹{row['Buy At']:.2f} | Stop Loss: ₹{row['Stop Loss']:.2f}  
-                    Target: ₹{row['Target']:.2f}  
+                    Buy At: {format_value(row['Buy At'])} | Stop Loss: {format_value(row['Stop Loss'])}  
+                    Target: {format_value(row['Target'])}  
                     Intraday: {colored_recommendation(row['Intraday'])}  
                     """, unsafe_allow_html=True)
-
+    
     # Individual Stock Analysis
     if symbol:
         st.header(f"📋 {symbol.split('.')[0]} Analysis")
         col1, col2, col3, col4 = st.columns(4)
-        with col1:
-            st.metric(tooltip("Current Price", TOOLTIPS['Current Price']), f"₹{recommendations['Current Price']:.2f}")
-        with col2:
-            st.metric(tooltip("Buy At", TOOLTIPS['Buy At']), f"₹{recommendations['Buy At']:.2f}")
-        with col3:
-            st.metric(tooltip("Stop Loss", TOOLTIPS['Stop Loss']), f"₹{recommendations['Stop Loss']:.2f}")
-        with col4:
-            st.metric(tooltip("Target", TOOLTIPS['Target']), f"₹{recommendations['Target']:.2f}")
-
+        
+        # Current Price
+        st.metric(tooltip("Current Price", TOOLTIPS['Current Price']), f"₹{format_value(recommendations['Current Price'])}")
+        
+        # Buy At
+        st.metric(tooltip("Buy At", TOOLTIPS['Buy At']), f"₹{format_value(recommendations['Buy At'])}")
+        
+        # Stop Loss
+        st.metric(tooltip("Stop Loss", TOOLTIPS['Stop Loss']), f"₹{format_value(recommendations['Stop Loss'])}")
+        
+        # Target
+        st.metric(tooltip("Target", TOOLTIPS['Target']), f"₹{format_value(recommendations['Target'])}")
+        
         st.subheader("📈 Trading Recommendations")
         cols = st.columns(4)
         strategy_names = ["Intraday", "Swing", "Short-Term", "Long-Term"]
@@ -523,7 +527,7 @@ def display_dashboard(symbol=None, data=None, recommendations=None, NSE_STOCKS=N
             with col:
                 st.markdown(f"**{strategy}**", unsafe_allow_html=True)
                 st.markdown(colored_recommendation(recommendations[strategy]), unsafe_allow_html=True)
-
+        
         tab1, tab2, tab3, tab4, tab5 = st.tabs(["📊 Price Action", "📉 Indicators", "📊 Volatility", "📏 Fibonacci", "📰 News"])
         with tab1:
             fig = px.line(data, y=['Close', 'SMA_50', 'SMA_200', 'EMA_20', 'EMA_50'], title="Price with Moving Averages")
@@ -545,6 +549,19 @@ def display_dashboard(symbol=None, data=None, recommendations=None, NSE_STOCKS=N
                     st.markdown(f"- [{title}]({link})", unsafe_allow_html=True)
             else:
                 st.info("ℹ️ No news available for this stock.")
+
+def format_value(value):
+    """
+    Formats a numeric value for display.
+    Returns "N/A" if the value is None or invalid.
+    """
+    if value is None:
+        return "N/A"
+    try:
+        return f"{value:.2f}"  # Format as a float with 2 decimal places
+    except (TypeError, ValueError):
+        return "N/A"  # Fallback for unexpected types
+
 
 def analyze_intraday_stocks(stock_list, batch_size=50, price_range=None):
     """Analyze all stocks for intraday trading and return top 5 picks"""
