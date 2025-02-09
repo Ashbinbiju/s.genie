@@ -118,23 +118,35 @@ def get_sector_performance(symbol):
     return fetch_stock_data_cached(sector_etf)
 
 def get_news(symbol):
-    """Get relevant news articles with error handling"""
+    """Get relevant news articles with enhanced error handling and debugging"""
     try:
-        news = yf.Ticker(symbol).news
-        if not isinstance(news, list):  # Ensure news is a list
-            st.warning("⚠️ Unexpected news data format. Skipping news integration.")
+        # Fetch news using yfinance
+        ticker = yf.Ticker(symbol)
+        news = ticker.news
+
+        # Debugging: Log the raw news data for inspection
+        if not news:
+            st.warning(f"⚠️ No news data returned for {symbol}. Raw response: {news}")
             return []
-        # Filter news items to include only those with 'title' and 'link'
+
+        # Validate and filter news items
         valid_news = [
-            (n['title'], n['link']) 
-            for n in news 
-            if isinstance(n, dict) and 'title' in n and 'link' in n
+            (n.get('title', 'No Title'), n.get('link', '#'))  # Use .get() to avoid KeyError
+            for n in news
+            if isinstance(n, dict) and ('title' in n or 'link' in n)
         ]
-        return valid_news[:3]  # Return up to 3 valid news articles
+
+        # Debugging: Log valid news items
+        if not valid_news:
+            st.warning(f"⚠️ No valid news articles found for {symbol}. Raw news data: {news}")
+            return []
+
+        # Return up to 3 valid news articles
+        return valid_news[:3]
+
     except Exception as e:
         st.warning(f"⚠️ Error fetching news for {symbol}: {str(e)}")
         return []
-
 def analyze_stock(data):
     """Perform technical analysis on stock data"""
     if data.empty:
