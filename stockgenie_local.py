@@ -12,6 +12,7 @@ import requests
 import io
 import random
 from textblob import TextBlob  # For sentiment analysis
+import streamlit.components.v1 as components
 
 # API Keys
 NEWSAPI_KEY = "ed58659895e84dfb8162a8bb47d8525e"
@@ -454,6 +455,21 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
+
+# JavaScript to stop the animation
+stop_animation_js = """
+<script>
+function stopAnimation() {
+    const rabbit = document.querySelector('.rabbit');
+    const progressBarFill = document.querySelector('.progress-bar-fill');
+    if (rabbit && progressBarFill) {
+        rabbit.style.animationPlayState = 'paused';
+        progressBarFill.style.animationPlayState = 'paused';
+    }
+}
+</script>
+"""
+
 def display_dashboard(symbol=None, data=None, recommendations=None, NSE_STOCKS=None):
     """Enhanced UI with color coding, tooltips, and running rabbit animation"""
     st.title("📊 StockGenie Pro - NSE Analysis")
@@ -481,8 +497,14 @@ def display_dashboard(symbol=None, data=None, recommendations=None, NSE_STOCKS=N
         # Simulate processing time (replace with actual data fetching/processing)
         time.sleep(3)
         
-        # Fetch and display results
+        # Fetch results
         results_df = analyze_all_stocks(NSE_STOCKS, price_range=price_range)
+        
+        # Stop the animation using JavaScript
+        components.html(stop_animation_js)
+        st.markdown("<script>stopAnimation();</script>", unsafe_allow_html=True)
+        
+        # Display results
         st.subheader("🏆 Today's Top 10 Stocks")
         for _, row in results_df.iterrows():
             with st.expander(f"{row['Symbol']} - Score: {row['Score']}/5"):
@@ -512,8 +534,14 @@ def display_dashboard(symbol=None, data=None, recommendations=None, NSE_STOCKS=N
         # Simulate processing time (replace with actual data fetching/processing)
         time.sleep(3)
         
-        # Fetch and display results
+        # Fetch results
         intraday_results = analyze_intraday_stocks(NSE_STOCKS, price_range=price_range)
+        
+        # Stop the animation using JavaScript
+        components.html(stop_animation_js)
+        st.markdown("<script>stopAnimation();</script>", unsafe_allow_html=True)
+        
+        # Display results
         st.subheader("🏆 Top 5 Intraday Stocks")
         for _, row in intraday_results.iterrows():
             with st.expander(f"{row['Symbol']} - Score: {row['Score']}/5"):
@@ -555,7 +583,6 @@ def display_dashboard(symbol=None, data=None, recommendations=None, NSE_STOCKS=N
             st.plotly_chart(fig)
     elif symbol:
         st.warning("⚠️ No data available for the selected stock.")
-
 
 def analyze_intraday_stocks(stock_list, batch_size=50, price_range=None):
     """Analyze all stocks for intraday trading and return top 5 picks"""
