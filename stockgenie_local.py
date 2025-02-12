@@ -430,61 +430,63 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 def display_dashboard(symbol=None, data=None, recommendations=None, NSE_STOCKS=None):
-    """Enhanced UI with color coding and tooltips"""
+    """Enhanced UI with color coding, tooltips, and futuristic loader"""
     st.title("📊 StockGenie Pro - NSE Analysis")
     st.subheader(f"📅 Analysis for {datetime.now().strftime('%d %b %Y')}")
+    
     # Price Range Slider
     price_range = st.sidebar.slider(
         "Select Price Range (₹)",
         min_value=0, max_value=10000, value=(100, 1000)
     )
-    # Daily Suggestions
- if st.button("🚀 Generate Daily Top Picks"):
-    # Display the custom loader
-    st.markdown('<div class="futuristic-loader"></div>', unsafe_allow_html=True)
-    st.markdown('<div class="loading-text">Scanning market with quantum algorithms...</div>', unsafe_allow_html=True)
     
-    # Simulate processing time (replace with actual data fetching/processing)
-    time.sleep(3)
+    # Daily Suggestions Button
+    if st.button("🚀 Generate Daily Top Picks"):
+        # Display the custom loader
+        st.markdown('<div class="futuristic-loader"></div>', unsafe_allow_html=True)
+        st.markdown('<div class="loading-text">Scanning market with quantum algorithms...</div>', unsafe_allow_html=True)
+        
+        # Simulate processing time (replace with actual data fetching/processing)
+        time.sleep(3)
+        
+        # Fetch and display results
+        results_df = analyze_all_stocks(NSE_STOCKS, price_range=price_range)
+        st.subheader("🏆 Today's Top 10 Stocks")
+        for _, row in results_df.iterrows():
+            with st.expander(f"{row['Symbol']} - Score: {row['Score']}/5"):
+                st.markdown(f"""
+                {tooltip('Current Price', TOOLTIPS['Stop Loss'])}: ₹{row['Current Price']:.2f}  
+                Buy At: ₹{row['Buy At']:.2f} | Stop Loss: ₹{row['Stop Loss']:.2f}  
+                Target: ₹{row['Target']:.2f}  
+                Intraday: {colored_recommendation(row['Intraday'])}  
+                Swing: {colored_recommendation(row['Swing'])}  
+                Short-Term: {colored_recommendation(row['Short-Term'])}  
+                Long-Term: {colored_recommendation(row['Long-Term'])}
+                """, unsafe_allow_html=True)
     
-    # Fetch and display results
-    results_df = analyze_all_stocks(NSE_STOCKS, price_range=price_range)
-    st.subheader("🏆 Today's Top 10 Stocks")
-    for _, row in results_df.iterrows():
-        with st.expander(f"{row['Symbol']} - Score: {row['Score']}/5"):
-            st.markdown(f"""
-            {tooltip('Current Price', TOOLTIPS['Stop Loss'])}: ₹{row['Current Price']:.2f}  
-            Buy At: ₹{row['Buy At']:.2f} | Stop Loss: ₹{row['Stop Loss']:.2f}  
-            Target: ₹{row['Target']:.2f}  
-            Intraday: {colored_recommendation(row['Intraday'])}  
-            Swing: {colored_recommendation(row['Swing'])}  
-            Short-Term: {colored_recommendation(row['Short-Term'])}  
-            Long-Term: {colored_recommendation(row['Long-Term'])}
-            """, unsafe_allow_html=True)
-
     # Intraday Suggestions Button
     if st.button("⚡ Generate Intraday Top 5 Picks"):
-    # Display the custom loader
-    st.markdown('<div class="futuristic-loader"></div>', unsafe_allow_html=True)
-    st.markdown('<div class="loading-text">Analyzing intraday trends with AI...</div>', unsafe_allow_html=True)
+        # Display the custom loader
+        st.markdown('<div class="futuristic-loader"></div>', unsafe_allow_html=True)
+        st.markdown('<div class="loading-text">Analyzing intraday trends with AI...</div>', unsafe_allow_html=True)
+        
+        # Simulate processing time (replace with actual data fetching/processing)
+        time.sleep(3)
+        
+        # Fetch and display results
+        intraday_results = analyze_intraday_stocks(NSE_STOCKS, price_range=price_range)
+        st.subheader("🏆 Top 5 Intraday Stocks")
+        for _, row in intraday_results.iterrows():
+            with st.expander(f"{row['Symbol']} - Score: {row['Score']}/5"):
+                st.markdown(f"""
+                {tooltip('Current Price', TOOLTIPS['Stop Loss'])}: ₹{row['Current Price']:.2f}  
+                Buy At: ₹{row['Buy At']:.2f} | Stop Loss: ₹{row['Stop Loss']:.2f}  
+                Target: ₹{row['Target']:.2f}  
+                Intraday: {colored_recommendation(row['Intraday'])}  
+                """, unsafe_allow_html=True)
     
-    # Simulate processing time (replace with actual data fetching/processing)
-    time.sleep(3)
-    
-    # Fetch and display results
-    intraday_results = analyze_intraday_stocks(NSE_STOCKS, price_range=price_range)
-    st.subheader("🏆 Top 5 Intraday Stocks")
-    for _, row in intraday_results.iterrows():
-        with st.expander(f"{row['Symbol']} - Score: {row['Score']}/5"):
-            st.markdown(f"""
-            {tooltip('Current Price', TOOLTIPS['Stop Loss'])}: ₹{row['Current Price']:.2f}  
-            Buy At: ₹{row['Buy At']:.2f} | Stop Loss: ₹{row['Stop Loss']:.2f}  
-            Target: ₹{row['Target']:.2f}  
-            Intraday: {colored_recommendation(row['Intraday'])}  
-            """, unsafe_allow_html=True)
-
-    # Individual Stock Analysis
-    if symbol:
+    # Individual Stock Analysis (only if symbol is provided)
+    if symbol and data is not None and recommendations is not None:
         st.header(f"📋 {symbol.split('.')[0]} Analysis")
         col1, col2, col3, col4 = st.columns(4)
         with col1:
@@ -512,7 +514,8 @@ def display_dashboard(symbol=None, data=None, recommendations=None, NSE_STOCKS=N
         with tab3:
             fig = px.line(data, y=['ATR', 'Upper_Band', 'Lower_Band'], title="Volatility Analysis")
             st.plotly_chart(fig)
-
+    elif symbol:
+        st.warning("⚠️ No data available for the selected stock.")
 def analyze_intraday_stocks(stock_list, batch_size=50, price_range=None):
     """Analyze all stocks for intraday trading and return top 5 picks"""
     results = []
