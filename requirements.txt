@@ -13,6 +13,5 @@ feedparser
 beautifulsoup4
 diskcache
 TIME-python
-random
 textblob
 
