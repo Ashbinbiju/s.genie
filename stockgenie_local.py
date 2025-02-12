@@ -274,32 +274,106 @@ def calculate_target(data, risk_reward_ratio=3):
     target = last_close + (risk * risk_reward_ratio)
     return round(target, 2)
 
-import time
+
+def get_valid_symbol(symbol):
+    """
+    Check if Alpha Vantage recognizes the given stock symbol.
+    Returns the correct format if found, else returns None.
+    """
+    base_url = "https://www.alphavantage.co/query"
+    params = {
+        "function": "SYMBOL_SEARCH",
+        "keywords": symbol.split('.')[0],  # Remove '.NS' for search
+        "apikey": "TCAUKYUCIDZ6PI57",
+    }
+
+    try:
+        response = requests.get(base_url, params=params, timeout=10)
+        response.raise_for_status()
+        data = response.json()
+
+        # Debugging: Print API response
+        print("Symbol Search Response:", data)
+
+        if "bestMatches" in data and len(data["bestMatches"]) > 0:
+            valid_symbol = data["bestMatches"][0]["1. symbol"]  # Take the first match
+            st.success(f"✅ Found valid symbol for {symbol}: {valid_symbol}")
+            return valid_symbol
+        else:
+            st.warning(f"⚠️ No valid symbol found for {symbol}.")
+            return None
+    except Exception as e:
+        st.error(f"❌ Failed to check symbol for {symbol}. Error: {str(e)}")
+        return None
+
 
 def fetch_alpha_vantage_sentiment(symbol):
     """
     Fetch news sentiment for a stock using Alpha Vantage.
+    First, check if the symbol is valid using the SYMBOL_SEARCH API.
     """
+    valid_symbol = get_valid_symbol(symbol)  # Get correct format
+
+    if not valid_symbol:
+        st.error(f"❌ Alpha Vantage does not support {symbol}.")
+        return []
+
     base_url = "https://www.alphavantage.co/query"
     params = {
         "function": "NEWS_SENTIMENT",
-        "tickers": symbol.split('.')[0],  # Remove '.NS' from the symbol
-        "apikey": "TCAUKYUCIDZ6PI57",
+        "tickers": valid_symbol,
+        "apikey": ALPHA_VANTAGE_API_KEY,
     }
+
     try:
-        # Add a delay to avoid hitting rate limits
-        time.sleep(12)  # Alpha Vantage allows 5 calls per minute (12 seconds between calls)
+        # Add delay to prevent rate limit issues
+        time.sleep(random.uniform(12, 15))
+
         response = requests.get(base_url, params=params, timeout=10)
         response.raise_for_status()
         data = response.json()
-        if "feed" in data:
+
+        # Debugging: Print API response
+        print("Alpha Vantage News Sentiment Response:", data)
+
+        if "feed" in data and data["feed"]:
             return data["feed"]
         else:
-            st.warning(f"⚠️ No news sentiment data found for {symbol}.")
+            st.warning(f"⚠️ No news sentiment data found for {valid_symbol}.")
             return []
     except Exception as e:
-        st.error(f"❌ Failed to fetch news sentiment for {symbol}. Error: {str(e)}")
+        st.error(f"❌ Alpha Vantage request failed: {str(e)}")
         return []
+
+
+---
+
+What This Fix Does:
+
+1. Checks if the stock symbol is valid before fetching news sentiment.
+
+
+2. Uses the correct format returned by Alpha Vantage (e.g., instead of "20MICRONS.NS", it might be "20MICRONS.BSE" or something else).
+
+
+3. Handles missing or unsupported symbols gracefully and prints the API response for debugging.
+
+
+
+
+---
+
+How to Use This Fix:
+
+Try running fetch_alpha_vantage_sentiment("20MICRONS.NS")
+
+If Alpha Vantage recognizes the symbol, it will return the correct format and fetch news sentiment.
+
+If not, it will return an error message indicating that the stock is unsupported.
+
+
+This should fix your issue. Let me know if you need any modifications!
+
 
 
 def get_alpha_vantage_sentiment_score(news_feed):
