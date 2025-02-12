@@ -438,7 +438,8 @@ def display_dashboard(symbol=None, data=None, recommendations=None, NSE_STOCKS=N
         "Select Price Range (₹)",
         min_value=0, max_value=10000, value=(100, 1000)
     )
-    # Daily Suggestions if st.button("🚀 Generate Daily Top Picks"):
+    # Daily Suggestions
+ if st.button("🚀 Generate Daily Top Picks"):
     # Display the custom loader
     st.markdown('<div class="futuristic-loader"></div>', unsafe_allow_html=True)
     st.markdown('<div class="loading-text">Scanning market with quantum algorithms...</div>', unsafe_allow_html=True)
@@ -481,6 +482,7 @@ def display_dashboard(symbol=None, data=None, recommendations=None, NSE_STOCKS=N
             Target: ₹{row['Target']:.2f}  
             Intraday: {colored_recommendation(row['Intraday'])}  
             """, unsafe_allow_html=True)
+
     # Individual Stock Analysis
     if symbol:
         st.header(f"📋 {symbol.split('.')[0]} Analysis")
