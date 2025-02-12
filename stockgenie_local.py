@@ -498,7 +498,7 @@ def main():
     elif selected_option != "":  # If the user selects a stock from the list
         symbol = selected_option
     
-    # Only proceed if a symbol is selected or entered
+    # Display the dashboard (works regardless of stock selection)
     if symbol:
         if ".NS" not in symbol:
             symbol += ".NS"
@@ -513,7 +513,8 @@ def main():
             else:
                 st.error("❌ Failed to load data for this symbol")
     else:
-        st.sidebar.info("ℹ️ Please select or enter a stock symbol to begin analysis.")
+        # If no stock is selected, display the dashboard without individual stock analysis
+        display_dashboard(None, None, None, NSE_STOCKS)
 
 if __name__ == "__main__":
     main()
