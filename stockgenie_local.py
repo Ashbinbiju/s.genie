@@ -393,44 +393,69 @@ def colored_recommendation(recommendation):
 
 st.markdown("""
 <style>
-/* Define the glowing animation */
-@keyframes glow {
-    0% { box-shadow: 0 0 5px #00ff00, 0 0 10px #00ff00, 0 0 15px #00ff00, 0 0 20px #00ff00; }
-    50% { box-shadow: 0 0 10px #00ff00, 0 0 20px #00ff00, 0 0 30px #00ff00, 0 0 40px #00ff00; }
-    100% { box-shadow: 0 0 5px #00ff00, 0 0 10px #00ff00, 0 0 15px #00ff00, 0 0 20px #00ff00; }
+/* Container for the running rabbit animation */
+.loader-container {
+    width: 100%;
+    height: 100px;
+    position: relative;
+    margin: 20px 0;
 }
 
-/* Define the spinning animation */
-@keyframes spin {
-    0% { transform: rotate(0deg); }
-    100% { transform: rotate(360deg); }
-}
-
-/* Style for the futuristic loader */
-.futuristic-loader {
-    border: 5px solid #f3f3f3; /* Light grey */
-    border-top: 5px solid #00ff00; /* Green */
-    border-radius: 50%;
+/* Rabbit image */
+.rabbit {
     width: 50px;
     height: 50px;
-    animation: spin 2s linear infinite, glow 1.5s ease-in-out infinite;
-    margin: 20px auto;
+    position: absolute;
+    top: 25px;
+    left: 0;
+    background-image: url('https://www.pngmart.com/files/7/Running-Rabbit-PNG-Transparent-Image.png');
+    background-size: cover;
+    animation: run 3s linear infinite;
 }
 
-/* Style for the loading text */
+/* Progress bar */
+.progress-bar {
+    width: 100%;
+    height: 10px;
+    background-color: #f3f3f3;
+    border-radius: 5px;
+    position: relative;
+    overflow: hidden;
+}
+
+.progress-bar-fill {
+    width: 0;
+    height: 100%;
+    background-color: #00ff00;
+    border-radius: 5px;
+    animation: fill 3s linear forwards;
+}
+
+/* Keyframes for the rabbit running */
+@keyframes run {
+    0% { left: 0; }
+    100% { left: calc(100% - 50px); }
+}
+
+/* Keyframes for the progress bar filling */
+@keyframes fill {
+    0% { width: 0; }
+    100% { width: 100%; }
+}
+
+/* Loading text */
 .loading-text {
-    color: #00ff00; /* Green */
+    color: #00ff00;
     font-size: 18px;
     font-weight: bold;
     text-align: center;
     margin-top: 10px;
-    animation: glow 1.5s ease-in-out infinite;
 }
 </style>
 """, unsafe_allow_html=True)
 
 def display_dashboard(symbol=None, data=None, recommendations=None, NSE_STOCKS=None):
-    """Enhanced UI with color coding, tooltips, and futuristic loader"""
+    """Enhanced UI with color coding, tooltips, and running rabbit animation"""
     st.title("📊 StockGenie Pro - NSE Analysis")
     st.subheader(f"📅 Analysis for {datetime.now().strftime('%d %b %Y')}")
     
@@ -442,9 +467,16 @@ def display_dashboard(symbol=None, data=None, recommendations=None, NSE_STOCKS=N
     
     # Daily Suggestions Button
     if st.button("🚀 Generate Daily Top Picks"):
-        # Display the custom loader
-        st.markdown('<div class="futuristic-loader"></div>', unsafe_allow_html=True)
-        st.markdown('<div class="loading-text">Scanning market with quantum algorithms...</div>', unsafe_allow_html=True)
+        # Display the running rabbit animation
+        st.markdown("""
+        <div class="loader-container">
+            <div class="rabbit"></div>
+            <div class="progress-bar">
+                <div class="progress-bar-fill"></div>
+            </div>
+            <div class="loading-text">Scanning market with quantum algorithms...</div>
+        </div>
+        """, unsafe_allow_html=True)
         
         # Simulate processing time (replace with actual data fetching/processing)
         time.sleep(3)
@@ -466,9 +498,16 @@ def display_dashboard(symbol=None, data=None, recommendations=None, NSE_STOCKS=N
     
     # Intraday Suggestions Button
     if st.button("⚡ Generate Intraday Top 5 Picks"):
-        # Display the custom loader
-        st.markdown('<div class="futuristic-loader"></div>', unsafe_allow_html=True)
-        st.markdown('<div class="loading-text">Analyzing intraday trends with AI...</div>', unsafe_allow_html=True)
+        # Display the running rabbit animation
+        st.markdown("""
+        <div class="loader-container">
+            <div class="rabbit"></div>
+            <div class="progress-bar">
+                <div class="progress-bar-fill"></div>
+            </div>
+            <div class="loading-text">Analyzing intraday trends with AI...</div>
+        </div>
+        """, unsafe_allow_html=True)
         
         # Simulate processing time (replace with actual data fetching/processing)
         time.sleep(3)
@@ -516,6 +555,8 @@ def display_dashboard(symbol=None, data=None, recommendations=None, NSE_STOCKS=N
             st.plotly_chart(fig)
     elif symbol:
         st.warning("⚠️ No data available for the selected stock.")
+
+
 def analyze_intraday_stocks(stock_list, batch_size=50, price_range=None):
     """Analyze all stocks for intraday trading and return top 5 picks"""
     results = []
