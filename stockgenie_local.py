@@ -480,27 +480,40 @@ def main():
     """Main function with enhanced input validation"""
     st.sidebar.title("🔍 Stock Search")
     NSE_STOCKS = fetch_nse_stock_list()
+    
+    # Initialize symbol as None
+    symbol = None
+    
     # Symbol input with validation
-    symbol = st.sidebar.selectbox(
+    selected_option = st.sidebar.selectbox(
         "Choose or enter stock:",
-        options=NSE_STOCKS + ["Custom"],
-        format_func=lambda x: x.split('.')[0] if x != "Custom" else x
+        options=[""] + NSE_STOCKS + ["Custom"],  # Add an empty option at the beginning
+        format_func=lambda x: x.split('.')[0] if x != "Custom" and x != "" else x
     )
-    if symbol == "Custom":
+    
+    if selected_option == "Custom":
         custom_symbol = st.sidebar.text_input("Enter NSE Symbol (e.g.: RELIANCE):")
-        symbol = f"{custom_symbol}.NS" if custom_symbol else None
+        if custom_symbol:
+            symbol = f"{custom_symbol}.NS"
+    elif selected_option != "":  # If the user selects a stock from the list
+        symbol = selected_option
+    
+    # Only proceed if a symbol is selected or entered
     if symbol:
         if ".NS" not in symbol:
             symbol += ".NS"
-        if symbol not in NSE_STOCKS and not st.sidebar.warning("⚠️ Unverified symbol - data may be unreliable"):
-            return
-        data = fetch_stock_data_cached(symbol)
-        if not data.empty:
-            data = analyze_stock(data)
-            recommendations = generate_recommendations(data)
-            display_dashboard(symbol, data, recommendations, NSE_STOCKS)
+        if symbol not in NSE_STOCKS:
+            st.sidebar.warning("⚠️ Unverified symbol - data may be unreliable")
         else:
-            st.error("❌ Failed to load data for this symbol")
+            data = fetch_stock_data_cached(symbol)
+            if not data.empty:
+                data = analyze_stock(data)
+                recommendations = generate_recommendations(data)
+                display_dashboard(symbol, data, recommendations, NSE_STOCKS)
+            else:
+                st.error("❌ Failed to load data for this symbol")
+    else:
+        st.sidebar.info("ℹ️ Please select or enter a stock symbol to begin analysis.")
 
 if __name__ == "__main__":
     main()
