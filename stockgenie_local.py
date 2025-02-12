@@ -274,6 +274,8 @@ def calculate_target(data, risk_reward_ratio=3):
     target = last_close + (risk * risk_reward_ratio)
     return round(target, 2)
 
+import time
+
 def fetch_alpha_vantage_sentiment(symbol):
     """
     Fetch news sentiment for a stock using Alpha Vantage.
@@ -282,9 +284,11 @@ def fetch_alpha_vantage_sentiment(symbol):
     params = {
         "function": "NEWS_SENTIMENT",
         "tickers": symbol.split('.')[0],  # Remove '.NS' from the symbol
-        "apikey": "TCAUKYUCIDZ6PI57",
+        "apikey": TCAUKYUCIDZ6PI57,
     }
     try:
+        # Add a delay to avoid hitting rate limits
+        time.sleep(12)  # Alpha Vantage allows 5 calls per minute (12 seconds between calls)
         response = requests.get(base_url, params=params, timeout=10)
         response.raise_for_status()
         data = response.json()
@@ -297,19 +301,29 @@ def fetch_alpha_vantage_sentiment(symbol):
         st.error(f"❌ Failed to fetch news sentiment for {symbol}. Error: {str(e)}")
         return []
 
+
 def get_alpha_vantage_sentiment_score(news_feed):
     """
     Calculate the average sentiment score from Alpha Vantage news feed.
     """
     if not news_feed:
+        st.warning("⚠️ No news articles found for sentiment analysis.")
         return None
 
     total_sentiment = 0
+    valid_articles = 0
     for article in news_feed:
-        sentiment_score = float(article.get("overall_sentiment_score", 0))
-        total_sentiment += sentiment_score
+        sentiment_score = article.get("overall_sentiment_score")
+        if sentiment_score is not None:
+            total_sentiment += float(sentiment_score)
+            valid_articles += 1
 
-    return total_sentiment / len(news_feed)
+    if valid_articles == 0:
+        st.warning("⚠️ No valid sentiment scores found in news articles.")
+        return None
+
+    return total_sentiment / valid_articles
+
 
 def generate_recommendations(data, symbol):
     """Generate comprehensive trade recommendations with Alpha Vantage news sentiment analysis"""
