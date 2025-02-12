@@ -324,6 +324,13 @@ def generate_recommendations(data, symbol):
         st.warning("⚠️ No data available for generating recommendations.")
         return recommendations
 
+    # Ensure Current Price is populated
+    if not data['Close'].empty:
+        recommendations["Current Price"] = data['Close'].iloc[-1]
+    else:
+        st.warning("⚠️ No closing price data available.")
+        return recommendations
+
     # Fetch news sentiment from Alpha Vantage
     news_feed = fetch_alpha_vantage_sentiment(symbol)
     if news_feed:
@@ -457,13 +464,29 @@ def display_dashboard(symbol=None, data=None, recommendations=None, NSE_STOCKS=N
         st.header(f"📋 {symbol.split('.')[0]} Analysis")
         col1, col2, col3, col4 = st.columns(4)
         with col1:
-            st.metric(tooltip("Current Price", TOOLTIPS['Current Price']), f"₹{recommendations['Current Price']:.2f}")
+            current_price = recommendations.get("Current Price")
+            if current_price is not None:
+                st.metric(tooltip("Current Price", TOOLTIPS['Current Price']), f"₹{current_price:.2f}")
+            else:
+                st.metric(tooltip("Current Price", TOOLTIPS['Current Price']), "N/A")
         with col2:
-            st.metric(tooltip("Buy At", TOOLTIPS['Buy At']), f"₹{recommendations['Buy At']:.2f}")
+            buy_at = recommendations.get("Buy At")
+            if buy_at is not None:
+                st.metric(tooltip("Buy At", TOOLTIPS['Buy At']), f"₹{buy_at:.2f}")
+            else:
+                st.metric(tooltip("Buy At", TOOLTIPS['Buy At']), "N/A")
         with col3:
-            st.metric(tooltip("Stop Loss", TOOLTIPS['Stop Loss']), f"₹{recommendations['Stop Loss']:.2f}")
+            stop_loss = recommendations.get("Stop Loss")
+            if stop_loss is not None:
+                st.metric(tooltip("Stop Loss", TOOLTIPS['Stop Loss']), f"₹{stop_loss:.2f}")
+            else:
+                st.metric(tooltip("Stop Loss", TOOLTIPS['Stop Loss']), "N/A")
         with col4:
-            st.metric(tooltip("Target", TOOLTIPS['Target']), f"₹{recommendations['Target']:.2f}")
+            target = recommendations.get("Target")
+            if target is not None:
+                st.metric(tooltip("Target", TOOLTIPS['Target']), f"₹{target:.2f}")
+            else:
+                st.metric(tooltip("Target", TOOLTIPS['Target']), "N/A")
 
         st.subheader("📈 Trading Recommendations")
         cols = st.columns(4)
@@ -486,6 +509,7 @@ def display_dashboard(symbol=None, data=None, recommendations=None, NSE_STOCKS=N
         with tab4:
             fig = px.line(data, y=['Fib_23.6', 'Fib_38.2', 'Fib_50.0', 'Fib_61.8', 'Fib_78.6'], title="Fibonacci Retracement Levels")
             st.plotly_chart(fig)
+
 
 def analyze_intraday_stocks(stock_list, batch_size=50, price_range=None):
     """Analyze all stocks for intraday trading and return top 5 picks"""
