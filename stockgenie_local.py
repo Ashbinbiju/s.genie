@@ -346,36 +346,6 @@ def fetch_alpha_vantage_sentiment(symbol):
         return []
 
 
----
-
-What This Fix Does:
-
-1. Checks if the stock symbol is valid before fetching news sentiment.
-
-
-2. Uses the correct format returned by Alpha Vantage (e.g., instead of "20MICRONS.NS", it might be "20MICRONS.BSE" or something else).
-
-
-3. Handles missing or unsupported symbols gracefully and prints the API response for debugging.
-
-
-
-
----
-
-How to Use This Fix:
-
-Try running fetch_alpha_vantage_sentiment("20MICRONS.NS")
-
-If Alpha Vantage recognizes the symbol, it will return the correct format and fetch news sentiment.
-
-If not, it will return an error message indicating that the stock is unsupported.
-
-
-This should fix your issue. Let me know if you need any modifications!
-
-
-
 def get_alpha_vantage_sentiment_score(news_feed):
     """
     Calculate the average sentiment score from Alpha Vantage news feed.
