@@ -284,7 +284,7 @@ def fetch_alpha_vantage_sentiment(symbol):
     params = {
         "function": "NEWS_SENTIMENT",
         "tickers": symbol.split('.')[0],  # Remove '.NS' from the symbol
-        "apikey": TCAUKYUCIDZ6PI57,
+        "apikey": "TCAUKYUCIDZ6PI57",
     }
     try:
         # Add a delay to avoid hitting rate limits
