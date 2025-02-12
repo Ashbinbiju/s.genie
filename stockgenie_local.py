@@ -282,7 +282,7 @@ def fetch_alpha_vantage_sentiment(symbol):
     params = {
         "function": "NEWS_SENTIMENT",
         "tickers": symbol.split('.')[0],  # Remove '.NS' from the symbol
-        "apikey": "TCAUKYUCIDZ6PI57,
+        "apikey": "TCAUKYUCIDZ6PI57",
     }
     try:
         response = requests.get(base_url, params=params, timeout=10)
