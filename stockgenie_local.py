@@ -13,6 +13,7 @@ import io
 import random
 from textblob import TextBlob  # For sentiment analysis
 import streamlit.components.v1 as components
+import itertools
 
 # API Keys
 NEWSAPI_KEY = "ed58659895e84dfb8162a8bb47d8525e"
@@ -401,8 +402,9 @@ def colored_recommendation(recommendation):
         return recommendation  # Default case, no color formatting
 
 
+
 def display_dashboard(symbol=None, data=None, recommendations=None, NSE_STOCKS=None):
-    """Enhanced UI with color coding, tooltips, and progress bar"""
+    """Enhanced UI with color coding, tooltips, progress bar, and animations"""
     st.title("📊 StockGenie Pro - NSE Analysis")
     st.subheader(f"📅 Analysis for {datetime.now().strftime('%d %b %Y')}")
     
@@ -418,11 +420,20 @@ def display_dashboard(symbol=None, data=None, recommendations=None, NSE_STOCKS=N
         progress_bar = st.progress(0)
         loading_text = st.empty()
         
-        # Fetch results with dynamic progress updates
+        # Define dynamic loading messages
+        loading_messages = itertools.cycle([
+            "Analyzing trends...",
+            "Fetching data...",
+            "Crunching numbers...",
+            "Evaluating indicators...",
+            "Finalizing results..."
+        ])
+        
+        # Simulate processing time with dynamic updates
         results_df = analyze_all_stocks(
             NSE_STOCKS,
             price_range=price_range,
-            progress_callback=lambda x: progress_bar.progress(x)
+            progress_callback=lambda x: update_progress(progress_bar, loading_text, x, loading_messages)
         )
         
         # Clear the progress bar and loading message
@@ -449,11 +460,20 @@ def display_dashboard(symbol=None, data=None, recommendations=None, NSE_STOCKS=N
         progress_bar = st.progress(0)
         loading_text = st.empty()
         
-        # Fetch results with dynamic progress updates
+        # Define dynamic loading messages
+        loading_messages = itertools.cycle([
+            "Scanning intraday trends...",
+            "Detecting buy signals...",
+            "Calculating stop-loss levels...",
+            "Optimizing targets...",
+            "Finalizing top picks..."
+        ])
+        
+        # Simulate processing time with dynamic updates
         intraday_results = analyze_intraday_stocks(
             NSE_STOCKS,
             price_range=price_range,
-            progress_callback=lambda x: progress_bar.progress(x)
+            progress_callback=lambda x: update_progress(progress_bar, loading_text, x, loading_messages)
         )
         
         # Clear the progress bar and loading message
@@ -502,6 +522,24 @@ def display_dashboard(symbol=None, data=None, recommendations=None, NSE_STOCKS=N
             st.plotly_chart(fig)
     elif symbol:
         st.warning("⚠️ No data available for the selected stock.")
+
+
+# Helper Function for Dynamic Progress Updates
+def update_progress(progress_bar, loading_text, progress_value, loading_messages):
+    """
+    Updates the progress bar and displays dynamic loading messages.
+    :param progress_bar: Streamlit progress bar object.
+    :param loading_text: Streamlit empty container for loading text.
+    :param progress_value: Current progress value (0 to 1).
+    :param loading_messages: Iterator for dynamic loading messages.
+    """
+    # Update progress bar
+    progress_bar.progress(progress_value)
+    
+    # Update loading text with dynamic messages
+    loading_message = next(loading_messages)
+    dots = "." * int((progress_value * 10) % 4)  # Add animated dots
+    loading_text.text(f"{loading_message}{dots}")
 
 
 def analyze_intraday_stocks(stock_list, batch_size=50, price_range=None, progress_callback=None):
