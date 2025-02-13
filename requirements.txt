@@ -14,4 +14,4 @@ beautifulsoup4
 diskcache
 TIME-python
 textblob
-
+more-itertools
