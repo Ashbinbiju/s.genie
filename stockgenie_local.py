@@ -392,86 +392,9 @@ def colored_recommendation(recommendation):
     else:
         return recommendation  # Default case, no color formatting
 
-st.markdown("""
-<style>
-/* Container for the running rabbit animation */
-.loader-container {
-    width: 100%;
-    height: 100px;
-    position: relative;
-    margin: 20px 0;
-}
-
-/* Rabbit image */
-.rabbit {
-    width: 50px;
-    height: 50px;
-    position: absolute;
-    top: 25px;
-    left: 0;
-    background-image: url('https://www.pngmart.com/files/7/Running-Rabbit-PNG-Transparent-Image.png');
-    background-size: cover;
-    animation: run 3s linear infinite;
-}
-
-/* Progress bar */
-.progress-bar {
-    width: 100%;
-    height: 10px;
-    background-color: #f3f3f3;
-    border-radius: 5px;
-    position: relative;
-    overflow: hidden;
-}
-
-.progress-bar-fill {
-    width: 0;
-    height: 100%;
-    background-color: #00ff00;
-    border-radius: 5px;
-    animation: fill 3s linear forwards;
-}
-
-/* Keyframes for the rabbit running */
-@keyframes run {
-    0% { left: 0; }
-    100% { left: calc(100% - 50px); }
-}
-
-/* Keyframes for the progress bar filling */
-@keyframes fill {
-    0% { width: 0; }
-    100% { width: 100%; }
-}
-
-/* Loading text */
-.loading-text {
-    color: #00ff00;
-    font-size: 18px;
-    font-weight: bold;
-    text-align: center;
-    margin-top: 10px;
-}
-</style>
-""", unsafe_allow_html=True)
-
-
-# JavaScript to stop the animation
-stop_animation_js = """
-<script>
-function stopAnimation() {
-    const rabbit = document.querySelector('.rabbit');
-    const progressBarFill = document.querySelector('.progress-bar-fill');
-    if (rabbit && progressBarFill) {
-        rabbit.style.animationPlayState = 'paused';
-        progressBarFill.style.animationPlayState = 'paused';
-    }
-}
-</script>
-"""
 
 def display_dashboard(symbol=None, data=None, recommendations=None, NSE_STOCKS=None):
-    """Enhanced UI with color coding, tooltips, and running rabbit animation"""
+    """Enhanced UI with color coding, tooltips, and progress bar"""
     st.title("📊 StockGenie Pro - NSE Analysis")
     st.subheader(f"📅 Analysis for {datetime.now().strftime('%d %b %Y')}")
     
@@ -483,26 +406,22 @@ def display_dashboard(symbol=None, data=None, recommendations=None, NSE_STOCKS=N
     
     # Daily Suggestions Button
     if st.button("🚀 Generate Daily Top Picks"):
-        # Display the running rabbit animation
-        st.markdown("""
-        <div class="loader-container">
-            <div class="rabbit"></div>
-            <div class="progress-bar">
-                <div class="progress-bar-fill"></div>
-            </div>
-            <div class="loading-text">Scanning market with quantum algorithms...</div>
-        </div>
-        """, unsafe_allow_html=True)
+        # Display a progress bar and loading message
+        progress_bar = st.progress(0)
+        loading_text = st.empty()
         
         # Simulate processing time (replace with actual data fetching/processing)
-        time.sleep(3)
+        for i in range(100):
+            time.sleep(0.03)  # Simulate a small delay for each step
+            progress_bar.progress(i + 1)
+            loading_text.text(f"Scanning market... {i + 1}% complete")
         
         # Fetch results
         results_df = analyze_all_stocks(NSE_STOCKS, price_range=price_range)
         
-        # Stop the animation using JavaScript
-        components.html(stop_animation_js)
-        st.markdown("<script>stopAnimation();</script>", unsafe_allow_html=True)
+        # Clear the progress bar and loading message
+        progress_bar.empty()
+        loading_text.empty()
         
         # Display results
         st.subheader("🏆 Today's Top 10 Stocks")
@@ -520,26 +439,22 @@ def display_dashboard(symbol=None, data=None, recommendations=None, NSE_STOCKS=N
     
     # Intraday Suggestions Button
     if st.button("⚡ Generate Intraday Top 5 Picks"):
-        # Display the running rabbit animation
-        st.markdown("""
-        <div class="loader-container">
-            <div class="rabbit"></div>
-            <div class="progress-bar">
-                <div class="progress-bar-fill"></div>
-            </div>
-            <div class="loading-text">Analyzing intraday trends with AI...</div>
-        </div>
-        """, unsafe_allow_html=True)
+        # Display a progress bar and loading message
+        progress_bar = st.progress(0)
+        loading_text = st.empty()
         
         # Simulate processing time (replace with actual data fetching/processing)
-        time.sleep(3)
+        for i in range(100):
+            time.sleep(0.03)  # Simulate a small delay for each step
+            progress_bar.progress(i + 1)
+            loading_text.text(f"Analyzing intraday trends... {i + 1}% complete")
         
         # Fetch results
         intraday_results = analyze_intraday_stocks(NSE_STOCKS, price_range=price_range)
         
-        # Stop the animation using JavaScript
-        components.html(stop_animation_js)
-        st.markdown("<script>stopAnimation();</script>", unsafe_allow_html=True)
+        # Clear the progress bar and loading message
+        progress_bar.empty()
+        loading_text.empty()
         
         # Display results
         st.subheader("🏆 Top 5 Intraday Stocks")
@@ -583,6 +498,7 @@ def display_dashboard(symbol=None, data=None, recommendations=None, NSE_STOCKS=N
             st.plotly_chart(fig)
     elif symbol:
         st.warning("⚠️ No data available for the selected stock.")
+
 
 def analyze_intraday_stocks(stock_list, batch_size=50, price_range=None):
     """Analyze all stocks for intraday trading and return top 5 picks"""
