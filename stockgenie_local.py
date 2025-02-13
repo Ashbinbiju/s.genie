@@ -365,19 +365,27 @@ def analyze_stock_parallel(symbol):
         }
     return None
 
-def analyze_all_stocks(stock_list, batch_size=50, price_range=None):
+def analyze_all_stocks(stock_list, batch_size=50, price_range=None, progress_callback=None):
     """Analyze all stocks in the list using batch processing"""
     results = []
-    for i in tqdm(range(0, len(stock_list), batch_size), desc="Processing Batches"):
+    total_batches = (len(stock_list) // batch_size) + (1 if len(stock_list) % batch_size != 0 else 0)
+    for i in range(0, len(stock_list), batch_size):
         batch = stock_list[i:i + batch_size]
         batch_results = analyze_batch(batch)
         results.extend(batch_results)
+        
+        # Update progress bar dynamically
+        if progress_callback:
+            progress_callback((i + len(batch)) / len(stock_list))
+    
     results_df = pd.DataFrame(results)
     if "Score" not in results_df.columns:
         results_df["Score"] = 0
+    
     # Filter by price range if provided
     if price_range:
         results_df = results_df[(results_df['Current Price'] >= price_range[0]) & (results_df['Current Price'] <= price_range[1])]
+    
     results_df = results_df.sort_values(by="Score", ascending=False).head(10)
     return results_df
 
@@ -410,14 +418,12 @@ def display_dashboard(symbol=None, data=None, recommendations=None, NSE_STOCKS=N
         progress_bar = st.progress(0)
         loading_text = st.empty()
         
-        # Simulate processing time (replace with actual data fetching/processing)
-        for i in range(100):
-            time.sleep(0.03)  # Simulate a small delay for each step
-            progress_bar.progress(i + 1)
-            loading_text.text(f"Scanning market... {i + 1}% complete")
-        
-        # Fetch results
-        results_df = analyze_all_stocks(NSE_STOCKS, price_range=price_range)
+        # Fetch results with dynamic progress updates
+        results_df = analyze_all_stocks(
+            NSE_STOCKS,
+            price_range=price_range,
+            progress_callback=lambda x: progress_bar.progress(x)
+        )
         
         # Clear the progress bar and loading message
         progress_bar.empty()
@@ -443,14 +449,12 @@ def display_dashboard(symbol=None, data=None, recommendations=None, NSE_STOCKS=N
         progress_bar = st.progress(0)
         loading_text = st.empty()
         
-        # Simulate processing time (replace with actual data fetching/processing)
-        for i in range(100):
-            time.sleep(0.03)  # Simulate a small delay for each step
-            progress_bar.progress(i + 1)
-            loading_text.text(f"Analyzing intraday trends... {i + 1}% complete")
-        
-        # Fetch results
-        intraday_results = analyze_intraday_stocks(NSE_STOCKS, price_range=price_range)
+        # Fetch results with dynamic progress updates
+        intraday_results = analyze_intraday_stocks(
+            NSE_STOCKS,
+            price_range=price_range,
+            progress_callback=lambda x: progress_bar.progress(x)
+        )
         
         # Clear the progress bar and loading message
         progress_bar.empty()
@@ -500,22 +504,31 @@ def display_dashboard(symbol=None, data=None, recommendations=None, NSE_STOCKS=N
         st.warning("⚠️ No data available for the selected stock.")
 
 
-def analyze_intraday_stocks(stock_list, batch_size=50, price_range=None):
+def analyze_intraday_stocks(stock_list, batch_size=50, price_range=None, progress_callback=None):
     """Analyze all stocks for intraday trading and return top 5 picks"""
     results = []
-    for i in tqdm(range(0, len(stock_list), batch_size), desc="Processing Batches for Intraday"):
+    total_batches = (len(stock_list) // batch_size) + (1 if len(stock_list) % batch_size != 0 else 0)
+    for i in range(0, len(stock_list), batch_size):
         batch = stock_list[i:i + batch_size]
         batch_results = analyze_batch(batch)
         results.extend(batch_results)
+        
+        # Update progress bar dynamically
+        if progress_callback:
+            progress_callback((i + len(batch)) / len(stock_list))
+    
     results_df = pd.DataFrame(results)
     if "Score" not in results_df.columns:
         results_df["Score"] = 0
+    
     # Filter by price range if provided
     if price_range:
         results_df = results_df[(results_df['Current Price'] >= price_range[0]) & (results_df['Current Price'] <= price_range[1])]
+    
     intraday_df = results_df[results_df["Intraday"].str.contains("Buy", na=False)]
     intraday_df = intraday_df.sort_values(by="Score", ascending=False).head(5)
     return intraday_df
+
 
 def main():
     """Main function with enhanced input validation"""
