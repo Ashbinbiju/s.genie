@@ -270,7 +270,7 @@ def calculate_target(data, risk_reward_ratio=3):
     target = last_close + (risk * risk_reward_ratio)
     return round(target, 2)
 
-def generate_recommendations(data):
+def generate_recommendations(data, market_sentiment=0, news_sentiment=0):
     """Generate comprehensive trade recommendations"""
     recommendations = {
         "Intraday": "Hold", "Swing": "Hold",
@@ -280,36 +280,43 @@ def generate_recommendations(data):
     }
     if data.empty:
         return recommendations
+    
     try:
         # Current Price
         recommendations["Current Price"] = data['Close'].iloc[-1]
+        
         # Multi-Factor Scoring System
         buy_score = 0
         sell_score = 0
+        
         # Condition 1: RSI < 30 (Oversold) or > 70 (Overbought)
         if 'RSI' in data.columns:
             if data['RSI'].iloc[-1] < 30:
                 buy_score += 2  # Higher weight for RSI
             elif data['RSI'].iloc[-1] > 70:
                 sell_score += 2
+        
         # Condition 2: MACD Crossover
         if 'MACD' in data.columns and 'MACD_signal' in data.columns:
             if data['MACD'].iloc[-1] > data['MACD_signal'].iloc[-1]:
                 buy_score += 1
             elif data['MACD'].iloc[-1] < data['MACD_signal'].iloc[-1]:
                 sell_score += 1
+        
         # Condition 3: Bollinger Band Reversion
         if 'Close' in data.columns and 'Lower_Band' in data.columns and 'Upper_Band' in data.columns:
             if data['Close'].iloc[-1] < data['Lower_Band'].iloc[-1]:  # Oversold condition
                 buy_score += 1
             elif data['Close'].iloc[-1] > data['Upper_Band'].iloc[-1]:  # Overbought condition
                 sell_score += 1
+        
         # Condition 4: VWAP Trend
         if 'VWAP' in data.columns:
             if data['Close'].iloc[-1] > data['VWAP'].iloc[-1]:  # Price above VWAP indicates bullish trend
                 buy_score += 1
             elif data['Close'].iloc[-1] < data['VWAP'].iloc[-1]:  # Price below VWAP indicates bearish trend
                 sell_score += 1
+        
         # Condition 5: Volume Confirmation
         if 'Volume' in data.columns:
             avg_volume = data['Volume'].rolling(window=10).mean().iloc[-1]
@@ -317,20 +324,36 @@ def generate_recommendations(data):
                 buy_score += 1
             elif data['Volume'].iloc[-1] < avg_volume * 0.5:  # Low volume indicates weakness
                 sell_score += 1
+        
+        # Condition 6: News Sentiment
+        if news_sentiment > 0.2:  # Positive sentiment
+            buy_score += 1
+        elif news_sentiment < -0.2:  # Negative sentiment
+            sell_score += 1
+        
+        # Condition 7: Market Sentiment
+        if market_sentiment == 1:  # Positive market sentiment
+            buy_score += 1
+        elif market_sentiment == -1:  # Negative market sentiment
+            sell_score += 1
+        
         # Assign Recommendations Based on Scores
         if buy_score >= 4:  # Require stronger confirmation for "Strong Buy"
             recommendations["Intraday"] = "Strong Buy"
         elif sell_score >= 4:
             recommendations["Intraday"] = "Strong Sell"
+        
         # Calculate Trade Levels
         recommendations["Stop Loss"] = calculate_stop_loss(data)
         recommendations["Buy At"] = calculate_buy_at(data)
         recommendations["Target"] = calculate_target(data)
+        
         # Final Score (Optional)
         recommendations["Score"] = max(0, min(buy_score - sell_score, 5))  # Keep score between 0-5
     except Exception as e:
         st.warning(f"⚠️ Recommendation error: {str(e)}")
     return recommendations
+
 
 def analyze_batch(stock_batch):
     """Analyze a batch of stocks in parallel"""
@@ -351,7 +374,13 @@ def analyze_stock_parallel(symbol):
     data = fetch_stock_data_cached(symbol)
     if not data.empty:
         data = analyze_stock(data)
-        recommendations = generate_recommendations(data)
+        
+        # Fetch news sentiment for the stock
+        news_sentiment = fetch_news_sentiment(symbol.split(".")[0], api_key=NEWSAPI_KEY, source="newsapi")
+        
+        # Generate recommendations with news sentiment
+        recommendations = generate_recommendations(data, news_sentiment=news_sentiment)
+        
         return {
             "Symbol": symbol,
             "Current Price": recommendations["Current Price"],
@@ -363,6 +392,7 @@ def analyze_stock_parallel(symbol):
             "Short-Term": recommendations["Short-Term"],
             "Long-Term": recommendations["Long-Term"],
             "Score": recommendations.get("Score", 0),
+            "News Sentiment": news_sentiment  # Add news sentiment to results
         }
     return None
 
@@ -573,6 +603,9 @@ def main():
     st.sidebar.title("🔍 Stock Search")
     NSE_STOCKS = fetch_nse_stock_list()
     
+    # Fetch US market sentiment
+    market_sentiment = fetch_us_market_sentiment()
+    
     # Initialize symbol as None
     symbol = None
     
@@ -582,7 +615,6 @@ def main():
         options=[""] + NSE_STOCKS + ["Custom"],  # Add an empty option at the beginning
         format_func=lambda x: x.split('.')[0] if x != "Custom" and x != "" else x
     )
-    
     if selected_option == "Custom":
         custom_symbol = st.sidebar.text_input("Enter NSE Symbol (e.g.: RELIANCE):")
         if custom_symbol:
@@ -600,13 +632,16 @@ def main():
             data = fetch_stock_data_cached(symbol)
             if not data.empty:
                 data = analyze_stock(data)
-                recommendations = generate_recommendations(data)
+                
+                # Fetch news sentiment for the stock
+                news_sentiment = fetch_news_sentiment(symbol.split(".")[0], api_key=NEWSAPI_KEY, source="newsapi")
+                
+                # Generate recommendations with market and news sentiment
+                recommendations = generate_recommendations(data, market_sentiment=market_sentiment, news_sentiment=news_sentiment)
+                
                 display_dashboard(symbol, data, recommendations, NSE_STOCKS)
             else:
                 st.error("❌ Failed to load data for this symbol")
     else:
         # If no stock is selected, display the dashboard without individual stock analysis
         display_dashboard(None, None, None, NSE_STOCKS)
-
-if __name__ == "__main__":
-    main()
