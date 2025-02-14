@@ -41,7 +41,7 @@ def fetch_stock_data(symbol, period="5y", interval="1d"):
 # Sentiment Analysis
 def fetch_news_sentiment(query):
     """Fetch news sentiment using NewsAPI"""
-    url = f'https://gnews.io/api/v4/search?q={query}&token=e4f5f1442641400694645433a8f98b94&lang=en&max=5'"
+    url = f'https://gnews.io/api/v4/search?q={query}&token=e4f5f1442641400694645433a8f98b94&lang=en&max=5'
     try:
         response = requests.get(url)
         articles = response.json().get("articles", [])
