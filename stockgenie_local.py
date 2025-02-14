@@ -5,19 +5,15 @@ import streamlit as st
 from datetime import datetime, timedelta
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from functools import lru_cache
-from tqdm import tqdm
-import plotly.express as px
-import time
 import requests
 import io
 import random
 from textblob import TextBlob  # For sentiment analysis
-import streamlit.components.v1 as components
 import itertools
 
 # API Keys
-NEWSAPI_KEY = "ed58659895e84dfb8162a8bb47d8525e"
-GNEWS_KEY = "e4f5f1442641400694645433a8f98b94"
+NEWSAPI_KEY = ""
+GNEWS_KEY = ""
 ALPHA_VANTAGE_KEY = "TCAUKYUCIDZ6PI57"
 
 # Tooltip explanations
@@ -98,7 +94,7 @@ def fetch_stock_data_cached(symbol, period="5y", interval="1d"):
 def fetch_us_market_sentiment():
     """Fetch US market sentiment using Alpha Vantage"""
     try:
-        url = f"https://www.alphavantage.co/query?function=GLOBAL_QUOTE&symbol=SPY&apikey=TCAUKYUCIDZ6PI57"
+        url = f"https://www.alphavantage.co/query?function=GLOBAL_QUOTE&symbol=SPY&apikey={ALPHA_VANTAGE_KEY}"
         response = requests.get(url)
         response.raise_for_status()
         data = response.json()
@@ -119,9 +115,9 @@ def fetch_news_sentiment(query, api_key, source="newsapi"):
     """Fetch news sentiment using NewsAPI or GNews"""
     try:
         if source == "newsapi":
-            url = f"https://newsapi.org/v2/everything?q={query}&apiKey=ed58659895e84dfb8162a8bb47d8525e&language=en&sortBy=publishedAt&pageSize=5"
+            url = f"https://newsapi.org/v2/everything?q={query}&apiKey={api_key}&language=en&sortBy=publishedAt&pageSize=5"
         elif source == "gnews":
-            url = f"https://gnews.io/api/v4/search?q={query}&token=e4f5f1442641400694645433a8f98b94&lang=en&max=5"
+            url = f"https://gnews.io/api/v4/search?q={query}&token={api_key}&lang=en&max=5"
         response = requests.get(url)
         response.raise_for_status()
         articles = response.json().get("articles", [])
@@ -280,43 +276,36 @@ def generate_recommendations(data, market_sentiment=0, news_sentiment=0):
     }
     if data.empty:
         return recommendations
-    
     try:
         # Current Price
         recommendations["Current Price"] = data['Close'].iloc[-1]
-        
         # Multi-Factor Scoring System
         buy_score = 0
         sell_score = 0
-        
         # Condition 1: RSI < 30 (Oversold) or > 70 (Overbought)
         if 'RSI' in data.columns:
             if data['RSI'].iloc[-1] < 30:
                 buy_score += 2  # Higher weight for RSI
             elif data['RSI'].iloc[-1] > 70:
                 sell_score += 2
-        
         # Condition 2: MACD Crossover
         if 'MACD' in data.columns and 'MACD_signal' in data.columns:
             if data['MACD'].iloc[-1] > data['MACD_signal'].iloc[-1]:
                 buy_score += 1
             elif data['MACD'].iloc[-1] < data['MACD_signal'].iloc[-1]:
                 sell_score += 1
-        
         # Condition 3: Bollinger Band Reversion
         if 'Close' in data.columns and 'Lower_Band' in data.columns and 'Upper_Band' in data.columns:
             if data['Close'].iloc[-1] < data['Lower_Band'].iloc[-1]:  # Oversold condition
                 buy_score += 1
             elif data['Close'].iloc[-1] > data['Upper_Band'].iloc[-1]:  # Overbought condition
                 sell_score += 1
-        
         # Condition 4: VWAP Trend
         if 'VWAP' in data.columns:
             if data['Close'].iloc[-1] > data['VWAP'].iloc[-1]:  # Price above VWAP indicates bullish trend
                 buy_score += 1
             elif data['Close'].iloc[-1] < data['VWAP'].iloc[-1]:  # Price below VWAP indicates bearish trend
                 sell_score += 1
-        
         # Condition 5: Volume Confirmation
         if 'Volume' in data.columns:
             avg_volume = data['Volume'].rolling(window=10).mean().iloc[-1]
@@ -324,36 +313,30 @@ def generate_recommendations(data, market_sentiment=0, news_sentiment=0):
                 buy_score += 1
             elif data['Volume'].iloc[-1] < avg_volume * 0.5:  # Low volume indicates weakness
                 sell_score += 1
-        
         # Condition 6: News Sentiment
         if news_sentiment > 0.2:  # Positive sentiment
             buy_score += 1
         elif news_sentiment < -0.2:  # Negative sentiment
             sell_score += 1
-        
         # Condition 7: Market Sentiment
         if market_sentiment == 1:  # Positive market sentiment
             buy_score += 1
         elif market_sentiment == -1:  # Negative market sentiment
             sell_score += 1
-        
         # Assign Recommendations Based on Scores
         if buy_score >= 4:  # Require stronger confirmation for "Strong Buy"
             recommendations["Intraday"] = "Strong Buy"
         elif sell_score >= 4:
             recommendations["Intraday"] = "Strong Sell"
-        
         # Calculate Trade Levels
         recommendations["Stop Loss"] = calculate_stop_loss(data)
         recommendations["Buy At"] = calculate_buy_at(data)
         recommendations["Target"] = calculate_target(data)
-        
         # Final Score (Optional)
         recommendations["Score"] = max(0, min(buy_score - sell_score, 5))  # Keep score between 0-5
     except Exception as e:
         st.warning(f"⚠️ Recommendation error: {str(e)}")
     return recommendations
-
 
 def analyze_batch(stock_batch):
     """Analyze a batch of stocks in parallel"""
@@ -374,13 +357,10 @@ def analyze_stock_parallel(symbol):
     data = fetch_stock_data_cached(symbol)
     if not data.empty:
         data = analyze_stock(data)
-        
         # Fetch news sentiment for the stock
         news_sentiment = fetch_news_sentiment(symbol.split(".")[0], api_key=NEWSAPI_KEY, source="newsapi")
-        
         # Generate recommendations with news sentiment
         recommendations = generate_recommendations(data, news_sentiment=news_sentiment)
-        
         return {
             "Symbol": symbol,
             "Current Price": recommendations["Current Price"],
@@ -404,19 +384,15 @@ def analyze_all_stocks(stock_list, batch_size=50, price_range=None, progress_cal
         batch = stock_list[i:i + batch_size]
         batch_results = analyze_batch(batch)
         results.extend(batch_results)
-        
         # Update progress bar dynamically
         if progress_callback:
             progress_callback((i + len(batch)) / len(stock_list))
-    
     results_df = pd.DataFrame(results)
     if "Score" not in results_df.columns:
         results_df["Score"] = 0
-    
     # Filter by price range if provided
     if price_range:
         results_df = results_df[(results_df['Current Price'] >= price_range[0]) & (results_df['Current Price'] <= price_range[1])]
-    
     results_df = results_df.sort_values(by="Score", ascending=False).head(10)
     return results_df
 
@@ -431,130 +407,163 @@ def colored_recommendation(recommendation):
     else:
         return recommendation  # Default case, no color formatting
 
+def display_portfolio(portfolio, current_prices):
+    """Display the virtual portfolio's performance."""
+    st.subheader("💼 Virtual Portfolio")
+    st.metric("Cash Balance", f"₹{portfolio['cash_balance']:.2f}")
+    portfolio_value = calculate_portfolio_value(portfolio, current_prices)
+    st.metric("Portfolio Value", f"₹{portfolio_value:.2f}")
 
+    if portfolio["holdings"]:
+        st.subheader("📊 Holdings")
+        holdings_data = []
+        for symbol, holding in portfolio["holdings"].items():
+            current_price = current_prices.get(symbol, None)
+            if current_price:
+                market_value = holding["quantity"] * current_price
+                pnl = (current_price - holding["average_price"]) * holding["quantity"]
+                holdings_data.append({
+                    "Symbol": symbol,
+                    "Quantity": holding["quantity"],
+                    "Average Price": holding["average_price"],
+                    "Current Price": current_price,
+                    "Market Value": market_value,
+                    "P&L": pnl
+                })
+        holdings_df = pd.DataFrame(holdings_data)
+        st.dataframe(holdings_df.style.applymap(color_pnl, subset=["P&L"]))
+    else:
+        st.info("ℹ️ No holdings in the portfolio.")
+
+def calculate_portfolio_value(portfolio, current_prices):
+    """Calculate the total value of the portfolio."""
+    market_value = 0
+    for symbol, holding in portfolio["holdings"].items():
+        if symbol in current_prices:
+            market_value += holding["quantity"] * current_prices[symbol]
+    return portfolio["cash_balance"] + market_value
+
+def buy_stock(portfolio, symbol, price, quantity):
+    """Simulate buying a stock."""
+    cost = price * quantity
+    if portfolio["cash_balance"] >= cost:
+        portfolio["cash_balance"] -= cost
+        if symbol in portfolio["holdings"]:
+            # Update average price and quantity
+            prev_quantity = portfolio["holdings"][symbol]["quantity"]
+            prev_avg_price = portfolio["holdings"][symbol]["average_price"]
+            total_cost = prev_quantity * prev_avg_price + cost
+            new_quantity = prev_quantity + quantity
+            portfolio["holdings"][symbol]["average_price"] = total_cost / new_quantity
+            portfolio["holdings"][symbol]["quantity"] = new_quantity
+        else:
+            # Add new holding
+            portfolio["holdings"][symbol] = {"quantity": quantity, "average_price": price}
+        # Log transaction
+        portfolio["transactions"].append({
+            "symbol": symbol,
+            "type": "buy",
+            "price": price,
+            "quantity": quantity,
+            "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        })
+        return True
+    else:
+        st.warning(f"⚠️ Insufficient cash to buy {quantity} shares of {symbol}.")
+        return False
+
+def sell_stock(portfolio, symbol, price, quantity):
+    """Simulate selling a stock."""
+    if symbol in portfolio["holdings"] and portfolio["holdings"][symbol]["quantity"] >= quantity:
+        proceeds = price * quantity
+        portfolio["cash_balance"] += proceeds
+        portfolio["holdings"][symbol]["quantity"] -= quantity
+        if portfolio["holdings"][symbol]["quantity"] == 0:
+            del portfolio["holdings"][symbol]
+        # Log transaction
+        portfolio["transactions"].append({
+            "symbol": symbol,
+            "type": "sell",
+            "price": price,
+            "quantity": quantity,
+            "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        })
+        return True
+    else:
+        st.warning(f"⚠️ Insufficient shares to sell {quantity} shares of {symbol}.")
+        return False
+
+def update_portfolio_based_on_recommendations(portfolio, results_df):
+    """Update the virtual portfolio based on top recommendations."""
+    for _, row in results_df.iterrows():
+        symbol = row["Symbol"]
+        recommendation = row["Intraday"]
+        current_price = row["Current Price"]
+        buy_at = row["Buy At"]
+        stop_loss = row["Stop Loss"]
+        target = row["Target"]
+
+        if recommendation == "Strong Buy":
+            # Buy logic: Allocate a fixed amount per trade (e.g., ₹50,000)
+            max_trade_amount = 50000
+            quantity = int(max_trade_amount / buy_at)
+            buy_stock(portfolio, symbol, buy_at, quantity)
+
+        elif recommendation == "Strong Sell":
+            # Sell logic: Sell all holdings if available
+            if symbol in portfolio["holdings"]:
+                quantity = portfolio["holdings"][symbol]["quantity"]
+                sell_stock(portfolio, symbol, current_price, quantity)
+
+def color_pnl(value):
+    """Color-code P&L values."""
+    if value > 0:
+        return "color: green"
+    elif value < 0:
+        return "color: red"
+    else:
+        return "color: black"
 
 def display_dashboard(symbol=None, data=None, recommendations=None, NSE_STOCKS=None):
-    """Enhanced UI with color coding, tooltips, progress bar, and animations"""
+    """Enhanced UI with virtual portfolio integration."""
     st.title("📊 StockGenie Pro - NSE Analysis")
     st.subheader(f"📅 Analysis for {datetime.now().strftime('%d %b %Y')}")
     
-    # Price Range Slider
-    price_range = st.sidebar.slider(
-        "Select Price Range (₹)",
-        min_value=0, max_value=10000, value=(100, 1000)
-    )
+    # Fetch current prices for portfolio calculation
+    current_prices = {row["Symbol"]: row["Current Price"] for _, row in analyze_all_stocks(NSE_STOCKS).iterrows()}
     
-    # Daily Suggestions Button
+    # Display virtual portfolio
+    display_portfolio(st.session_state.portfolio, current_prices)
+    
+    # Generate Daily Top Picks
     if st.button("🚀 Generate Daily Top Picks"):
-        # Display a progress bar and loading message
         progress_bar = st.progress(0)
         loading_text = st.empty()
-        
-        # Define dynamic loading messages
         loading_messages = itertools.cycle([
-            "Analyzing trends...",
-            "Fetching data...",
-            "Crunching numbers...",
-            "Evaluating indicators...",
-            "Finalizing results..."
+            "Analyzing trends...", "Fetching data...", "Crunching numbers...",
+            "Evaluating indicators...", "Finalizing results..."
         ])
-        
-        # Simulate processing time with dynamic updates
         results_df = analyze_all_stocks(
             NSE_STOCKS,
-            price_range=price_range,
             progress_callback=lambda x: update_progress(progress_bar, loading_text, x, loading_messages)
         )
-        
-        # Clear the progress bar and loading message
         progress_bar.empty()
         loading_text.empty()
+        
+        # Update portfolio based on recommendations
+        update_portfolio_based_on_recommendations(st.session_state.portfolio, results_df)
         
         # Display results
         st.subheader("🏆 Today's Top 10 Stocks")
         for _, row in results_df.iterrows():
             with st.expander(f"{row['Symbol']} - Score: {row['Score']}/5"):
                 st.markdown(f"""
-                {tooltip('Current Price', TOOLTIPS['Stop Loss'])}: ₹{row['Current Price']:.2f}  
-                Buy At: ₹{row['Buy At']:.2f} | Stop Loss: ₹{row['Stop Loss']:.2f}  
-                Target: ₹{row['Target']:.2f}  
-                Intraday: {colored_recommendation(row['Intraday'])}  
-                Swing: {colored_recommendation(row['Swing'])}  
-                Short-Term: {colored_recommendation(row['Short-Term'])}  
-                Long-Term: {colored_recommendation(row['Long-Term'])}
-                """, unsafe_allow_html=True)
-    
-    # Intraday Suggestions Button
-    if st.button("⚡ Generate Intraday Top 5 Picks"):
-        # Display a progress bar and loading message
-        progress_bar = st.progress(0)
-        loading_text = st.empty()
-        
-        # Define dynamic loading messages
-        loading_messages = itertools.cycle([
-            "Scanning intraday trends...",
-            "Detecting buy signals...",
-            "Calculating stop-loss levels...",
-            "Optimizing targets...",
-            "Finalizing top picks..."
-        ])
-        
-        # Simulate processing time with dynamic updates
-        intraday_results = analyze_intraday_stocks(
-            NSE_STOCKS,
-            price_range=price_range,
-            progress_callback=lambda x: update_progress(progress_bar, loading_text, x, loading_messages)
-        )
-        
-        # Clear the progress bar and loading message
-        progress_bar.empty()
-        loading_text.empty()
-        
-        # Display results
-        st.subheader("🏆 Top 5 Intraday Stocks")
-        for _, row in intraday_results.iterrows():
-            with st.expander(f"{row['Symbol']} - Score: {row['Score']}/5"):
-                st.markdown(f"""
-                {tooltip('Current Price', TOOLTIPS['Stop Loss'])}: ₹{row['Current Price']:.2f}  
+                Current Price: ₹{row['Current Price']:.2f}  
                 Buy At: ₹{row['Buy At']:.2f} | Stop Loss: ₹{row['Stop Loss']:.2f}  
                 Target: ₹{row['Target']:.2f}  
                 Intraday: {colored_recommendation(row['Intraday'])}  
                 """, unsafe_allow_html=True)
-    
-    # Individual Stock Analysis (only if symbol is provided)
-    if symbol and data is not None and recommendations is not None:
-        st.header(f"📋 {symbol.split('.')[0]} Analysis")
-        col1, col2, col3, col4 = st.columns(4)
-        with col1:
-            st.metric(tooltip("Current Price", TOOLTIPS['RSI']), f"₹{recommendations['Current Price']:.2f}")
-        with col2:
-            st.metric(tooltip("Buy At", "Recommended entry price"), f"₹{recommendations['Buy At']:.2f}")
-        with col3:
-            st.metric(tooltip("Stop Loss", TOOLTIPS['Stop Loss']), f"₹{recommendations['Stop Loss']:.2f}")
-        with col4:
-            st.metric(tooltip("Target", "Price target based on risk/reward"), f"₹{recommendations['Target']:.2f}")
-        st.subheader("📈 Trading Recommendations")
-        cols = st.columns(4)
-        strategy_names = ["Intraday", "Swing", "Short-Term", "Long-Term"]
-        for col, strategy in zip(cols, strategy_names):
-            with col:
-                st.markdown(f"**{strategy}**", unsafe_allow_html=True)
-                st.markdown(colored_recommendation(recommendations[strategy]), unsafe_allow_html=True)
-        tab1, tab2, tab3 = st.tabs(["📊 Price Action", "📉 Indicators", "📊 Volatility"])
-        with tab1:
-            fig = px.line(data, y=['Close', 'SMA_50', 'SMA_200', 'EMA_20', 'EMA_50'], title="Price with Moving Averages")
-            st.plotly_chart(fig)
-        with tab2:
-            fig = px.line(data, y=['RSI', 'MACD', 'MACD_signal'], title="Momentum Indicators")
-            st.plotly_chart(fig)
-        with tab3:
-            fig = px.line(data, y=['ATR', 'Upper_Band', 'Lower_Band'], title="Volatility Analysis")
-            st.plotly_chart(fig)
-    elif symbol:
-        st.warning("⚠️ No data available for the selected stock.")
 
-
-# Helper Function for Dynamic Progress Updates
 def update_progress(progress_bar, loading_text, progress_value, loading_messages):
     """
     Updates the progress bar and displays dynamic loading messages.
@@ -565,50 +574,26 @@ def update_progress(progress_bar, loading_text, progress_value, loading_messages
     """
     # Update progress bar
     progress_bar.progress(progress_value)
-    
     # Update loading text with dynamic messages
     loading_message = next(loading_messages)
     dots = "." * int((progress_value * 10) % 4)  # Add animated dots
     loading_text.text(f"{loading_message}{dots}")
 
-
-def analyze_intraday_stocks(stock_list, batch_size=50, price_range=None, progress_callback=None):
-    """Analyze all stocks for intraday trading and return top 5 picks"""
-    results = []
-    total_batches = (len(stock_list) // batch_size) + (1 if len(stock_list) % batch_size != 0 else 0)
-    for i in range(0, len(stock_list), batch_size):
-        batch = stock_list[i:i + batch_size]
-        batch_results = analyze_batch(batch)
-        results.extend(batch_results)
-        
-        # Update progress bar dynamically
-        if progress_callback:
-            progress_callback((i + len(batch)) / len(stock_list))
-    
-    results_df = pd.DataFrame(results)
-    if "Score" not in results_df.columns:
-        results_df["Score"] = 0
-    
-    # Filter by price range if provided
-    if price_range:
-        results_df = results_df[(results_df['Current Price'] >= price_range[0]) & (results_df['Current Price'] <= price_range[1])]
-    
-    intraday_df = results_df[results_df["Intraday"].str.contains("Buy", na=False)]
-    intraday_df = intraday_df.sort_values(by="Score", ascending=False).head(5)
-    return intraday_df
-
-
 def main():
     """Main function with enhanced input validation"""
+    if "portfolio" not in st.session_state:
+        st.session_state.portfolio = {
+            "cash_balance": 1000000,  # Starting cash balance
+            "holdings": {},           # Dictionary to track holdings
+            "transactions": []        # List to log all transactions
+        }
+
     st.sidebar.title("🔍 Stock Search")
     NSE_STOCKS = fetch_nse_stock_list()
-    
     # Fetch US market sentiment
     market_sentiment = fetch_us_market_sentiment()
-    
     # Initialize symbol as None
     symbol = None
-    
     # Symbol input with validation
     selected_option = st.sidebar.selectbox(
         "Choose or enter stock:",
@@ -621,7 +606,6 @@ def main():
             symbol = f"{custom_symbol}.NS"
     elif selected_option != "":  # If the user selects a stock from the list
         symbol = selected_option
-    
     # Display the dashboard (works regardless of stock selection)
     if symbol:
         if ".NS" not in symbol:
@@ -632,16 +616,16 @@ def main():
             data = fetch_stock_data_cached(symbol)
             if not data.empty:
                 data = analyze_stock(data)
-                
                 # Fetch news sentiment for the stock
                 news_sentiment = fetch_news_sentiment(symbol.split(".")[0], api_key=NEWSAPI_KEY, source="newsapi")
-                
                 # Generate recommendations with market and news sentiment
                 recommendations = generate_recommendations(data, market_sentiment=market_sentiment, news_sentiment=news_sentiment)
-                
                 display_dashboard(symbol, data, recommendations, NSE_STOCKS)
             else:
                 st.error("❌ Failed to load data for this symbol")
     else:
         # If no stock is selected, display the dashboard without individual stock analysis
         display_dashboard(None, None, None, NSE_STOCKS)
+
+if __name__ == "__main__":
+    main()
