@@ -94,7 +94,7 @@ def fetch_stock_data_cached(symbol, period="5y", interval="1d"):
 def fetch_us_market_sentiment():
     """Fetch US market sentiment using Alpha Vantage"""
     try:
-        url = f"https://www.alphavantage.co/query?function=GLOBAL_QUOTE&symbol=SPY&apikey={ALPHA_VANTAGE_KEY}"
+        url = f'https://www.alphavantage.co/query?function=GLOBAL_QUOTE&symbol=SPY&apikey=TCAUKYUCIDZ6PI57'
         response = requests.get(url)
         response.raise_for_status()
         data = response.json()
@@ -115,9 +115,9 @@ def fetch_news_sentiment(query, api_key, source="newsapi"):
     """Fetch news sentiment using NewsAPI or GNews"""
     try:
         if source == "newsapi":
-            url = f"https://newsapi.org/v2/everything?q={query}&apiKey={api_key}&language=en&sortBy=publishedAt&pageSize=5"
+            url = f'https://newsapi.org/v2/everything?q={query}&apiKey=ed58659895e84dfb8162a8bb47d8525e&language=en&sortBy=publishedAt&pageSize=5'
         elif source == "gnews":
-            url = f"https://gnews.io/api/v4/search?q={query}&token={api_key}&lang=en&max=5"
+            url = f'https://gnews.io/api/v4/search?q={query}&token=e4f5f1442641400694645433a8f98b94&lang=en&max=5'
         response = requests.get(url)
         response.raise_for_status()
         articles = response.json().get("articles", [])
