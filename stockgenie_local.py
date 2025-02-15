@@ -1,3 +1,86 @@
+
+import re
+import json
+import time
+import zlib
+import torch
+import requests
+import logging
+import feedparser
+import numpy as np
+import matplotlib.pyplot as plt
+from datetime import datetime
+from dateutil import parser
+from dateutil.tz import tzutc
+from transformers import pipeline
+from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception
+
+# ✅ Advanced Timestamp Handling
+def parse_timestamp(timestamp_str):
+    """Parses timestamps with multiple fallback methods."""
+    try:
+        return parser.parse(timestamp_str).astimezone(tzutc()) if timestamp_str else datetime.now(tzutc())
+    except Exception as e:
+        logging.warning(f"⚠️ Failed to parse timestamp: {timestamp_str} | Error: {e}")
+        
+        # Try regex-based parsing as fallback
+        date_match = re.search(r'\d{4}-\d{2}-\d{2}', timestamp_str)
+        if date_match:
+            return parser.parse(date_match.group()).astimezone(tzutc())
+
+        return datetime.now(tzutc())  # Default if all parsing fails
+
+# ✅ Structured Logging & Log Levels
+def log_error(event, message, details=None, level="WARNING"):
+    """Logs events in a structured JSON format."""
+    log_data = {"event": event, "message": message, "details": details}
+    log_message = json.dumps(log_data)
+
+    if level == "ERROR":
+        logging.error(log_message)
+    elif level == "INFO":
+        logging.info(log_message)
+    else:
+        logging.warning(log_message)
+
+# ✅ Custom Rate Limit Backoff Strategy
+def dynamic_backoff(response):
+    """Dynamically adjusts backoff time based on API rate limit headers."""
+    reset_time = int(response.headers.get("X-RateLimit-Reset", 0))
+    return max(2, reset_time - time.time())  # Wait until reset or at least 2 seconds
+
+# ✅ GPU Acceleration with Mixed Precision & CPU Fallback
+device = "cuda" if torch.cuda.is_available() else "cpu"
+finbert = pipeline("sentiment-analysis", model="ProsusAI/finbert", device=device, torch_dtype=torch.float16)
+
+# ✅ Exponential Decay for Source Weights
+def apply_exponential_decay(source):
+    """Applies exponential decay to source reliability scores."""
+    decay_factor = 0.9 ** len(source_accuracy[source])  # Faster decay for older scores
+    source_accuracy[source] = [x * decay_factor for x in source_accuracy[source]]
+
+    return sum(source_accuracy[source][-10:]) / min(len(source_accuracy[source]), 10)
+
+# ✅ Source Reliability Visualization
+def plot_source_accuracy():
+    """Plots source reliability trends."""
+    for source, scores in source_accuracy.items():
+        plt.plot(range(len(scores)), scores, label=source)
+
+    plt.xlabel("Time")
+    plt.ylabel("Accuracy Score")
+    plt.legend()
+    plt.show()
+
+# ✅ Grace Period for New Sources
+def apply_grace_period(source):
+    """Ensures new sources get fair evaluation before exclusion."""
+    if len(source_accuracy[source]) < 100:
+        return 1.0  # Full trust for first 100 articles
+
+    return apply_exponential_decay(source)  # Apply regular weighting after grace period
+
+# Include the original code here
 import yfinance as yf
 import pandas as pd
 import ta
