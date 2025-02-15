@@ -1,86 +1,3 @@
-
-import re
-import json
-import time
-import zlib
-import torch
-import requests
-import logging
-import feedparser
-import numpy as np
-import matplotlib.pyplot as plt
-from datetime import datetime
-from dateutil import parser
-from dateutil.tz import tzutc
-from transformers import pipeline
-from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception
-
-# ✅ Advanced Timestamp Handling
-def parse_timestamp(timestamp_str):
-    """Parses timestamps with multiple fallback methods."""
-    try:
-        return parser.parse(timestamp_str).astimezone(tzutc()) if timestamp_str else datetime.now(tzutc())
-    except Exception as e:
-        logging.warning(f"⚠️ Failed to parse timestamp: {timestamp_str} | Error: {e}")
-        
-        # Try regex-based parsing as fallback
-        date_match = re.search(r'\d{4}-\d{2}-\d{2}', timestamp_str)
-        if date_match:
-            return parser.parse(date_match.group()).astimezone(tzutc())
-
-        return datetime.now(tzutc())  # Default if all parsing fails
-
-# ✅ Structured Logging & Log Levels
-def log_error(event, message, details=None, level="WARNING"):
-    """Logs events in a structured JSON format."""
-    log_data = {"event": event, "message": message, "details": details}
-    log_message = json.dumps(log_data)
-
-    if level == "ERROR":
-        logging.error(log_message)
-    elif level == "INFO":
-        logging.info(log_message)
-    else:
-        logging.warning(log_message)
-
-# ✅ Custom Rate Limit Backoff Strategy
-def dynamic_backoff(response):
-    """Dynamically adjusts backoff time based on API rate limit headers."""
-    reset_time = int(response.headers.get("X-RateLimit-Reset", 0))
-    return max(2, reset_time - time.time())  # Wait until reset or at least 2 seconds
-
-# ✅ GPU Acceleration with Mixed Precision & CPU Fallback
-device = "cuda" if torch.cuda.is_available() else "cpu"
-finbert = pipeline("sentiment-analysis", model="ProsusAI/finbert", device=device, torch_dtype=torch.float16)
-
-# ✅ Exponential Decay for Source Weights
-def apply_exponential_decay(source):
-    """Applies exponential decay to source reliability scores."""
-    decay_factor = 0.9 ** len(source_accuracy[source])  # Faster decay for older scores
-    source_accuracy[source] = [x * decay_factor for x in source_accuracy[source]]
-
-    return sum(source_accuracy[source][-10:]) / min(len(source_accuracy[source]), 10)
-
-# ✅ Source Reliability Visualization
-def plot_source_accuracy():
-    """Plots source reliability trends."""
-    for source, scores in source_accuracy.items():
-        plt.plot(range(len(scores)), scores, label=source)
-
-    plt.xlabel("Time")
-    plt.ylabel("Accuracy Score")
-    plt.legend()
-    plt.show()
-
-# ✅ Grace Period for New Sources
-def apply_grace_period(source):
-    """Ensures new sources get fair evaluation before exclusion."""
-    if len(source_accuracy[source]) < 100:
-        return 1.0  # Full trust for first 100 articles
-
-    return apply_exponential_decay(source)  # Apply regular weighting after grace period
-
-# Include the original code here
 import yfinance as yf
 import pandas as pd
 import ta
@@ -353,6 +270,51 @@ def calculate_target(data, risk_reward_ratio=3):
     target = last_close + (risk * risk_reward_ratio)
     return round(target, 2)
 
+def fetch_fundamental_data(symbol):
+    """
+    Fetch fundamental data for a stock using yfinance.
+    """
+    stock = yf.Ticker(symbol)
+    info = stock.info
+    return {
+        "Market Cap": info.get("marketCap"),
+        "PEG Ratio": info.get("pegRatio"),
+        "P/E Ratio": info.get("trailingPE"),
+        "ROE (5-yr avg)": info.get("returnOnEquity"),
+        "ROCE (5-yr avg)": info.get("returnOnCapitalEmployed"),
+        "Debt-to-Equity": info.get("debtToEquity"),
+        "Promoter Holding": info.get("heldPercentInsiders"),
+        "Sales Growth (3-yr)": info.get("revenueGrowth"),
+        "Profit Growth (5-yr)": info.get("earningsGrowth"),
+        "Pledged Shares": info.get("pledgedPercentage"),
+        "Operating Profit Margin": info.get("operatingMargins"),
+        "Price-to-Sales": info.get("priceToSalesTrailing12Months"),
+        "EV/EBITDA": info.get("enterpriseToEbitda"),
+    }
+
+def filter_multibagger_stocks(stock_list):
+    """
+    Filter stocks based on the 13-point fundamental analysis criteria.
+    """
+    multibaggers = []
+    for symbol in stock_list:
+        data = fetch_fundamental_data(symbol)
+        if (data["Market Cap"] > 1000 and
+            data["PEG Ratio"] is not None and data["PEG Ratio"] < 1 and
+            data["P/E Ratio"] is not None and data["P/E Ratio"] < industry_pe and
+            data["ROE (5-yr avg)"] is not None and data["ROE (5-yr avg)"] > 20 and
+            data["ROCE (5-yr avg)"] is not None and data["ROCE (5-yr avg)"] > 15 and
+            data["Debt-to-Equity"] is not None and data["Debt-to-Equity"] < 0.5 and
+            data["Promoter Holding"] is not None and data["Promoter Holding"] > 50 and
+            data["Sales Growth (3-yr)"] is not None and data["Sales Growth (3-yr)"] > 15 and
+            data["Profit Growth (5-yr)"] is not None and data["Profit Growth (5-yr)"] > 15 and
+            data["Pledged Shares"] is not None and data["Pledged Shares"] < 1 and
+            data["Operating Profit Margin"] is not None and data["Operating Profit Margin"] > 12 and
+            data["Price-to-Sales"] is not None and data["Price-to-Sales"] < 3 and
+            data["EV/EBITDA"] is not None and data["EV/EBITDA"] < 25):
+            multibaggers.append(symbol)
+    return multibaggers
+
 def generate_recommendations(data):
     """Generate comprehensive trade recommendations"""
     recommendations = {
@@ -534,6 +496,35 @@ def display_dashboard(symbol=None, data=None, recommendations=None, NSE_STOCKS=N
                 Short-Term: {colored_recommendation(row['Short-Term'])}  
                 Long-Term: {colored_recommendation(row['Long-Term'])}
                 """, unsafe_allow_html=True)
+
+if st.sidebar.button("🔍 Find Multibagger Stocks (Fundamental Analysis)"):
+    st.subheader("🏆 Potential Multibagger Stocks (Fundamental Analysis)")
+    progress_bar = st.progress(0)
+    loading_text = st.empty()
+    
+    # Simulate processing time with dynamic updates
+    multibaggers = []
+    for i, symbol in enumerate(NSE_STOCKS):
+        progress_bar.progress((i + 1) / len(NSE_STOCKS))
+        loading_text.text(f"Analyzing {symbol}...")
+        data = fetch_fundamental_data(symbol)
+        if (data["Market Cap"] > 1000 and
+            data["PEG Ratio"] is not None and data["PEG Ratio"] < 1 and
+            # Add other conditions here...
+            ):
+            multibaggers.append(symbol)
+    
+    progress_bar.empty()
+    loading_text.empty()
+    
+    if multibaggers:
+        for symbol in multibaggers:
+            with st.expander(f"{symbol} - Potential Multibagger"):
+                st.write(f"**Fundamental Analysis Results:**")
+                fundamental_data = fetch_fundamental_data(symbol)
+                st.write(fundamental_data)
+    else:
+        st.warning("No multibagger stocks found based on the criteria.")
     
     # Intraday Suggestions Button
     if st.button("⚡ Generate Intraday Top 5 Picks"):
