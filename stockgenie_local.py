@@ -270,6 +270,9 @@ def calculate_target(data, risk_reward_ratio=3):
     target = last_close + (risk * risk_reward_ratio)
     return round(target, 2)
 
+
+
+# Function to fetch fundamental data
 def fetch_fundamental_data(symbol):
     """
     Fetch fundamental data for a stock using yfinance.
@@ -292,6 +295,20 @@ def fetch_fundamental_data(symbol):
         "EV/EBITDA": info.get("enterpriseToEbitda"),
     }
 
+# Function to fetch industry P/E ratio
+def fetch_industry_pe(symbol):
+    """
+    Fetch the industry P/E ratio for a stock using yfinance.
+    """
+    stock = yf.Ticker(symbol)
+    info = stock.info
+    industry_pe = info.get("industryPeRatio")  # Key for industry P/E ratio
+    if industry_pe is None:
+        # Fallback to a default value if industry P/E is not available
+        industry_pe = 25  # Default value
+    return industry_pe
+
+# Function to filter multibagger stocks
 def filter_multibagger_stocks(stock_list):
     """
     Filter stocks based on the 13-point fundamental analysis criteria.
@@ -299,9 +316,10 @@ def filter_multibagger_stocks(stock_list):
     multibaggers = []
     for symbol in stock_list:
         data = fetch_fundamental_data(symbol)
+        industry_pe = fetch_industry_pe(symbol)  # Fetch industry P/E ratio dynamically
         if (data["Market Cap"] > 1000 and
             data["PEG Ratio"] is not None and data["PEG Ratio"] < 1 and
-            data["P/E Ratio"] is not None and data["P/E Ratio"] < industry_pe and
+            data["P/E Ratio"] is not None and data["P/E Ratio"] < industry_pe and  # Use dynamic industry_pe
             data["ROE (5-yr avg)"] is not None and data["ROE (5-yr avg)"] > 20 and
             data["ROCE (5-yr avg)"] is not None and data["ROCE (5-yr avg)"] > 15 and
             data["Debt-to-Equity"] is not None and data["Debt-to-Equity"] < 0.5 and
@@ -314,6 +332,7 @@ def filter_multibagger_stocks(stock_list):
             data["EV/EBITDA"] is not None and data["EV/EBITDA"] < 25):
             multibaggers.append(symbol)
     return multibaggers
+
 
 def generate_recommendations(data):
     """Generate comprehensive trade recommendations"""
