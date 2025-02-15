@@ -15,3 +15,27 @@ diskcache
 TIME-python
 textblob
 more-itertools
+
+yfinance
+ta
+pandas
+streamlit
+plotly
+tqdm
+requests
+lxml
+openpyxl
+numpy
+nltk
+feedparser
+beautifulsoup4
+textblob
+more-itertools
+
+# Newly added dependencies
+torch
+transformers
+tenacity
+matplotlib
+python-dateutil
+
