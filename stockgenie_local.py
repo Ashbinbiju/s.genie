@@ -521,15 +521,17 @@ if st.sidebar.button("🔍 Find Multibagger Stocks (Fundamental Analysis)"):
     progress_bar = st.progress(0)
     loading_text = st.empty()
     
-   # Simulate processing time with dynamic updates
-multibaggers = []
+# Correct indentation using 4 spaces
 for i, symbol in enumerate(NSE_STOCKS):
     progress_bar.progress((i + 1) / len(NSE_STOCKS))
     loading_text.text(f"Analyzing {symbol}...")
     data = fetch_fundamental_data(symbol)
     if (data["Market Cap"] > 1000 and
-        data["PEG Ratio"] is not None and data["PEG Ratio"] < 1 ):
+        data["PEG Ratio"] is not None and data["PEG Ratio"] < 1):
         multibaggers.append(symbol)
+
+if multibaggers:  # This line should NOT be indented further
+    print("Multibagger stocks found:", multibaggers)
 
 progress_bar.empty()
 loading_text.empty()
