@@ -528,9 +528,7 @@ for i, symbol in enumerate(NSE_STOCKS):
     loading_text.text(f"Analyzing {symbol}...")
     data = fetch_fundamental_data(symbol)
     if (data["Market Cap"] > 1000 and
-        data["PEG Ratio"] is not None and data["PEG Ratio"] < 1 and
-        # Add other conditions here...
-       ):
+        data["PEG Ratio"] is not None and data["PEG Ratio"] < 1 ):
         multibaggers.append(symbol)
 
 progress_bar.empty()
