@@ -521,20 +521,20 @@ if st.sidebar.button("🔍 Find Multibagger Stocks (Fundamental Analysis)"):
     progress_bar = st.progress(0)
     loading_text = st.empty()
     
-    # Simulate processing time with dynamic updates
-    multibaggers = []
-    for i, symbol in enumerate(NSE_STOCKS):
-        progress_bar.progress((i + 1) / len(NSE_STOCKS))
-        loading_text.text(f"Analyzing {symbol}...")
-        data = fetch_fundamental_data(symbol)
-        if (data["Market Cap"] > 1000 and
-            data["PEG Ratio"] is not None and data["PEG Ratio"] < 1 and
-            # Add other conditions here...
-            ):
-            multibaggers.append(symbol)
-    
-    progress_bar.empty()
-    loading_text.empty()
+   # Simulate processing time with dynamic updates
+multibaggers = []
+for i, symbol in enumerate(NSE_STOCKS):
+    progress_bar.progress((i + 1) / len(NSE_STOCKS))
+    loading_text.text(f"Analyzing {symbol}...")
+    data = fetch_fundamental_data(symbol)
+    if (data["Market Cap"] > 1000 and
+        data["PEG Ratio"] is not None and data["PEG Ratio"] < 1 and
+        # Add other conditions here...
+       ):
+        multibaggers.append(symbol)
+
+progress_bar.empty()
+loading_text.empty()
     
     if multibaggers:
         for symbol in multibaggers:
