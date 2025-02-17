@@ -530,13 +530,13 @@ for i, symbol in enumerate(NSE_STOCKS):
         data["PEG Ratio"] is not None and data["PEG Ratio"] < 1):
         multibaggers.append(symbol)
 
-if multibaggers:  # This line should NOT be indented further
+if multibaggers:
     print("Multibagger stocks found:", multibaggers)
 
 progress_bar.empty()
 loading_text.empty()
     
-    if multibaggers:
+if multibaggers:
         for symbol in multibaggers:
             with st.expander(f"{symbol} - Potential Multibagger"):
                 st.write(f"**Fundamental Analysis Results:**")
