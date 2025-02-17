@@ -529,22 +529,21 @@ for i, symbol in enumerate(NSE_STOCKS):
     if (data["Market Cap"] > 1000 and
         data["PEG Ratio"] is not None and data["PEG Ratio"] < 1):
         multibaggers.append(symbol)
-
 if multibaggers:
     print("Multibagger stocks found:", multibaggers)
 
 progress_bar.empty()
 loading_text.empty()
-    
+
 if multibaggers:
-        for symbol in multibaggers:
-            with st.expander(f"{symbol} - Potential Multibagger"):
-                st.write(f"**Fundamental Analysis Results:**")
-                fundamental_data = fetch_fundamental_data(symbol)
-                st.write(fundamental_data)
-    else:
-        st.warning("No multibagger stocks found based on the criteria.")
-    
+    for symbol in multibaggers:
+        with st.expander(f"{symbol} - Potential Multibagger"):
+            st.write("**Fundamental Analysis Results:**")
+            fundamental_data = fetch_fundamental_data(symbol)
+            st.write(fundamental_data)
+else:
+    st.warning("No multibagger stocks found based on the criteria.")
+
     # Intraday Suggestions Button
     if st.button("⚡ Generate Intraday Top 5 Picks"):
         # Display a progress bar and loading message
