@@ -270,70 +270,6 @@ def calculate_target(data, risk_reward_ratio=3):
     target = last_close + (risk * risk_reward_ratio)
     return round(target, 2)
 
-
-
-# Function to fetch fundamental data
-def fetch_fundamental_data(symbol):
-    """
-    Fetch fundamental data for a stock using yfinance.
-    """
-    stock = yf.Ticker(symbol)
-    info = stock.info
-    return {
-        "Market Cap": info.get("marketCap"),
-        "PEG Ratio": info.get("pegRatio"),
-        "P/E Ratio": info.get("trailingPE"),
-        "ROE (5-yr avg)": info.get("returnOnEquity"),
-        "ROCE (5-yr avg)": info.get("returnOnCapitalEmployed"),
-        "Debt-to-Equity": info.get("debtToEquity"),
-        "Promoter Holding": info.get("heldPercentInsiders"),
-        "Sales Growth (3-yr)": info.get("revenueGrowth"),
-        "Profit Growth (5-yr)": info.get("earningsGrowth"),
-        "Pledged Shares": info.get("pledgedPercentage"),
-        "Operating Profit Margin": info.get("operatingMargins"),
-        "Price-to-Sales": info.get("priceToSalesTrailing12Months"),
-        "EV/EBITDA": info.get("enterpriseToEbitda"),
-    }
-
-# Function to fetch industry P/E ratio
-def fetch_industry_pe(symbol):
-    """
-    Fetch the industry P/E ratio for a stock using yfinance.
-    """
-    stock = yf.Ticker(symbol)
-    info = stock.info
-    industry_pe = info.get("industryPeRatio")  # Key for industry P/E ratio
-    if industry_pe is None:
-        # Fallback to a default value if industry P/E is not available
-        industry_pe = 25  # Default value
-    return industry_pe
-
-# Function to filter multibagger stocks
-def filter_multibagger_stocks(stock_list):
-    """
-    Filter stocks based on the 13-point fundamental analysis criteria.
-    """
-    multibaggers = []
-    for symbol in stock_list:
-        data = fetch_fundamental_data(symbol)
-        industry_pe = fetch_industry_pe(symbol)  # Fetch industry P/E ratio dynamically
-        if (data["Market Cap"] > 1000 and
-            data["PEG Ratio"] is not None and data["PEG Ratio"] < 1 and
-            data["P/E Ratio"] is not None and data["P/E Ratio"] < industry_pe and  # Use dynamic industry_pe
-            data["ROE (5-yr avg)"] is not None and data["ROE (5-yr avg)"] > 20 and
-            data["ROCE (5-yr avg)"] is not None and data["ROCE (5-yr avg)"] > 15 and
-            data["Debt-to-Equity"] is not None and data["Debt-to-Equity"] < 0.5 and
-            data["Promoter Holding"] is not None and data["Promoter Holding"] > 50 and
-            data["Sales Growth (3-yr)"] is not None and data["Sales Growth (3-yr)"] > 15 and
-            data["Profit Growth (5-yr)"] is not None and data["Profit Growth (5-yr)"] > 15 and
-            data["Pledged Shares"] is not None and data["Pledged Shares"] < 1 and
-            data["Operating Profit Margin"] is not None and data["Operating Profit Margin"] > 12 and
-            data["Price-to-Sales"] is not None and data["Price-to-Sales"] < 3 and
-            data["EV/EBITDA"] is not None and data["EV/EBITDA"] < 25):
-            multibaggers.append(symbol)
-    return multibaggers
-
-
 def generate_recommendations(data):
     """Generate comprehensive trade recommendations"""
     recommendations = {
@@ -515,35 +451,7 @@ def display_dashboard(symbol=None, data=None, recommendations=None, NSE_STOCKS=N
                 Short-Term: {colored_recommendation(row['Short-Term'])}  
                 Long-Term: {colored_recommendation(row['Long-Term'])}
                 """, unsafe_allow_html=True)
-
-if st.sidebar.button("🔍 Find Multibagger Stocks (Fundamental Analysis)"):
-    st.subheader("🏆 Potential Multibagger Stocks (Fundamental Analysis)")
-    progress_bar = st.progress(0)
-    loading_text = st.empty()
     
-# Correct indentation using 4 spaces
-for i, symbol in enumerate(NSE_STOCKS):
-    progress_bar.progress((i + 1) / len(NSE_STOCKS))
-    loading_text.text(f"Analyzing {symbol}...")
-    data = fetch_fundamental_data(symbol)
-    if (data["Market Cap"] > 1000 and
-        data["PEG Ratio"] is not None and data["PEG Ratio"] < 1):
-        multibaggers.append(symbol)
-if multibaggers:
-    print("Multibagger stocks found:", multibaggers)
-
-progress_bar.empty()
-loading_text.empty()
-
-if multibaggers:
-    for symbol in multibaggers:
-        with st.expander(f"{symbol} - Potential Multibagger"):
-            st.write("**Fundamental Analysis Results:**")
-            fundamental_data = fetch_fundamental_data(symbol)
-            st.write(fundamental_data)
-else:
-    st.warning("No multibagger stocks found based on the criteria.")
-
     # Intraday Suggestions Button
     if st.button("⚡ Generate Intraday Top 5 Picks"):
         # Display a progress bar and loading message
