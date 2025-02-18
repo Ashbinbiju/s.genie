@@ -11,8 +11,12 @@ import time
 import requests
 import io
 import random
-from textblob import TextBlob  # For sentiment analysis
-import streamlit.components.v1 as components
+from vaderSentiment.vaderSentiment import SentimentIntensityAnalyzer
+from transformers import BertTokenizer, BertForSequenceClassification
+import torch
+import spacy
+from pytrends.request import TrendReq
+import numpy as np
 import itertools
 
 # API Keys
@@ -29,6 +33,8 @@ TOOLTIPS = {
     "Bollinger": "Price volatility bands around moving average",
     "Stop Loss": "Risk management price level based on ATR",
     "VWAP": "Volume Weighted Average Price - Intraday trend indicator",
+    "Parabolic_SAR": "Parabolic Stop and Reverse - Trend reversal indicator",
+    "Fib_Retracements": "Fibonacci Retracements - Support and resistance levels",
 }
 
 # Tooltip function
@@ -95,33 +101,41 @@ def fetch_stock_data_cached(symbol, period="5y", interval="1d"):
         st.error(f"Error: {str(e)}")
         return pd.DataFrame()
 
-def fetch_us_market_sentiment():
-    """Fetch US market sentiment using Alpha Vantage"""
-    try:
-        url = f"https://www.alphavantage.co/query?function=GLOBAL_QUOTE&symbol=SPY&apikey=TCAUKYUCIDZ6PI57"
-        response = requests.get(url)
-        response.raise_for_status()
-        data = response.json()
-        if "Global Quote" not in data:
-            return 0  # Neutral sentiment if data is unavailable
-        change_percent = float(data["Global Quote"]["10. change percent"].strip("%"))
-        if change_percent > 0:
-            return 1  # Positive sentiment
-        elif change_percent < 0:
-            return -1  # Negative sentiment
-        else:
-            return 0  # Neutral sentiment
-    except Exception as e:
-        st.warning(f"⚠️ Failed to fetch US market sentiment: {e}")
-        return 0
+def calculate_advance_decline_ratio(stock_list):
+    """Calculate Advance/Decline Ratio"""
+    advances = 0
+    declines = 0
+    for symbol in stock_list:
+        data = fetch_stock_data_cached(symbol)
+        if not data.empty:
+            if data['Close'].iloc[-1] > data['Close'].iloc[-2]:
+                advances += 1
+            else:
+                declines += 1
+    return advances / declines if declines != 0 else 0
 
-def fetch_news_sentiment(query, api_key, source="newsapi"):
-    """Fetch news sentiment using NewsAPI or GNews"""
+def monte_carlo_simulation(data, simulations=1000, days=30):
+    """Monte Carlo Simulation for Price Prediction"""
+    returns = data['Close'].pct_change().dropna()
+    mean_return = returns.mean()
+    std_return = returns.std()
+    simulation_results = []
+    for _ in range(simulations):
+        price_series = [data['Close'].iloc[-1]]
+        for _ in range(days):
+            price = price_series[-1] * (1 + np.random.normal(mean_return, std_return))
+            price_series.append(price)
+        simulation_results.append(price_series)
+    return simulation_results
+
+def fetch_news_sentiment_vader(query, api_key, source="newsapi"):
+    """Fetch news sentiment using VADER"""
+    analyzer = SentimentIntensityAnalyzer()
     try:
         if source == "newsapi":
-            url = f"https://newsapi.org/v2/everything?q={query}&apiKey=ed58659895e84dfb8162a8bb47d8525e&language=en&sortBy=publishedAt&pageSize=5"
+            url = f"https://newsapi.org/v2/everything?q={query}&apiKey={api_key}&language=en&sortBy=publishedAt&pageSize=5"
         elif source == "gnews":
-            url = f"https://gnews.io/api/v4/search?q={query}&token=e4f5f1442641400694645433a8f98b94&lang=en&max=5"
+            url = f"https://gnews.io/api/v4/search?q={query}&token={api_key}&lang=en&max=5"
         response = requests.get(url)
         response.raise_for_status()
         articles = response.json().get("articles", [])
@@ -130,13 +144,57 @@ def fetch_news_sentiment(query, api_key, source="newsapi"):
             title = article.get("title", "")
             description = article.get("description", "")
             text = f"{title} {description}"
-            sentiment = TextBlob(text).sentiment.polarity
+            sentiment = analyzer.polarity_scores(text)['compound']
             sentiment_scores.append(sentiment)
         avg_sentiment = sum(sentiment_scores) / len(sentiment_scores) if sentiment_scores else 0
         return avg_sentiment
     except Exception as e:
         st.warning(f"⚠️ Failed to fetch news sentiment for {query}: {e}")
         return 0
+
+def analyze_sentiment_finbert(text):
+    """Analyze sentiment using FinBERT"""
+    tokenizer = BertTokenizer.from_pretrained('yiyanghkust/finbert-tone')
+    model = BertForSequenceClassification.from_pretrained('yiyanghkust/finbert-tone')
+    inputs = tokenizer(text, return_tensors="pt", truncation=True, padding=True)
+    outputs = model(**inputs)
+    probs = torch.nn.functional.softmax(outputs.logits, dim=-1)
+    return probs.argmax().item()  # 0: Negative, 1: Neutral, 2: Positive
+
+def extract_entities(text):
+    """Extract entities using spaCy NER"""
+    nlp = spacy.load("en_core_web_sm")
+    doc = nlp(text)
+    entities = [ent.text for ent in doc.ents if ent.label_ == "ORG"]
+    return entities
+
+def get_trending_stocks():
+    """Fetch trending stocks using Google Trends API"""
+    pytrends = TrendReq(hl='en-US', tz=360)
+    trending = pytrends.trending_searches(pn='india')
+    return trending
+
+def create_sentiment_heatmap(sentiment_data):
+    """Create a sentiment heatmap"""
+    fig = px.imshow(sentiment_data, labels=dict(x="Stocks", y="Sentiment", color="Sentiment Score"),
+                    x=sentiment_data.columns, y=sentiment_data.index)
+    st.plotly_chart(fig)
+
+def calculate_confidence_score(data):
+    """Calculate confidence score for predictions"""
+    score = 0
+    if data['RSI'].iloc[-1] < 30:
+        score += 1
+    if data['MACD'].iloc[-1] > data['MACD_signal'].iloc[-1]:
+        score += 1
+    return score / 2  # Normalize to 0-1 range
+
+def assess_risk(data):
+    """Assess risk based on volatility"""
+    if data['ATR'].iloc[-1] > data['ATR'].mean():
+        return "High Volatility Warning"
+    else:
+        return "Low Volatility"
 
 def analyze_stock(data):
     """Perform technical analysis on stock data"""
@@ -227,6 +285,27 @@ def analyze_stock(data):
     except Exception as e:
         st.warning(f"⚠️ Error calculating Volume Spike: {e}")
         data['Volume_Spike'] = None
+    try:
+        # Parabolic SAR
+        data['Parabolic_SAR'] = ta.trend.PSARIndicator(data['High'], data['Low'], data['Close']).psar()
+    except Exception as e:
+        st.warning(f"⚠️ Error calculating Parabolic SAR: {e}")
+        data['Parabolic_SAR'] = None
+    try:
+        # Fibonacci Retracements
+        high = data['High'].max()
+        low = data['Low'].min()
+        diff = high - low
+        data['Fib_23.6'] = high - diff * 0.236
+        data['Fib_38.2'] = high - diff * 0.382
+        data['Fib_50.0'] = high - diff * 0.5
+        data['Fib_61.8'] = high - diff * 0.618
+    except Exception as e:
+        st.warning(f"⚠️ Error calculating Fibonacci Retracements: {e}")
+        data['Fib_23.6'] = None
+        data['Fib_38.2'] = None
+        data['Fib_50.0'] = None
+        data['Fib_61.8'] = None
     return data
 
 def calculate_stop_loss(data, atr_multiplier=2.5):
