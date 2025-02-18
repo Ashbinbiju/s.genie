@@ -17,6 +17,7 @@ textblob
 more-itertools
 vaderSentiment
 spacy
+pytrends
 yfinance
 ta
 pandas
