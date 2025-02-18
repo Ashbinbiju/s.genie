@@ -16,7 +16,7 @@ TIME-python
 textblob
 more-itertools
 vaderSentiment
-
+spacy
 yfinance
 ta
 pandas
