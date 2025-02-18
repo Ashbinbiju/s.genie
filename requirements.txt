@@ -15,6 +15,7 @@ diskcache
 TIME-python
 textblob
 more-itertools
+vaderSentiment
 
 yfinance
 ta
