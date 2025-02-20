@@ -684,5 +684,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
-what do u think of adding autobuy in this
