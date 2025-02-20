@@ -425,6 +425,172 @@ def analyze_batch(stock_batch):
                 st.warning(f"⚠️ Error processing stock: {e}")
     return results
 
+
+def backtest_strategy(data, strategy="Golden Cross"):
+    """
+    Backtest a trading strategy on historical data.
+    :param data: Historical stock data (DataFrame with 'Close', 'SMA_50', 'SMA_200', etc.).
+    :param strategy: The strategy to backtest.
+    :return: A dictionary containing backtest results.
+    """
+    if data.empty:
+        return {"error": "No data available for backtesting."}
+    
+    # Initialize variables
+    position = None  # None = no position, "Buy" = holding stock
+    buy_price = 0
+    trades = []
+    profit = 0
+
+    # Backtest based on the selected strategy
+    for i in range(1, len(data)):
+        if strategy == "Golden Cross":
+            # Buy signal: 50-day SMA crosses above 200-day SMA
+            if data['SMA_50'][i] > data['SMA_200'][i] and data['SMA_50'][i - 1] <= data['SMA_200'][i - 1]:
+                if position != "Buy":
+                    buy_price = data['Close'][i]
+                    position = "Buy"
+                    trades.append({"type": "Buy", "price": buy_price, "date": data.index[i]})
+            # Sell signal: 50-day SMA crosses below 200-day SMA
+            elif data['SMA_50'][i] < data['SMA_200'][i] and data['SMA_50'][i - 1] >= data['SMA_200'][i - 1]:
+                if position == "Buy":
+                    sell_price = data['Close'][i]
+                    profit += (sell_price - buy_price)
+                    position = None
+                    trades.append({"type": "Sell", "price": sell_price, "date": data.index[i], "profit": sell_price - buy_price})
+
+        elif strategy == "RSI Oversold/Overbought":
+            # Buy signal: RSI < 30 (oversold)
+            if data['RSI'][i] < 30 and position != "Buy":
+                buy_price = data['Close'][i]
+                position = "Buy"
+                trades.append({"type": "Buy", "price": buy_price, "date": data.index[i]})
+            # Sell signal: RSI > 70 (overbought)
+            elif data['RSI'][i] > 70 and position == "Buy":
+                sell_price = data['Close'][i]
+                profit += (sell_price - buy_price)
+                position = None
+                trades.append({"type": "Sell", "price": sell_price, "date": data.index[i], "profit": sell_price - buy_price})
+
+        elif strategy == "MACD Crossover":
+            # Buy signal: MACD crosses above the signal line
+            if data['MACD'][i] > data['MACD_signal'][i] and data['MACD'][i - 1] <= data['MACD_signal'][i - 1]:
+                if position != "Buy":
+                    buy_price = data['Close'][i]
+                    position = "Buy"
+                    trades.append({"type": "Buy", "price": buy_price, "date": data.index[i]})
+            # Sell signal: MACD crosses below the signal line
+            elif data['MACD'][i] < data['MACD_signal'][i] and data['MACD'][i - 1] >= data['MACD_signal'][i - 1]:
+                if position == "Buy":
+                    sell_price = data['Close'][i]
+                    profit += (sell_price - buy_price)
+                    position = None
+                    trades.append({"type": "Sell", "price": sell_price, "date": data.index[i], "profit": sell_price - buy_price})
+
+        elif strategy == "Bollinger Bands Reversion":
+            # Buy signal: Price touches the lower band
+            if data['Close'][i] <= data['Lower_Band'][i] and position != "Buy":
+                buy_price = data['Close'][i]
+                position = "Buy"
+                trades.append({"type": "Buy", "price": buy_price, "date": data.index[i]})
+            # Sell signal: Price touches the upper band
+            elif data['Close'][i] >= data['Upper_Band'][i] and position == "Buy":
+                sell_price = data['Close'][i]
+                profit += (sell_price - buy_price)
+                position = None
+                trades.append({"type": "Sell", "price": sell_price, "date": data.index[i], "profit": sell_price - buy_price})
+
+    # Calculate metrics
+    total_trades = len(trades)
+    winning_trades = len([trade for trade in trades if trade.get("profit", 0) > 0])
+    win_rate = (winning_trades / total_trades) * 100 if total_trades > 0 else 0
+    max_drawdown = calculate_max_drawdown(data['Close'])
+
+    return {
+        "total_profit": profit,
+        "total_trades": total_trades,
+        "win_rate": win_rate,
+        "max_drawdown": max_drawdown,
+        "trades": trades,
+    }
+
+def calculate_max_drawdown(prices):
+    """
+    Calculate the maximum drawdown (largest peak-to-trough decline).
+    :param prices: A list or Series of closing prices.
+    :return: Maximum drawdown as a percentage.
+    """
+    peak = prices[0]
+    max_drawdown = 0
+    for price in prices:
+        if price > peak:
+            peak = price
+        else:
+            drawdown = (peak - price) / peak
+            if drawdown > max_drawdown:
+                max_drawdown = drawdown
+    return max_drawdown * 100  # Return as percentage
+
+def display_backtesting_ui(NSE_STOCKS):
+    """Display the backtesting user interface."""
+    st.sidebar.title("🔍 Backtesting")
+    
+    # Select stock
+    selected_stock = st.sidebar.selectbox(
+        "Select a stock for backtesting:",
+        options=NSE_STOCKS,
+        format_func=lambda x: x.split('.')[0]
+    )
+    
+    # Select strategy
+    strategy = st.sidebar.selectbox(
+        "Select a strategy:",
+        options=["Golden Cross", "RSI Oversold/Overbought", "MACD Crossover", "Bollinger Bands Reversion"]
+    )
+    
+    # Run backtest
+    if st.sidebar.button("🚀 Run Backtest"):
+        st.subheader(f"📊 Backtest Results for {selected_stock.split('.')[0]}")
+        
+        # Fetch historical data
+        data = fetch_stock_data_cached(selected_stock, period="5y", interval="1d")
+        if data.empty:
+            st.error("❌ No data available for backtesting.")
+            return
+        
+        # Calculate indicators
+        data['SMA_50'] = ta.trend.SMAIndicator(data['Close'], window=50).sma_indicator()
+        data['SMA_200'] = ta.trend.SMAIndicator(data['Close'], window=200).sma_indicator()
+        data['RSI'] = ta.momentum.RSIIndicator(data['Close'], window=14).rsi()
+        macd = ta.trend.MACD(data['Close'], window_slow=26, window_fast=12, window_sign=9)
+        data['MACD'] = macd.macd()
+        data['MACD_signal'] = macd.macd_signal()
+        bollinger = ta.volatility.BollingerBands(data['Close'], window=20, window_dev=2)
+        data['Upper_Band'] = bollinger.bollinger_hband()
+        data['Lower_Band'] = bollinger.bollinger_lband()
+        
+        # Run backtest
+        results = backtest_strategy(data, strategy)
+        
+        # Display results
+        if "error" in results:
+            st.error(results["error"])
+        else:
+            st.metric("Total Profit", f"₹{results['total_profit']:.2f}")
+            st.metric("Win Rate", f"{results['win_rate']:.2f}%")
+            st.metric("Max Drawdown", f"{results['max_drawdown']:.2f}%")
+            
+            # Plot trades
+            fig = px.line(data, y='Close', title="Price with Buy/Sell Signals")
+            for trade in results['trades']:
+                if trade['type'] == "Buy":
+                    fig.add_scatter(x=[trade['date']], y=[trade['price']], mode='markers', marker=dict(color='green', size=10), name='Buy')
+                elif trade['type'] == "Sell":
+                    fig.add_scatter(x=[trade['date']], y=[trade['price']], mode='markers', marker=dict(color='red', size=10), name='Sell')
+            st.plotly_chart(fig)
+
+
+
 def analyze_stock_parallel(symbol):
     """Analyze a single stock (used in parallel processing)"""
     data = fetch_stock_data_cached(symbol)
@@ -681,6 +847,8 @@ def main():
     else:
         # If no stock is selected, display the dashboard without individual stock analysis
         display_dashboard(None, None, None, NSE_STOCKS)
+  # Add backtesting UI
+    display_backtesting_ui(NSE_STOCKS)
 
 if __name__ == "__main__":
     main()
