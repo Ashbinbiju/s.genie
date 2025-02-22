@@ -16,7 +16,7 @@ import spacy
 from pytrends.request import TrendReq
 import numpy as np
 import itertools
-from arch import arch_model  # For GARCH in Monte Carlo
+from arch import arch_model
 
 # API Keys (Consider moving to environment variables)
 NEWSAPI_KEY = "ed58659895e84dfb8162a8bb47d8525e"
@@ -34,13 +34,15 @@ TOOLTIPS = {
     "VWAP": "Volume Weighted Average Price - Intraday trend indicator",
     "Parabolic_SAR": "Parabolic Stop and Reverse - Trend reversal indicator",
     "Fib_Retracements": "Fibonacci Retracements - Support and resistance levels",
+    "Ichimoku": "Ichimoku Cloud - Comprehensive trend indicator",
+    "RVI": "Relative Vigor Index - Trend strength",
+    "CMF": "Chaikin Money Flow - Buying/selling pressure",
+    "Donchian": "Donchian Channels - Breakout detection",
 }
 
-# Tooltip function
 def tooltip(label, explanation):
     return f"{label} 📌 ({explanation})"
 
-# Retry decorator for Yahoo Finance requests with jitter
 def retry(max_retries=3, delay=1, backoff_factor=2, jitter=0.5):
     def decorator(func):
         def wrapper(*args, **kwargs):
@@ -51,7 +53,7 @@ def retry(max_retries=3, delay=1, backoff_factor=2, jitter=0.5):
                 except (requests.exceptions.RequestException, ConnectionError) as e:
                     retries += 1
                     if retries == max_retries:
-                        raise e  # Let caller handle the error
+                        raise e
                     sleep_time = (delay * (backoff_factor ** retries)) + random.uniform(0, jitter)
                     time.sleep(sleep_time)
         return wrapper
@@ -66,7 +68,7 @@ def fetch_nse_stock_list():
         nse_data = pd.read_csv(io.StringIO(response.text))
         stock_list = [f"{symbol}.NS" for symbol in nse_data['SYMBOL']]
         return stock_list
-    except Exception as e:
+    except Exception:
         return [
             "20MICRONS.NS", "21STCENMGM.NS", "360ONE.NS", "3IINFOLTD.NS", "3MINDIA.NS", "5PAISA.NS", "63MOONS.NS",
             "A2ZINFRA.NS", "AAATECH.NS", "AADHARHFC.NS", "AAKASH.NS", "AAREYDRUGS.NS", "AARON.NS", "AARTECH.NS",
@@ -132,9 +134,9 @@ def fetch_news_sentiment_vader(query, api_key, source="newsapi"):
     analyzer = SentimentIntensityAnalyzer()
     try:
         if source == "newsapi":
-            url = f"https://newsapi.org/v2/everything?q={query}&apiKey=ed58659895e84dfb8162a8bb47d8525e&language=en&sortBy=publishedAt&pageSize=5"
+            url = f"https://newsapi.org/v2/everything?q={query}&apiKey={api_key}&language=en&sortBy=publishedAt&pageSize=5"
         elif source == "gnews":
-            url = f"https://gnews.io/api/v4/search?q={query}&token=e4f5f1442641400694645433a8f98b94&lang=en&max=5"
+            url = f"https://gnews.io/api/v4/search?q={query}&token={api_key}&lang=en&max=5"
         response = requests.get(url)
         response.raise_for_status()
         articles = response.json().get("articles", [])
@@ -160,9 +162,9 @@ def analyze_sentiment_finbert(text):
         with torch.no_grad():
             outputs = model(**inputs)
         probs = torch.nn.functional.softmax(outputs.logits, dim=-1)
-        return probs.argmax().item()  # 0: Negative, 1: Neutral, 2: Positive
+        return probs.argmax().item()
     except Exception:
-        return 1  # Default to neutral on error
+        return 1
 
 def extract_entities(text):
     nlp = spacy.load("en_core_web_sm")
@@ -186,7 +188,9 @@ def calculate_confidence_score(data):
         score += 1
     if 'MACD' in data.columns and 'MACD_signal' in data.columns and data['MACD'].iloc[-1] is not None and data['MACD'].iloc[-1] > data['MACD_signal'].iloc[-1]:
         score += 1
-    return score / 2
+    if 'Ichimoku_Span_A' in data.columns and data['Close'].iloc[-1] > data['Ichimoku_Span_A'].iloc[-1]:
+        score += 1
+    return score / 3
 
 def assess_risk(data):
     if 'ATR' in data.columns and data['ATR'].iloc[-1] is not None and data['ATR'].iloc[-1] > data['ATR'].mean():
@@ -309,6 +313,40 @@ def analyze_stock(data):
         data['Divergence'] = detect_divergence(data)
     except Exception:
         data['Divergence'] = "No Divergence"
+    # New Indicators
+    try:
+        ichimoku = ta.trend.IchimokuIndicator(data['High'], data['Low'], window1=9, window2=26, window3=52)
+        data['Ichimoku_Tenkan'] = ichimoku.ichimoku_conversion_line()
+        data['Ichimoku_Kijun'] = ichimoku.ichimoku_base_line()
+        data['Ichimoku_Span_A'] = ichimoku.ichimoku_a()
+        data['Ichimoku_Span_B'] = ichimoku.ichimoku_b()
+        data['Ichimoku_Chikou'] = data['Close'].shift(-26)
+    except Exception:
+        data['Ichimoku_Tenkan'] = None
+        data['Ichimoku_Kijun'] = None
+        data['Ichimoku_Span_A'] = None
+        data['Ichimoku_Span_B'] = None
+        data['Ichimoku_Chikou'] = None
+    try:
+        rvi = ta.momentum.RVIndicator(data['Close'], data['Open'], data['High'], data['Low'], window=10)
+        data['RVI'] = rvi.relative_vigor_index()
+        data['RVI_Signal'] = rvi.rvi_signal()
+    except Exception:
+        data['RVI'] = None
+        data['RVI_Signal'] = None
+    try:
+        data['CMF'] = ta.volume.ChaikinMoneyFlowIndicator(data['High'], data['Low'], data['Close'], data['Volume'], window=20).chaikin_money_flow()
+    except Exception:
+        data['CMF'] = None
+    try:
+        donchian = ta.volatility.DonchianChannel(data['High'], data['Low'], data['Close'], window=20)
+        data['Donchian_Upper'] = donchian.donchian_channel_hband()
+        data['Donchian_Lower'] = donchian.donchian_channel_lband()
+        data['Donchian_Middle'] = donchian.donchian_channel_mband()
+    except Exception:
+        data['Donchian_Upper'] = None
+        data['Donchian_Lower'] = None
+        data['Donchian_Middle'] = None
     return data
 
 def calculate_stop_loss(data, atr_multiplier=2.5):
@@ -360,6 +398,7 @@ def generate_recommendations(data, symbol=None):
     recommendations = {
         "Intraday": "Hold", "Swing": "Hold",
         "Short-Term": "Hold", "Long-Term": "Hold",
+        "Mean_Reversion": "Hold", "Breakout": "Hold", "Ichimoku_Trend": "Hold",
         "Current Price": None, "Buy At": None,
         "Stop Loss": None, "Target": None, "Score": 0
     }
@@ -370,6 +409,7 @@ def generate_recommendations(data, symbol=None):
         buy_score = 0
         sell_score = 0
         
+        # Existing Indicators
         if 'RSI' in data.columns and data['RSI'].iloc[-1] is not None:
             if data['RSI'].iloc[-1] < 30:
                 buy_score += 2
@@ -403,6 +443,50 @@ def generate_recommendations(data, symbol=None):
             elif data['Divergence'].iloc[-1] == "Bearish Divergence":
                 sell_score += 1
         
+        # New Indicators
+        if 'Ichimoku_Span_A' in data.columns and 'Ichimoku_Span_B' in data.columns:
+            if data['Close'].iloc[-1] > max(data['Ichimoku_Span_A'].iloc[-1], data['Ichimoku_Span_B'].iloc[-1]):
+                buy_score += 1
+                recommendations["Ichimoku_Trend"] = "Buy"
+            elif data['Close'].iloc[-1] < min(data['Ichimoku_Span_A'].iloc[-1], data['Ichimoku_Span_B'].iloc[-1]):
+                sell_score += 1
+                recommendations["Ichimoku_Trend"] = "Sell"
+        if 'RVI' in data.columns and 'RVI_Signal' in data.columns:
+            if data['RVI'].iloc[-1] > data['RVI_Signal'].iloc[-1]:
+                buy_score += 1
+            elif data['RVI'].iloc[-1] < data['RVI_Signal'].iloc[-1]:
+                sell_score += 1
+        if 'CMF' in data.columns and data['CMF'].iloc[-1] is not None:
+            if data['CMF'].iloc[-1] > 0:
+                buy_score += 1
+            elif data['CMF'].iloc[-1] < 0:
+                sell_score += 1
+        if 'Donchian_Upper' in data.columns and 'Donchian_Lower' in data.columns:
+            if data['Close'].iloc[-1] > data['Donchian_Upper'].iloc[-1]:
+                buy_score += 1
+                recommendations["Breakout"] = "Buy"
+            elif data['Close'].iloc[-1] < data['Donchian_Lower'].iloc[-1]:
+                sell_score += 1
+                recommendations["Breakout"] = "Sell"
+
+        # Strategies
+        if 'RSI' in data.columns and 'Lower_Band' in data.columns:
+            if data['RSI'].iloc[-1] < 30 and data['Close'].iloc[-1] <= data['Lower_Band'].iloc[-1]:
+                buy_score += 2
+                recommendations["Mean_Reversion"] = "Buy"
+            elif data['RSI'].iloc[-1] > 70 and data['Close'].iloc[-1] >= data['Upper_Band'].iloc[-1]:
+                sell_score += 2
+                recommendations["Mean_Reversion"] = "Sell"
+        if 'Ichimoku_Tenkan' in data.columns and 'Ichimoku_Kijun' in data.columns:
+            if (data['Ichimoku_Tenkan'].iloc[-1] > data['Ichimoku_Kijun'].iloc[-1] and
+                data['Close'].iloc[-1] > data['Ichimoku_Span_A'].iloc[-1]):
+                buy_score += 1
+                recommendations["Ichimoku_Trend"] = "Strong Buy"
+            elif (data['Ichimoku_Tenkan'].iloc[-1] < data['Ichimoku_Kijun'].iloc[-1] and
+                  data['Close'].iloc[-1] < data['Ichimoku_Span_B'].iloc[-1]):
+                sell_score += 1
+                recommendations["Ichimoku_Trend"] = "Strong Sell"
+
         if symbol:
             fundamentals = fetch_fundamentals(symbol)
             if fundamentals['P/E'] < 15 and fundamentals['EPS'] > 0:
@@ -418,9 +502,9 @@ def generate_recommendations(data, symbol=None):
         recommendations["Stop Loss"] = calculate_stop_loss(data)
         recommendations["Buy At"] = calculate_buy_at(data)
         recommendations["Target"] = calculate_target(data)
-        recommendations["Score"] = max(0, min(buy_score - sell_score, 5))
+        recommendations["Score"] = max(0, min(buy_score - sell_score, 7))  # Adjusted for new indicators
     except Exception:
-        pass  # Errors handled in main thread
+        pass
     return recommendations
 
 def analyze_batch(stock_batch):
@@ -455,6 +539,9 @@ def analyze_stock_parallel(symbol):
             "Swing": recommendations["Swing"],
             "Short-Term": recommendations["Short-Term"],
             "Long-Term": recommendations["Long-Term"],
+            "Mean_Reversion": recommendations["Mean_Reversion"],
+            "Breakout": recommendations["Breakout"],
+            "Ichimoku_Trend": recommendations["Ichimoku_Trend"],
             "Score": recommendations.get("Score", 0),
         }
     return None
@@ -516,7 +603,7 @@ def display_dashboard(symbol=None, data=None, recommendations=None, NSE_STOCKS=N
         if not results_df.empty:
             st.subheader("🏆 Today's Top 10 Stocks")
             for _, row in results_df.iterrows():
-                with st.expander(f"{row['Symbol']} - Score: {row['Score']}/5"):
+                with st.expander(f"{row['Symbol']} - Score: {row['Score']}/7"):
                     current_price = row['Current Price'] if pd.notnull(row['Current Price']) else "N/A"
                     buy_at = row['Buy At'] if pd.notnull(row['Buy At']) else "N/A"
                     stop_loss = row['Stop Loss'] if pd.notnull(row['Stop Loss']) else "N/A"
@@ -528,7 +615,10 @@ def display_dashboard(symbol=None, data=None, recommendations=None, NSE_STOCKS=N
                     Intraday: {colored_recommendation(row['Intraday'])}  
                     Swing: {colored_recommendation(row['Swing'])}  
                     Short-Term: {colored_recommendation(row['Short-Term'])}  
-                    Long-Term: {colored_recommendation(row['Long-Term'])}
+                    Long-Term: {colored_recommendation(row['Long-Term'])}  
+                    Mean Reversion: {colored_recommendation(row['Mean_Reversion'])}  
+                    Breakout: {colored_recommendation(row['Breakout'])}  
+                    Ichimoku Trend: {colored_recommendation(row['Ichimoku_Trend'])}
                     """, unsafe_allow_html=True)
         else:
             st.warning("⚠️ No top picks available due to data issues.")
@@ -550,7 +640,7 @@ def display_dashboard(symbol=None, data=None, recommendations=None, NSE_STOCKS=N
         if not intraday_results.empty:
             st.subheader("🏆 Top 5 Intraday Stocks")
             for _, row in intraday_results.iterrows():
-                with st.expander(f"{row['Symbol']} - Score: {row['Score']}/5"):
+                with st.expander(f"{row['Symbol']} - Score: {row['Score']}/7"):
                     current_price = row['Current Price'] if pd.notnull(row['Current Price']) else "N/A"
                     buy_at = row['Buy At'] if pd.notnull(row['Buy At']) else "N/A"
                     stop_loss = row['Stop Loss'] if pd.notnull(row['Stop Loss']) else "N/A"
@@ -586,21 +676,31 @@ def display_dashboard(symbol=None, data=None, recommendations=None, NSE_STOCKS=N
             with col:
                 st.markdown(f"**{strategy}**", unsafe_allow_html=True)
                 st.markdown(colored_recommendation(recommendations[strategy]), unsafe_allow_html=True)
-        tab1, tab2, tab3, tab4 = st.tabs(["📊 Price Action", "📉 Indicators", "📊 Volatility", "📈 Monte Carlo"])
+        st.subheader("📈 Additional Strategies")
+        cols = st.columns(3)
+        new_strategies = ["Mean_Reversion", "Breakout", "Ichimoku_Trend"]
+        for col, strategy in zip(cols, new_strategies):
+            with col:
+                st.markdown(f"**{strategy.replace('_', ' ')}**", unsafe_allow_html=True)
+                st.markdown(colored_recommendation(recommendations[strategy]), unsafe_allow_html=True)
+        tab1, tab2, tab3, tab4, tab5 = st.tabs(["📊 Price Action", "📉 Momentum", "📊 Volatility", "📈 Monte Carlo", "📉 New Indicators"])
         with tab1:
             fig = px.line(data, y=['Close', 'SMA_50', 'SMA_200', 'EMA_20', 'EMA_50'], title="Price with Moving Averages")
             st.plotly_chart(fig)
         with tab2:
-            fig = px.line(data, y=['RSI', 'MACD', 'MACD_signal'], title="Momentum Indicators")
+            fig = px.line(data, y=['RSI', 'MACD', 'MACD_signal', 'RVI', 'RVI_Signal'], title="Momentum Indicators")
             st.plotly_chart(fig)
         with tab3:
-            fig = px.line(data, y=['ATR', 'Upper_Band', 'Lower_Band'], title="Volatility Analysis")
+            fig = px.line(data, y=['ATR', 'Upper_Band', 'Lower_Band', 'Donchian_Upper', 'Donchian_Lower'], title="Volatility Analysis")
             st.plotly_chart(fig)
         with tab4:
             mc_results = monte_carlo_simulation(data)
             mc_df = pd.DataFrame(mc_results).T
             mc_df.columns = [f"Sim {i+1}" for i in range(len(mc_results))]
             fig = px.line(mc_df, title="Monte Carlo Price Simulations (30 Days)")
+            st.plotly_chart(fig)
+        with tab5:
+            fig = px.line(data, y=['Ichimoku_Span_A', 'Ichimoku_Span_B', 'Ichimoku_Tenkan', 'Ichimoku_Kijun', 'CMF'], title="New Indicators (Ichimoku & CMF)")
             st.plotly_chart(fig)
         if st.button("Analyze News Sentiment"):
             news_sentiment = fetch_news_sentiment_vader(symbol.split('.')[0], NEWSAPI_KEY)
