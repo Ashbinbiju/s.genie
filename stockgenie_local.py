@@ -581,15 +581,45 @@ def analyze_stock_parallel(symbol):
         }
     return None
 
+def update_progress(progress_bar, loading_text, progress_value, loading_messages, start_time, total_items, processed_items):
+    progress_bar.progress(progress_value)
+    loading_message = next(loading_messages)
+    dots = "." * int((progress_value * 10) % 4)
+    loading_text.text(f"{loading_message}{dots}")
+
+    # Calculate estimated time remaining
+    elapsed_time = time.time() - start_time
+    if processed_items > 0:  # Avoid division by zero
+        time_per_item = elapsed_time / processed_items
+        remaining_items = total_items - processed_items
+        estimated_remaining_seconds = time_per_item * remaining_items
+        eta = timedelta(seconds=int(estimated_remaining_seconds))
+        loading_text.text(f"{loading_message}{dots} (ETA: {eta})")
+
 def analyze_all_stocks(stock_list, batch_size=50, price_range=None, progress_callback=None):
+    if st.session_state.cancel_operation:
+        st.warning("⚠️ Analysis canceled by user.")
+        return pd.DataFrame()
+
     results = []
-    total_batches = (len(stock_list) // batch_size) + (1 if len(stock_list) % batch_size != 0 else 0)
-    for i in range(0, len(stock_list), batch_size):
+    total_items = len(stock_list)
+    total_batches = (total_items // batch_size) + (1 if total_items % batch_size != 0 else 0)
+    start_time = time.time()
+    
+    for i in range(0, total_items, batch_size):
+        if st.session_state.cancel_operation:
+            st.warning("⚠️ Analysis canceled by user.")
+            break
+        
         batch = stock_list[i:i + batch_size]
         batch_results = analyze_batch(batch)
         results.extend(batch_results)
+        processed_items = min(i + len(batch), total_items)
         if progress_callback:
-            progress_callback((i + len(batch)) / len(stock_list))
+            progress_callback(processed_items / total_items, start_time, total_items, processed_items)
+    
+    if not results:
+        return pd.DataFrame()
     
     results_df = pd.DataFrame([r for r in results if r is not None])
     if results_df.empty:
@@ -604,6 +634,42 @@ def analyze_all_stocks(stock_list, batch_size=50, price_range=None, progress_cal
                                 (results_df['Current Price'] >= price_range[0]) & 
                                 (results_df['Current Price'] <= price_range[1])]
     return results_df.sort_values(by="Score", ascending=False).head(10)
+
+def analyze_intraday_stocks(stock_list, batch_size=50, price_range=None, progress_callback=None):
+    if st.session_state.cancel_operation:
+        st.warning("⚠️ Analysis canceled by user.")
+        return pd.DataFrame()
+
+    results = []
+    total_items = len(stock_list)
+    total_batches = (total_items // batch_size) + (1 if total_items % batch_size != 0 else 0)
+    start_time = time.time()
+    
+    for i in range(0, total_items, batch_size):
+        if st.session_state.cancel_operation:
+            st.warning("⚠️ Analysis canceled by user.")
+            break
+        
+        batch = stock_list[i:i + batch_size]
+        batch_results = analyze_batch(batch)
+        results.extend(batch_results)
+        processed_items = min(i + len(batch), total_items)
+        if progress_callback:
+            progress_callback(processed_items / total_items, start_time, total_items, processed_items)
+    
+    results_df = pd.DataFrame([r for r in results if r is not None])
+    if results_df.empty:
+        return pd.DataFrame()
+    if "Score" not in results_df.columns:
+        results_df["Score"] = 0
+    if "Current Price" not in results_df.columns:
+        results_df["Current Price"] = None
+    if price_range:
+        results_df = results_df[results_df['Current Price'].notnull() & 
+                                (results_df['Current Price'] >= price_range[0]) & 
+                                (results_df['Current Price'] <= price_range[1])]
+    intraday_df = results_df[results_df["Intraday"].str.contains("Buy", na=False)]
+    return intraday_df.sort_values(by="Score", ascending=False).head(5)
 
 def colored_recommendation(recommendation):
     if "Buy" in recommendation:
@@ -622,20 +688,28 @@ def display_dashboard(symbol=None, data=None, recommendations=None, NSE_STOCKS=N
     price_range = st.sidebar.slider("Select Price Range (₹)", min_value=0, max_value=10000, value=(100, 1000))
     
     if st.button("🚀 Generate Daily Top Picks"):
+        st.session_state.cancel_operation = False  # Reset cancel state
         progress_bar = st.progress(0)
         loading_text = st.empty()
+        cancel_button = st.button("❌ Cancel Analysis")
         loading_messages = itertools.cycle([
             "Analyzing trends...", "Fetching data...", "Crunching numbers...",
             "Evaluating indicators...", "Finalizing results..."
         ])
+        
+        if cancel_button:
+            st.session_state.cancel_operation = True
+        
         results_df = analyze_all_stocks(
             NSE_STOCKS,
             price_range=price_range,
-            progress_callback=lambda x: update_progress(progress_bar, loading_text, x, loading_messages)
+            progress_callback=lambda progress, start_time, total, processed: update_progress(
+                progress_bar, loading_text, progress, loading_messages, start_time, total, processed
+            )
         )
         progress_bar.empty()
         loading_text.empty()
-        if not results_df.empty:
+        if not results_df.empty and not st.session_state.cancel_operation:
             st.subheader("🏆 Today's Top 10 Stocks")
             for _, row in results_df.iterrows():
                 with st.expander(f"{row['Symbol']} - Score: {row['Score']}/7"):
@@ -655,24 +729,32 @@ def display_dashboard(symbol=None, data=None, recommendations=None, NSE_STOCKS=N
                     Breakout: {colored_recommendation(row['Breakout'])}  
                     Ichimoku Trend: {colored_recommendation(row['Ichimoku_Trend'])}
                     """, unsafe_allow_html=True)
-        else:
+        elif not st.session_state.cancel_operation:
             st.warning("⚠️ No top picks available due to data issues.")
     
     if st.button("⚡ Generate Intraday Top 5 Picks"):
+        st.session_state.cancel_operation = False  # Reset cancel state
         progress_bar = st.progress(0)
         loading_text = st.empty()
+        cancel_button = st.button("❌ Cancel Intraday Analysis")
         loading_messages = itertools.cycle([
             "Scanning intraday trends...", "Detecting buy signals...", "Calculating stop-loss levels...",
             "Optimizing targets...", "Finalizing top picks..."
         ])
+        
+        if cancel_button:
+            st.session_state.cancel_operation = True
+        
         intraday_results = analyze_intraday_stocks(
             NSE_STOCKS,
             price_range=price_range,
-            progress_callback=lambda x: update_progress(progress_bar, loading_text, x, loading_messages)
+            progress_callback=lambda progress, start_time, total, processed: update_progress(
+                progress_bar, loading_text, progress, loading_messages, start_time, total, processed
+            )
         )
         progress_bar.empty()
         loading_text.empty()
-        if not intraday_results.empty:
+        if not intraday_results.empty and not st.session_state.cancel_operation:
             st.subheader("🏆 Top 5 Intraday Stocks")
             for _, row in intraday_results.iterrows():
                 with st.expander(f"{row['Symbol']} - Score: {row['Score']}/7"):
@@ -686,7 +768,7 @@ def display_dashboard(symbol=None, data=None, recommendations=None, NSE_STOCKS=N
                     Target: ₹{target}  
                     Intraday: {colored_recommendation(row['Intraday'])}  
                     """, unsafe_allow_html=True)
-        else:
+        elif not st.session_state.cancel_operation:
             st.warning("⚠️ No intraday picks available due to data issues.")
     
     if symbol and data is not None and recommendations is not None:
@@ -765,37 +847,11 @@ def display_dashboard(symbol=None, data=None, recommendations=None, NSE_STOCKS=N
     elif symbol:
         st.warning("⚠️ No data available for the selected stock.")
 
-def update_progress(progress_bar, loading_text, progress_value, loading_messages):
-    progress_bar.progress(progress_value)
-    loading_message = next(loading_messages)
-    dots = "." * int((progress_value * 10) % 4)
-    loading_text.text(f"{loading_message}{dots}")
-
-def analyze_intraday_stocks(stock_list, batch_size=50, price_range=None, progress_callback=None):
-    results = []
-    total_batches = (len(stock_list) // batch_size) + (1 if len(stock_list) % batch_size != 0 else 0)
-    for i in range(0, len(stock_list), batch_size):
-        batch = stock_list[i:i + batch_size]
-        batch_results = analyze_batch(batch)
-        results.extend(batch_results)
-        if progress_callback:
-            progress_callback((i + len(batch)) / len(stock_list))
-    
-    results_df = pd.DataFrame([r for r in results if r is not None])
-    if results_df.empty:
-        return pd.DataFrame()
-    if "Score" not in results_df.columns:
-        results_df["Score"] = 0
-    if "Current Price" not in results_df.columns:
-        results_df["Current Price"] = None
-    if price_range:
-        results_df = results_df[results_df['Current Price'].notnull() & 
-                                (results_df['Current Price'] >= price_range[0]) & 
-                                (results_df['Current Price'] <= price_range[1])]
-    intraday_df = results_df[results_df["Intraday"].str.contains("Buy", na=False)]
-    return intraday_df.sort_values(by="Score", ascending=False).head(5)
-
 def main():
+    # Initialize session state for cancellation
+    if 'cancel_operation' not in st.session_state:
+        st.session_state.cancel_operation = False
+
     st.sidebar.title("🔍 Stock Search")
     NSE_STOCKS = fetch_nse_stock_list()
     
