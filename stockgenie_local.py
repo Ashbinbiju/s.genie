@@ -306,6 +306,18 @@ def analyze_stock(data):
         data['Fib_38.2'] = None
         data['Fib_50.0'] = None
         data['Fib_61.8'] = None
+
+    # Add Lilyput Breakout Detection
+    try:
+        lilyput_breakouts = detect_lilyput_breakout(data)
+        if not lilyput_breakouts.empty:
+            data['Lilyput_Breakout'] = True
+        else:
+            data['Lilyput_Breakout'] = False
+    except Exception as e:
+        st.warning(f"⚠️ Error detecting Lilyput Breakout: {e}")
+        data['Lilyput_Breakout'] = False
+
     return data
 
 def calculate_stop_loss(data, atr_multiplier=2.5):
@@ -355,13 +367,20 @@ def generate_recommendations(data):
         "Intraday": "Hold", "Swing": "Hold",
         "Short-Term": "Hold", "Long-Term": "Hold",
         "Current Price": None, "Buy At": None,
-        "Stop Loss": None, "Target": None, "Score": 0
+        "Stop Loss": None, "Target": None, "Score": 0,
+        "Lilyput_Breakout": False  # Add Lilyput Breakout flag
     }
     if data.empty:
         return recommendations
     try:
         # Current Price
         recommendations["Current Price"] = data['Close'].iloc[-1]
+        
+        # Lilyput Breakout Detection
+        if 'Lilyput_Breakout' in data.columns and data['Lilyput_Breakout'].iloc[-1]:
+            recommendations["Lilyput_Breakout"] = True
+            recommendations["Intraday"] = "Strong Buy"  # Override Intraday recommendation if breakout detected
+
         # Multi-Factor Scoring System
         buy_score = 0
         sell_score = 0
@@ -488,8 +507,7 @@ def display_dashboard(symbol=None, data=None, recommendations=None, NSE_STOCKS=N
     # Price Range Slider
     price_range = st.sidebar.slider(
         "Select Price Range (₹)",
-        min_value=0, max_value=10000, value=(100, 1000)
-    )
+        min_value=0, max_value=10000, value=(100, 1000))
     
     # Daily Suggestions Button
     if st.button("🚀 Generate Daily Top Picks"):
@@ -510,8 +528,7 @@ def display_dashboard(symbol=None, data=None, recommendations=None, NSE_STOCKS=N
         results_df = analyze_all_stocks(
             NSE_STOCKS,
             price_range=price_range,
-            progress_callback=lambda x: update_progress(progress_bar, loading_text, x, loading_messages)
-        )
+            progress_callback=lambda x: update_progress(progress_bar, loading_text, x, loading_messages))
         
         # Clear the progress bar and loading message
         progress_bar.empty()
@@ -550,8 +567,7 @@ def display_dashboard(symbol=None, data=None, recommendations=None, NSE_STOCKS=N
         intraday_results = analyze_intraday_stocks(
             NSE_STOCKS,
             price_range=price_range,
-            progress_callback=lambda x: update_progress(progress_bar, loading_text, x, loading_messages)
-        )
+            progress_callback=lambda x: update_progress(progress_bar, loading_text, x, loading_messages))
         
         # Clear the progress bar and loading message
         progress_bar.empty()
@@ -580,6 +596,11 @@ def display_dashboard(symbol=None, data=None, recommendations=None, NSE_STOCKS=N
             st.metric(tooltip("Stop Loss", TOOLTIPS['Stop Loss']), f"₹{recommendations['Stop Loss']:.2f}")
         with col4:
             st.metric(tooltip("Target", "Price target based on risk/reward"), f"₹{recommendations['Target']:.2f}")
+        
+        # Display Lilyput Breakout Alert
+        if recommendations.get("Lilyput_Breakout", False):
+            st.success("🚀 Lilyput Breakout Detected! Consider a strong buy signal.")
+        
         st.subheader("📈 Trading Recommendations")
         cols = st.columns(4)
         strategy_names = ["Intraday", "Swing", "Short-Term", "Long-Term"]
