@@ -1,31 +1,14 @@
-# Core dependencies for Streamlit and data handling
 streamlit>=1.31.0
 pandas>=2.2.0
 numpy>=1.26.4
 yfinance>=0.2.40
-
-# Technical analysis library
 ta>=0.11.0
-
-# Visualization
 plotly>=5.20.0
-
-# HTTP requests and utilities
 requests>=2.31.0
-
-# Sentiment analysis
 vaderSentiment>=3.3.2
 transformers>=4.38.1
-torch>=2.2.0  # Required by transformers for FinBERT
-
-# Natural language processing
+torch>=2.2.0
 spacy>=3.7.2
-
-# Google Trends API
 pytrends>=4.9.2
-
-# GARCH modeling for Monte Carlo
 arch>=5.6.0
-
-# Progress bar (optional, used by tqdm)
 tqdm>=4.66.2
