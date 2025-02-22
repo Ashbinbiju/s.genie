@@ -35,7 +35,6 @@ TOOLTIPS = {
     "Parabolic_SAR": "Parabolic Stop and Reverse - Trend reversal indicator",
     "Fib_Retracements": "Fibonacci Retracements - Support and resistance levels",
     "Ichimoku": "Ichimoku Cloud - Comprehensive trend indicator",
-    "RVI": "Relative Vigor Index - Trend strength",
     "CMF": "Chaikin Money Flow - Buying/selling pressure",
     "Donchian": "Donchian Channels - Breakout detection",
 }
@@ -348,14 +347,6 @@ def analyze_stock(data):
         data['Ichimoku_Span_B'] = None
         data['Ichimoku_Chikou'] = None
     try:
-        rvi = ta.momentum.RVIndicator(data['Close'], data['Open'], data['High'], data['Low'], window=10)
-        data['RVI'] = rvi.relative_vigor_index()
-        data['RVI_Signal'] = rvi.rvi_signal()
-    except Exception as e:
-        st.warning(f"⚠️ Failed to compute RVI: {str(e)}")
-        data['RVI'] = None
-        data['RVI_Signal'] = None
-    try:
         data['CMF'] = ta.volume.ChaikinMoneyFlowIndicator(data['High'], data['Low'], data['Close'], data['Volume'], window=20).chaikin_money_flow()
     except Exception as e:
         st.warning(f"⚠️ Failed to compute CMF: {str(e)}")
@@ -438,28 +429,31 @@ def generate_recommendations(data, symbol=None):
         sell_score = 0
         
         if 'RSI' in data.columns and data['RSI'].iloc[-1] is not None:
-            if data['RSI'].iloc[-1] < 30:
+            if isinstance(data['RSI'].iloc[-1], (int, float)) and data['RSI'].iloc[-1] < 30:
                 buy_score += 2
-            elif data['RSI'].iloc[-1] > 70:
+            elif isinstance(data['RSI'].iloc[-1], (int, float)) and data['RSI'].iloc[-1] > 70:
                 sell_score += 2
-        if 'MACD' in data.columns and 'MACD_signal' in data.columns and data['MACD'].iloc[-1] is not None:
-            if data['MACD'].iloc[-1] > data['MACD_signal'].iloc[-1]:
-                buy_score += 1
-            elif data['MACD'].iloc[-1] < data['MACD_signal'].iloc[-1]:
-                sell_score += 1
-        if 'Close' in data.columns and 'Lower_Band' in data.columns and 'Upper_Band' in data.columns:
-            if data['Close'].iloc[-1] < data['Lower_Band'].iloc[-1]:
-                buy_score += 1
-            elif data['Close'].iloc[-1] > data['Upper_Band'].iloc[-1]:
-                sell_score += 1
-        if 'VWAP' in data.columns and data['VWAP'].iloc[-1] is not None:
-            if data['Close'].iloc[-1] > data['VWAP'].iloc[-1]:
-                buy_score += 1
-            elif data['Close'].iloc[-1] < data['VWAP'].iloc[-1]:
-                sell_score += 1
+        if 'MACD' in data.columns and 'MACD_signal' in data.columns and data['MACD'].iloc[-1] is not None and data['MACD_signal'].iloc[-1] is not None:
+            if isinstance(data['MACD'].iloc[-1], (int, float)) and isinstance(data['MACD_signal'].iloc[-1], (int, float)):
+                if data['MACD'].iloc[-1] > data['MACD_signal'].iloc[-1]:
+                    buy_score += 1
+                elif data['MACD'].iloc[-1] < data['MACD_signal'].iloc[-1]:
+                    sell_score += 1
+        if 'Close' in data.columns and 'Lower_Band' in data.columns and 'Upper_Band' in data.columns and data['Close'].iloc[-1] is not None:
+            if isinstance(data['Close'].iloc[-1], (int, float)) and isinstance(data['Lower_Band'].iloc[-1], (int, float)) and isinstance(data['Upper_Band'].iloc[-1], (int, float)):
+                if data['Close'].iloc[-1] < data['Lower_Band'].iloc[-1]:
+                    buy_score += 1
+                elif data['Close'].iloc[-1] > data['Upper_Band'].iloc[-1]:
+                    sell_score += 1
+        if 'VWAP' in data.columns and data['VWAP'].iloc[-1] is not None and data['Close'].iloc[-1] is not None:
+            if isinstance(data['VWAP'].iloc[-1], (int, float)) and isinstance(data['Close'].iloc[-1], (int, float)):
+                if data['Close'].iloc[-1] > data['VWAP'].iloc[-1]:
+                    buy_score += 1
+                elif data['Close'].iloc[-1] < data['VWAP'].iloc[-1]:
+                    sell_score += 1
         if 'Volume' in data.columns and data['Volume'].iloc[-1] is not None:
             avg_volume = data['Volume'].rolling(window=10).mean().iloc[-1]
-            if avg_volume is not None:
+            if isinstance(data['Volume'].iloc[-1], (int, float)) and isinstance(avg_volume, (int, float)):
                 if data['Volume'].iloc[-1] > avg_volume * 1.5:
                     buy_score += 1
                 elif data['Volume'].iloc[-1] < avg_volume * 0.5:
@@ -470,47 +464,56 @@ def generate_recommendations(data, symbol=None):
             elif data['Divergence'].iloc[-1] == "Bearish Divergence":
                 sell_score += 1
         
-        if 'Ichimoku_Span_A' in data.columns and 'Ichimoku_Span_B' in data.columns:
-            if data['Close'].iloc[-1] > max(data['Ichimoku_Span_A'].iloc[-1], data['Ichimoku_Span_B'].iloc[-1]):
-                buy_score += 1
-                recommendations["Ichimoku_Trend"] = "Buy"
-            elif data['Close'].iloc[-1] < min(data['Ichimoku_Span_A'].iloc[-1], data['Ichimoku_Span_B'].iloc[-1]):
-                sell_score += 1
-                recommendations["Ichimoku_Trend"] = "Sell"
-        if 'RVI' in data.columns and 'RVI_Signal' in data.columns:
-            if data['RVI'].iloc[-1] > data['RVI_Signal'].iloc[-1]:
-                buy_score += 1
-            elif data['RVI'].iloc[-1] < data['RVI_Signal'].iloc[-1]:
-                sell_score += 1
+        if 'Ichimoku_Span_A' in data.columns and 'Ichimoku_Span_B' in data.columns and data['Close'].iloc[-1] is not None:
+            if (isinstance(data['Ichimoku_Span_A'].iloc[-1], (int, float)) and 
+                isinstance(data['Ichimoku_Span_B'].iloc[-1], (int, float)) and 
+                isinstance(data['Close'].iloc[-1], (int, float))):
+                if data['Close'].iloc[-1] > max(data['Ichimoku_Span_A'].iloc[-1], data['Ichimoku_Span_B'].iloc[-1]):
+                    buy_score += 1
+                    recommendations["Ichimoku_Trend"] = "Buy"
+                elif data['Close'].iloc[-1] < min(data['Ichimoku_Span_A'].iloc[-1], data['Ichimoku_Span_B'].iloc[-1]):
+                    sell_score += 1
+                    recommendations["Ichimoku_Trend"] = "Sell"
         if 'CMF' in data.columns and data['CMF'].iloc[-1] is not None:
-            if data['CMF'].iloc[-1] > 0:
-                buy_score += 1
-            elif data['CMF'].iloc[-1] < 0:
-                sell_score += 1
-        if 'Donchian_Upper' in data.columns and 'Donchian_Lower' in data.columns:
-            if data['Close'].iloc[-1] > data['Donchian_Upper'].iloc[-1]:
-                buy_score += 1
-                recommendations["Breakout"] = "Buy"
-            elif data['Close'].iloc[-1] < data['Donchian_Lower'].iloc[-1]:
-                sell_score += 1
-                recommendations["Breakout"] = "Sell"
+            if isinstance(data['CMF'].iloc[-1], (int, float)):
+                if data['CMF'].iloc[-1] > 0:
+                    buy_score += 1
+                elif data['CMF'].iloc[-1] < 0:
+                    sell_score += 1
+        if 'Donchian_Upper' in data.columns and 'Donchian_Lower' in data.columns and data['Close'].iloc[-1] is not None:
+            if (isinstance(data['Donchian_Upper'].iloc[-1], (int, float)) and 
+                isinstance(data['Donchian_Lower'].iloc[-1], (int, float)) and 
+                isinstance(data['Close'].iloc[-1], (int, float))):
+                if data['Close'].iloc[-1] > data['Donchian_Upper'].iloc[-1]:
+                    buy_score += 1
+                    recommendations["Breakout"] = "Buy"
+                elif data['Close'].iloc[-1] < data['Donchian_Lower'].iloc[-1]:
+                    sell_score += 1
+                    recommendations["Breakout"] = "Sell"
 
-        if 'RSI' in data.columns and 'Lower_Band' in data.columns:
-            if data['RSI'].iloc[-1] < 30 and data['Close'].iloc[-1] <= data['Lower_Band'].iloc[-1]:
-                buy_score += 2
-                recommendations["Mean_Reversion"] = "Buy"
-            elif data['RSI'].iloc[-1] > 70 and data['Close'].iloc[-1] >= data['Upper_Band'].iloc[-1]:
-                sell_score += 2
-                recommendations["Mean_Reversion"] = "Sell"
-        if 'Ichimoku_Tenkan' in data.columns and 'Ichimoku_Kijun' in data.columns:
-            if (data['Ichimoku_Tenkan'].iloc[-1] > data['Ichimoku_Kijun'].iloc[-1] and
-                data['Close'].iloc[-1] > data['Ichimoku_Span_A'].iloc[-1]):
-                buy_score += 1
-                recommendations["Ichimoku_Trend"] = "Strong Buy"
-            elif (data['Ichimoku_Tenkan'].iloc[-1] < data['Ichimoku_Kijun'].iloc[-1] and
-                  data['Close'].iloc[-1] < data['Ichimoku_Span_B'].iloc[-1]):
-                sell_score += 1
-                recommendations["Ichimoku_Trend"] = "Strong Sell"
+        if 'RSI' in data.columns and 'Lower_Band' in data.columns and data['Close'].iloc[-1] is not None:
+            if (isinstance(data['RSI'].iloc[-1], (int, float)) and 
+                isinstance(data['Lower_Band'].iloc[-1], (int, float)) and 
+                isinstance(data['Close'].iloc[-1], (int, float))):
+                if data['RSI'].iloc[-1] < 30 and data['Close'].iloc[-1] <= data['Lower_Band'].iloc[-1]:
+                    buy_score += 2
+                    recommendations["Mean_Reversion"] = "Buy"
+                elif data['RSI'].iloc[-1] > 70 and data['Close'].iloc[-1] >= data['Upper_Band'].iloc[-1]:
+                    sell_score += 2
+                    recommendations["Mean_Reversion"] = "Sell"
+        if 'Ichimoku_Tenkan' in data.columns and 'Ichimoku_Kijun' in data.columns and data['Close'].iloc[-1] is not None:
+            if (isinstance(data['Ichimoku_Tenkan'].iloc[-1], (int, float)) and 
+                isinstance(data['Ichimoku_Kijun'].iloc[-1], (int, float)) and 
+                isinstance(data['Close'].iloc[-1], (int, float)) and 
+                isinstance(data['Ichimoku_Span_A'].iloc[-1], (int, float))):
+                if (data['Ichimoku_Tenkan'].iloc[-1] > data['Ichimoku_Kijun'].iloc[-1] and
+                    data['Close'].iloc[-1] > data['Ichimoku_Span_A'].iloc[-1]):
+                    buy_score += 1
+                    recommendations["Ichimoku_Trend"] = "Strong Buy"
+                elif (data['Ichimoku_Tenkan'].iloc[-1] < data['Ichimoku_Kijun'].iloc[-1] and
+                      data['Close'].iloc[-1] < data['Ichimoku_Span_B'].iloc[-1]):
+                    sell_score += 1
+                    recommendations["Ichimoku_Trend"] = "Strong Sell"
 
         if symbol:
             fundamentals = fetch_fundamentals(symbol)
@@ -725,7 +728,7 @@ def display_dashboard(symbol=None, data=None, recommendations=None, NSE_STOCKS=N
             else:
                 st.warning("⚠️ No valid price action data available for plotting.")
         with tab2:
-            momentum_cols = ['RSI', 'MACD', 'MACD_signal', 'RVI', 'RVI_Signal']
+            momentum_cols = ['RSI', 'MACD', 'MACD_signal']
             valid_momentum_cols = [col for col in momentum_cols if col in data.columns and pd.api.types.is_numeric_dtype(data[col])]
             if valid_momentum_cols:
                 fig = px.line(data, y=valid_momentum_cols, title="Momentum Indicators")
