@@ -18,8 +18,6 @@ import spacy
 from pytrends.request import TrendReq
 import numpy as np
 import itertools
-import asyncio
-import aiohttp
 from arch import arch_model  # For GARCH in Monte Carlo
 
 # API Keys
@@ -87,47 +85,20 @@ def fetch_nse_stock_list():
             "ABFRL.NS",
         ]
 
-# 7. Performance: Async Fetching of Stock Data
-async def fetch_stock_data_async(symbol, session, period="5y", interval="1d"):
-    """Fetch stock data asynchronously using Yahoo Finance API"""
-    if ".NS" not in symbol:
-        symbol += ".NS"
-    url = f"https://query1.finance.yahoo.com/v8/finance/chart/{symbol}?period={period}&interval={interval}"
-    try:
-        async with session.get(url) as response:
-            if response.status != 200:
-                raise Exception(f"HTTP {response.status}")
-            result = await response.json()
-            timestamps = result['chart']['result'][0]['timestamp']
-            prices = result['chart']['result'][0]['indicators']['quote'][0]
-            df = pd.DataFrame({
-                'Date': pd.to_datetime(timestamps, unit='s'),
-                'Open': prices['open'],
-                'High': prices['high'],
-                'Low': prices['low'],
-                'Close': prices['close'],
-                'Volume': prices['volume']
-            })
-            df.set_index('Date', inplace=True)
-            return df
-    except Exception as e:
-        st.error(f"❌ Failed to fetch data for {symbol}: {e}")
-        return pd.DataFrame()
-
-async def fetch_all_stocks(stock_list, period="5y", interval="1d"):
-    """Fetch data for multiple stocks asynchronously"""
-    async with aiohttp.ClientSession() as session:
-        tasks = [fetch_stock_data_async(symbol, session, period, interval) for symbol in stock_list]
-        return await asyncio.gather(*tasks)
-
 @lru_cache(maxsize=100)
 def fetch_stock_data_cached(symbol, period="5y", interval="1d"):
-    """Cached async fetch function"""
-    loop = asyncio.get_event_loop()
-    data = loop.run_until_complete(fetch_stock_data_async(symbol, aiohttp.ClientSession(), period, interval))
-    if data.empty:
-        st.error(f"❌ No data found for {symbol}")
-    return data
+    """Fetch data synchronously with retries and caching"""
+    try:
+        if ".NS" not in symbol:
+            symbol += ".NS"
+        stock = yf.Ticker(symbol)
+        data = stock.history(period=period, interval=interval)
+        if data.empty:
+            raise ValueError(f"No data found for {symbol}")
+        return data
+    except Exception as e:
+        st.error(f"❌ Failed to fetch data for {symbol} after 3 attempts: {str(e)}")
+        return pd.DataFrame()
 
 def calculate_advance_decline_ratio(stock_list):
     """Calculate Advance/Decline Ratio"""
@@ -228,15 +199,15 @@ def create_sentiment_heatmap(sentiment_data):
 def calculate_confidence_score(data):
     """Calculate confidence score for predictions"""
     score = 0
-    if data['RSI'].iloc[-1] < 30:
+    if 'RSI' in data.columns and data['RSI'].iloc[-1] is not None and data['RSI'].iloc[-1] < 30:
         score += 1
-    if data['MACD'].iloc[-1] > data['MACD_signal'].iloc[-1]:
+    if 'MACD' in data.columns and 'MACD_signal' in data.columns and data['MACD'].iloc[-1] is not None and data['MACD'].iloc[-1] > data['MACD_signal'].iloc[-1]:
         score += 1
     return score / 2  # Normalize to 0-1 range
 
 def assess_risk(data):
     """Assess risk based on volatility"""
-    if data['ATR'].iloc[-1] > data['ATR'].mean():
+    if 'ATR' in data.columns and data['ATR'].iloc[-1] is not None and data['ATR'].iloc[-1] > data['ATR'].mean():
         return "High Volatility Warning"
     else:
         return "Low Volatility"
@@ -381,7 +352,7 @@ def calculate_stop_loss(data, atr_multiplier=2.5):
         return None
     last_close = data['Close'].iloc[-1]
     last_atr = data['ATR'].iloc[-1]
-    if 'ADX' in data.columns and data['ADX'].iloc[-1] > 25:
+    if 'ADX' in data.columns and data['ADX'].iloc[-1] is not None and data['ADX'].iloc[-1] > 25:
         atr_multiplier = 3.0
     else:
         atr_multiplier = 1.5
@@ -404,7 +375,7 @@ def calculate_target(data, risk_reward_ratio=3):
         return None
     last_close = data['Close'].iloc[-1]
     risk = last_close - stop_loss
-    if 'ADX' in data.columns and data['ADX'].iloc[-1] > 25:
+    if 'ADX' in data.columns and data['ADX'].iloc[-1] is not None and data['ADX'].iloc[-1] > 25:
         risk_reward_ratio = 3
     else:
         risk_reward_ratio = 1.5
@@ -434,10 +405,10 @@ def generate_recommendations(data, symbol=None):
         "Current Price": None, "Buy At": None,
         "Stop Loss": None, "Target": None, "Score": 0
     }
-    if data.empty:
+    if data.empty or 'Close' not in data.columns or data['Close'].iloc[-1] is None:
         return recommendations
     try:
-        recommendations["Current Price"] = data['Close'].iloc[-1]
+        recommendations["Current Price"] = float(data['Close'].iloc[-1])
         buy_score = 0
         sell_score = 0
         
@@ -446,7 +417,7 @@ def generate_recommendations(data, symbol=None):
                 buy_score += 2
             elif data['RSI'].iloc[-1] > 70:
                 sell_score += 2
-        if 'MACD' in data.columns and 'MACD_signal' in data.columns:
+        if 'MACD' in data.columns and 'MACD_signal' in data.columns and data['MACD'].iloc[-1] is not None:
             if data['MACD'].iloc[-1] > data['MACD_signal'].iloc[-1]:
                 buy_score += 1
             elif data['MACD'].iloc[-1] < data['MACD_signal'].iloc[-1]:
@@ -456,17 +427,18 @@ def generate_recommendations(data, symbol=None):
                 buy_score += 1
             elif data['Close'].iloc[-1] > data['Upper_Band'].iloc[-1]:
                 sell_score += 1
-        if 'VWAP' in data.columns:
+        if 'VWAP' in data.columns and data['VWAP'].iloc[-1] is not None:
             if data['Close'].iloc[-1] > data['VWAP'].iloc[-1]:
                 buy_score += 1
             elif data['Close'].iloc[-1] < data['VWAP'].iloc[-1]:
                 sell_score += 1
-        if 'Volume' in data.columns:
+        if 'Volume' in data.columns and data['Volume'].iloc[-1] is not None:
             avg_volume = data['Volume'].rolling(window=10).mean().iloc[-1]
-            if data['Volume'].iloc[-1] > avg_volume * 1.5:
-                buy_score += 1
-            elif data['Volume'].iloc[-1] < avg_volume * 0.5:
-                sell_score += 1
+            if avg_volume is not None:
+                if data['Volume'].iloc[-1] > avg_volume * 1.5:
+                    buy_score += 1
+                elif data['Volume'].iloc[-1] < avg_volume * 0.5:
+                    sell_score += 1
         if 'Divergence' in data.columns:
             if data['Divergence'].iloc[-1] == "Bullish Divergence":
                 buy_score += 1
@@ -504,7 +476,7 @@ def analyze_batch(stock_batch):
                 if result:
                     results.append(result)
             except Exception as e:
-                st.warning(f"⚠️ Error processing stock: {e}")
+                st.warning(f"⚠️ Error processing stock {futures[future]}: {str(e)}")
     return results
 
 def analyze_stock_parallel(symbol):
@@ -538,11 +510,18 @@ def analyze_all_stocks(stock_list, batch_size=50, price_range=None, progress_cal
         if progress_callback:
             progress_callback((i + len(batch)) / len(stock_list))
     
-    results_df = pd.DataFrame(results)
+    results_df = pd.DataFrame([r for r in results if r is not None])
+    if results_df.empty:
+        st.warning("⚠️ No valid stock data retrieved.")
+        return pd.DataFrame()
     if "Score" not in results_df.columns:
         results_df["Score"] = 0
+    if "Current Price" not in results_df.columns:
+        results_df["Current Price"] = None
     if price_range:
-        results_df = results_df[(results_df['Current Price'] >= price_range[0]) & (results_df['Current Price'] <= price_range[1])]
+        results_df = results_df[results_df['Current Price'].notnull() & 
+                                (results_df['Current Price'] >= price_range[0]) & 
+                                (results_df['Current Price'] <= price_range[1])]
     return results_df.sort_values(by="Score", ascending=False).head(10)
 
 def colored_recommendation(recommendation):
@@ -577,18 +556,25 @@ def display_dashboard(symbol=None, data=None, recommendations=None, NSE_STOCKS=N
         )
         progress_bar.empty()
         loading_text.empty()
-        st.subheader("🏆 Today's Top 10 Stocks")
-        for _, row in results_df.iterrows():
-            with st.expander(f"{row['Symbol']} - Score: {row['Score']}/5"):
-                st.markdown(f"""
-                {tooltip('Current Price', TOOLTIPS['Stop Loss'])}: ₹{row['Current Price']:.2f}  
-                Buy At: ₹{row['Buy At']:.2f} | Stop Loss: ₹{row['Stop Loss']:.2f}  
-                Target: ₹{row['Target']:.2f}  
-                Intraday: {colored_recommendation(row['Intraday'])}  
-                Swing: {colored_recommendation(row['Swing'])}  
-                Short-Term: {colored_recommendation(row['Short-Term'])}  
-                Long-Term: {colored_recommendation(row['Long-Term'])}
-                """, unsafe_allow_html=True)
+        if not results_df.empty:
+            st.subheader("🏆 Today's Top 10 Stocks")
+            for _, row in results_df.iterrows():
+                with st.expander(f"{row['Symbol']} - Score: {row['Score']}/5"):
+                    current_price = row['Current Price'] if pd.notnull(row['Current Price']) else "N/A"
+                    buy_at = row['Buy At'] if pd.notnull(row['Buy At']) else "N/A"
+                    stop_loss = row['Stop Loss'] if pd.notnull(row['Stop Loss']) else "N/A"
+                    target = row['Target'] if pd.notnull(row['Target']) else "N/A"
+                    st.markdown(f"""
+                    {tooltip('Current Price', TOOLTIPS['Stop Loss'])}: ₹{current_price}  
+                    Buy At: ₹{buy_at} | Stop Loss: ₹{stop_loss}  
+                    Target: ₹{target}  
+                    Intraday: {colored_recommendation(row['Intraday'])}  
+                    Swing: {colored_recommendation(row['Swing'])}  
+                    Short-Term: {colored_recommendation(row['Short-Term'])}  
+                    Long-Term: {colored_recommendation(row['Long-Term'])}
+                    """, unsafe_allow_html=True)
+        else:
+            st.warning("⚠️ No top picks available due to data issues.")
     
     if st.button("⚡ Generate Intraday Top 5 Picks"):
         progress_bar = st.progress(0)
@@ -604,27 +590,38 @@ def display_dashboard(symbol=None, data=None, recommendations=None, NSE_STOCKS=N
         )
         progress_bar.empty()
         loading_text.empty()
-        st.subheader("🏆 Top 5 Intraday Stocks")
-        for _, row in intraday_results.iterrows():
-            with st.expander(f"{row['Symbol']} - Score: {row['Score']}/5"):
-                st.markdown(f"""
-                {tooltip('Current Price', TOOLTIPS['Stop Loss'])}: ₹{row['Current Price']:.2f}  
-                Buy At: ₹{row['Buy At']:.2f} | Stop Loss: ₹{row['Stop Loss']:.2f}  
-                Target: ₹{row['Target']:.2f}  
-                Intraday: {colored_recommendation(row['Intraday'])}  
-                """, unsafe_allow_html=True)
+        if not intraday_results.empty:
+            st.subheader("🏆 Top 5 Intraday Stocks")
+            for _, row in intraday_results.iterrows():
+                with st.expander(f"{row['Symbol']} - Score: {row['Score']}/5"):
+                    current_price = row['Current Price'] if pd.notnull(row['Current Price']) else "N/A"
+                    buy_at = row['Buy At'] if pd.notnull(row['Buy At']) else "N/A"
+                    stop_loss = row['Stop Loss'] if pd.notnull(row['Stop Loss']) else "N/A"
+                    target = row['Target'] if pd.notnull(row['Target']) else "N/A"
+                    st.markdown(f"""
+                    {tooltip('Current Price', TOOLTIPS['Stop Loss'])}: ₹{current_price}  
+                    Buy At: ₹{buy_at} | Stop Loss: ₹{stop_loss}  
+                    Target: ₹{target}  
+                    Intraday: {colored_recommendation(row['Intraday'])}  
+                    """, unsafe_allow_html=True)
+        else:
+            st.warning("⚠️ No intraday picks available due to data issues.")
     
     if symbol and data is not None and recommendations is not None:
         st.header(f"📋 {symbol.split('.')[0]} Analysis")
         col1, col2, col3, col4 = st.columns(4)
         with col1:
-            st.metric(tooltip("Current Price", TOOLTIPS['RSI']), f"₹{recommendations['Current Price']:.2f}")
+            current_price = recommendations['Current Price'] if recommendations['Current Price'] is not None else "N/A"
+            st.metric(tooltip("Current Price", TOOLTIPS['RSI']), f"₹{current_price}")
         with col2:
-            st.metric(tooltip("Buy At", "Recommended entry price"), f"₹{recommendations['Buy At']:.2f}")
+            buy_at = recommendations['Buy At'] if recommendations['Buy At'] is not None else "N/A"
+            st.metric(tooltip("Buy At", "Recommended entry price"), f"₹{buy_at}")
         with col3:
-            st.metric(tooltip("Stop Loss", TOOLTIPS['Stop Loss']), f"₹{recommendations['Stop Loss']:.2f}")
+            stop_loss = recommendations['Stop Loss'] if recommendations['Stop Loss'] is not None else "N/A"
+            st.metric(tooltip("Stop Loss", TOOLTIPS['Stop Loss']), f"₹{stop_loss}")
         with col4:
-            st.metric(tooltip("Target", "Price target based on risk/reward"), f"₹{recommendations['Target']:.2f}")
+            target = recommendations['Target'] if recommendations['Target'] is not None else "N/A"
+            st.metric(tooltip("Target", "Price target based on risk/reward"), f"₹{target}")
         st.subheader("📈 Trading Recommendations")
         cols = st.columns(4)
         strategy_names = ["Intraday", "Swing", "Short-Term", "Long-Term"]
@@ -669,14 +666,19 @@ def analyze_intraday_stocks(stock_list, batch_size=50, price_range=None, progres
         if progress_callback:
             progress_callback((i + len(batch)) / len(stock_list))
     
-    results_df = pd.DataFrame(results)
+    results_df = pd.DataFrame([r for r in results if r is not None])
+    if results_df.empty:
+        return pd.DataFrame()
     if "Score" not in results_df.columns:
         results_df["Score"] = 0
+    if "Current Price" not in results_df.columns:
+        results_df["Current Price"] = None
     if price_range:
-        results_df = results_df[(results_df['Current Price'] >= price_range[0]) & (results_df['Current Price'] <= price_range[1])]
+        results_df = results_df[results_df['Current Price'].notnull() & 
+                                (results_df['Current Price'] >= price_range[0]) & 
+                                (results_df['Current Price'] <= price_range[1])]
     intraday_df = results_df[results_df["Intraday"].str.contains("Buy", na=False)]
-    intraday_df = intraday_df.sort_values(by="Score", ascending=False).head(5)
-    return intraday_df
+    return intraday_df.sort_values(by="Score", ascending=False).head(5)
 
 def main():
     """Main function with enhanced input validation"""
