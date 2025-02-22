@@ -424,7 +424,7 @@ def generate_recommendations(data, symbol=None):
         return recommendations
     
     try:
-        recommendations["Current Price"] = float(data['Close'].iloc[-1])
+        recommendations["Current Price"] = round(float(data['Close'].iloc[-1]), 2)  # Round to 2 decimals
         buy_score = 0
         sell_score = 0
         
@@ -625,6 +625,10 @@ def analyze_all_stocks(stock_list, batch_size=50, price_range=None, progress_cal
     if results_df.empty:
         st.warning("⚠️ No valid stock data retrieved.")
         return pd.DataFrame()
+    # Round numerical columns to 2 decimal places
+    for col in ['Current Price', 'Buy At', 'Stop Loss', 'Target']:
+        if col in results_df.columns:
+            results_df[col] = results_df[col].apply(lambda x: round(x, 2) if pd.notnull(x) else x)
     if "Score" not in results_df.columns:
         results_df["Score"] = 0
     if "Current Price" not in results_df.columns:
@@ -660,6 +664,10 @@ def analyze_intraday_stocks(stock_list, batch_size=50, price_range=None, progres
     results_df = pd.DataFrame([r for r in results if r is not None])
     if results_df.empty:
         return pd.DataFrame()
+    # Round numerical columns to 2 decimal places
+    for col in ['Current Price', 'Buy At', 'Stop Loss', 'Target']:
+        if col in results_df.columns:
+            results_df[col] = results_df[col].apply(lambda x: round(x, 2) if pd.notnull(x) else x)
     if "Score" not in results_df.columns:
         results_df["Score"] = 0
     if "Current Price" not in results_df.columns:
@@ -713,10 +721,10 @@ def display_dashboard(symbol=None, data=None, recommendations=None, NSE_STOCKS=N
             st.subheader("🏆 Today's Top 10 Stocks")
             for _, row in results_df.iterrows():
                 with st.expander(f"{row['Symbol']} - Score: {row['Score']}/7"):
-                    current_price = row['Current Price'] if pd.notnull(row['Current Price']) else "N/A"
-                    buy_at = row['Buy At'] if pd.notnull(row['Buy At']) else "N/A"
-                    stop_loss = row['Stop Loss'] if pd.notnull(row['Stop Loss']) else "N/A"
-                    target = row['Target'] if pd.notnull(row['Target']) else "N/A"
+                    current_price = f"{row['Current Price']:.2f}" if pd.notnull(row['Current Price']) else "N/A"
+                    buy_at = f"{row['Buy At']:.2f}" if pd.notnull(row['Buy At']) else "N/A"
+                    stop_loss = f"{row['Stop Loss']:.2f}" if pd.notnull(row['Stop Loss']) else "N/A"
+                    target = f"{row['Target']:.2f}" if pd.notnull(row['Target']) else "N/A"
                     st.markdown(f"""
                     {tooltip('Current Price', TOOLTIPS['Stop Loss'])}: ₹{current_price}  
                     Buy At: ₹{buy_at} | Stop Loss: ₹{stop_loss}  
@@ -758,10 +766,10 @@ def display_dashboard(symbol=None, data=None, recommendations=None, NSE_STOCKS=N
             st.subheader("🏆 Top 5 Intraday Stocks")
             for _, row in intraday_results.iterrows():
                 with st.expander(f"{row['Symbol']} - Score: {row['Score']}/7"):
-                    current_price = row['Current Price'] if pd.notnull(row['Current Price']) else "N/A"
-                    buy_at = row['Buy At'] if pd.notnull(row['Buy At']) else "N/A"
-                    stop_loss = row['Stop Loss'] if pd.notnull(row['Stop Loss']) else "N/A"
-                    target = row['Target'] if pd.notnull(row['Target']) else "N/A"
+                    current_price = f"{row['Current Price']:.2f}" if pd.notnull(row['Current Price']) else "N/A"
+                    buy_at = f"{row['Buy At']:.2f}" if pd.notnull(row['Buy At']) else "N/A"
+                    stop_loss = f"{row['Stop Loss']:.2f}" if pd.notnull(row['Stop Loss']) else "N/A"
+                    target = f"{row['Target']:.2f}" if pd.notnull(row['Target']) else "N/A"
                     st.markdown(f"""
                     {tooltip('Current Price', TOOLTIPS['Stop Loss'])}: ₹{current_price}  
                     Buy At: ₹{buy_at} | Stop Loss: ₹{stop_loss}  
@@ -775,16 +783,16 @@ def display_dashboard(symbol=None, data=None, recommendations=None, NSE_STOCKS=N
         st.header(f"📋 {symbol.split('.')[0]} Analysis")
         col1, col2, col3, col4 = st.columns(4)
         with col1:
-            current_price = recommendations['Current Price'] if recommendations['Current Price'] is not None else "N/A"
+            current_price = f"{recommendations['Current Price']:.2f}" if recommendations['Current Price'] is not None else "N/A"
             st.metric(tooltip("Current Price", TOOLTIPS['RSI']), f"₹{current_price}")
         with col2:
-            buy_at = recommendations['Buy At'] if recommendations['Buy At'] is not None else "N/A"
+            buy_at = f"{recommendations['Buy At']:.2f}" if recommendations['Buy At'] is not None else "N/A"
             st.metric(tooltip("Buy At", "Recommended entry price"), f"₹{buy_at}")
         with col3:
-            stop_loss = recommendations['Stop Loss'] if recommendations['Stop Loss'] is not None else "N/A"
+            stop_loss = f"{recommendations['Stop Loss']:.2f}" if recommendations['Stop Loss'] is not None else "N/A"
             st.metric(tooltip("Stop Loss", TOOLTIPS['Stop Loss']), f"₹{stop_loss}")
         with col4:
-            target = recommendations['Target'] if recommendations['Target'] is not None else "N/A"
+            target = f"{recommendations['Target']:.2f}" if recommendations['Target'] is not None else "N/A"
             st.metric(tooltip("Target", "Price target based on risk/reward"), f"₹{target}")
         st.subheader("📈 Trading Recommendations")
         cols = st.columns(4)
