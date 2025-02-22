@@ -134,9 +134,9 @@ def fetch_news_sentiment_vader(query, api_key, source="newsapi"):
     analyzer = SentimentIntensityAnalyzer()
     try:
         if source == "newsapi":
-            url = f"https://newsapi.org/v2/everything?q={query}&apiKey=ed58659895e84dfb8162a8bb47d8525e&language=en&sortBy=publishedAt&pageSize=5"
+            url = f"https://newsapi.org/v2/everything?q={query}&apiKey={api_key}&language=en&sortBy=publishedAt&pageSize=5"
         elif source == "gnews":
-            url = f"https://gnews.io/api/v4/search?q={query}&token=e4f5f1442641400694645433a8f98b94&lang=en&max=5"
+            url = f"https://gnews.io/api/v4/search?q={query}&token={api_key}&lang=en&max=5"
         response = requests.get(url)
         response.raise_for_status()
         articles = response.json().get("articles", [])
@@ -313,7 +313,6 @@ def analyze_stock(data):
         data['Divergence'] = detect_divergence(data)
     except Exception:
         data['Divergence'] = "No Divergence"
-    # New Indicators
     try:
         ichimoku = ta.trend.IchimokuIndicator(data['High'], data['Low'], window1=9, window2=26, window3=52)
         data['Ichimoku_Tenkan'] = ichimoku.ichimoku_conversion_line()
@@ -362,7 +361,7 @@ def calculate_stop_loss(data, atr_multiplier=2.5):
     return round(stop_loss, 2)
 
 def calculate_buy_at(data):
-    if data.empty or 'RSI' not in data.columns or data['RSI'].iloc[-1] is None:
+    if data.empty or 'RSI' in data.columns or data['RSI'].iloc[-1] is None:
         return None
     last_close = data['Close'].iloc[-1]
     last_rsi = data['RSI'].iloc[-1]
@@ -409,7 +408,6 @@ def generate_recommendations(data, symbol=None):
         buy_score = 0
         sell_score = 0
         
-        # Existing Indicators
         if 'RSI' in data.columns and data['RSI'].iloc[-1] is not None:
             if data['RSI'].iloc[-1] < 30:
                 buy_score += 2
@@ -443,7 +441,6 @@ def generate_recommendations(data, symbol=None):
             elif data['Divergence'].iloc[-1] == "Bearish Divergence":
                 sell_score += 1
         
-        # New Indicators
         if 'Ichimoku_Span_A' in data.columns and 'Ichimoku_Span_B' in data.columns:
             if data['Close'].iloc[-1] > max(data['Ichimoku_Span_A'].iloc[-1], data['Ichimoku_Span_B'].iloc[-1]):
                 buy_score += 1
@@ -469,7 +466,6 @@ def generate_recommendations(data, symbol=None):
                 sell_score += 1
                 recommendations["Breakout"] = "Sell"
 
-        # Strategies
         if 'RSI' in data.columns and 'Lower_Band' in data.columns:
             if data['RSI'].iloc[-1] < 30 and data['Close'].iloc[-1] <= data['Lower_Band'].iloc[-1]:
                 buy_score += 2
@@ -502,7 +498,7 @@ def generate_recommendations(data, symbol=None):
         recommendations["Stop Loss"] = calculate_stop_loss(data)
         recommendations["Buy At"] = calculate_buy_at(data)
         recommendations["Target"] = calculate_target(data)
-        recommendations["Score"] = max(0, min(buy_score - sell_score, 7))  # Adjusted for new indicators
+        recommendations["Score"] = max(0, min(buy_score - sell_score, 7))
     except Exception:
         pass
     return recommendations
@@ -685,14 +681,29 @@ def display_dashboard(symbol=None, data=None, recommendations=None, NSE_STOCKS=N
                 st.markdown(colored_recommendation(recommendations[strategy]), unsafe_allow_html=True)
         tab1, tab2, tab3, tab4, tab5 = st.tabs(["📊 Price Action", "📉 Momentum", "📊 Volatility", "📈 Monte Carlo", "📉 New Indicators"])
         with tab1:
-            fig = px.line(data, y=['Close', 'SMA_50', 'SMA_200', 'EMA_20', 'EMA_50'], title="Price with Moving Averages")
-            st.plotly_chart(fig)
+            price_cols = ['Close', 'SMA_50', 'SMA_200', 'EMA_20', 'EMA_50']
+            valid_price_cols = [col for col in price_cols if col in data.columns and pd.api.types.is_numeric_dtype(data[col])]
+            if valid_price_cols:
+                fig = px.line(data, y=valid_price_cols, title="Price with Moving Averages")
+                st.plotly_chart(fig)
+            else:
+                st.warning("⚠️ No valid price action data available for plotting.")
         with tab2:
-            fig = px.line(data, y=['RSI', 'MACD', 'MACD_signal', 'RVI', 'RVI_Signal'], title="Momentum Indicators")
-            st.plotly_chart(fig)
+            momentum_cols = ['RSI', 'MACD', 'MACD_signal', 'RVI', 'RVI_Signal']
+            valid_momentum_cols = [col for col in momentum_cols if col in data.columns and pd.api.types.is_numeric_dtype(data[col])]
+            if valid_momentum_cols:
+                fig = px.line(data, y=valid_momentum_cols, title="Momentum Indicators")
+                st.plotly_chart(fig)
+            else:
+                st.warning("⚠️ No valid momentum indicators available for plotting.")
         with tab3:
-            fig = px.line(data, y=['ATR', 'Upper_Band', 'Lower_Band', 'Donchian_Upper', 'Donchian_Lower'], title="Volatility Analysis")
-            st.plotly_chart(fig)
+            volatility_cols = ['ATR', 'Upper_Band', 'Lower_Band', 'Donchian_Upper', 'Donchian_Lower']
+            valid_volatility_cols = [col for col in volatility_cols if col in data.columns and pd.api.types.is_numeric_dtype(data[col])]
+            if valid_volatility_cols:
+                fig = px.line(data, y=valid_volatility_cols, title="Volatility Analysis")
+                st.plotly_chart(fig)
+            else:
+                st.warning("⚠️ No valid volatility indicators available for plotting.")
         with tab4:
             mc_results = monte_carlo_simulation(data)
             mc_df = pd.DataFrame(mc_results).T
@@ -700,8 +711,13 @@ def display_dashboard(symbol=None, data=None, recommendations=None, NSE_STOCKS=N
             fig = px.line(mc_df, title="Monte Carlo Price Simulations (30 Days)")
             st.plotly_chart(fig)
         with tab5:
-            fig = px.line(data, y=['Ichimoku_Span_A', 'Ichimoku_Span_B', 'Ichimoku_Tenkan', 'Ichimoku_Kijun', 'CMF'], title="New Indicators (Ichimoku & CMF)")
-            st.plotly_chart(fig)
+            new_cols = ['Ichimoku_Span_A', 'Ichimoku_Span_B', 'Ichimoku_Tenkan', 'Ichimoku_Kijun', 'CMF']
+            valid_new_cols = [col for col in new_cols if col in data.columns and pd.api.types.is_numeric_dtype(data[col])]
+            if valid_new_cols:
+                fig = px.line(data, y=valid_new_cols, title="New Indicators (Ichimoku & CMF)")
+                st.plotly_chart(fig)
+            else:
+                st.warning("⚠️ No valid new indicators available for plotting.")
         if st.button("Analyze News Sentiment"):
             news_sentiment = fetch_news_sentiment_vader(symbol.split('.')[0], NEWSAPI_KEY)
             finbert_sentiment = analyze_sentiment_finbert(f"Latest news about {symbol.split('.')[0]}")
