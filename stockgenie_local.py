@@ -45,22 +45,32 @@ def tooltip(label, explanation):
     """Add tooltip with explanation to label."""
     return f"{label} 📌 ({explanation})"
 
-def retry(max_retries=3, delay=1, backoff_factor=2, jitter=0.5):
-    """Retry decorator for handling transient failures."""
+def retry(max_retries=5, delay=2, backoff_factor=1.5, jitter=0.5):
+    """Retry decorator for handling transient failures with more robustness."""
     def decorator(func):
         def wrapper(*args, **kwargs):
             retries = 0
             while retries < max_retries:
                 try:
                     return func(*args, **kwargs)
-                except (requests.exceptions.RequestException, ConnectionError) as e:
+                except (requests.exceptions.RequestException, ConnectionError, ValueError, TimeoutError) as e:
                     retries += 1
                     if retries == max_retries:
+                        st.error(f"❌ Maximum retries reached for {func.__name__}: {str(e)}")
                         raise e
                     sleep_time = (delay * (backoff_factor ** retries)) + random.uniform(0, jitter)
+                    st.warning(f"⚠️ Retrying {func.__name__} (Attempt {retries}/{max_retries}) in {sleep_time:.1f} seconds...")
                     time.sleep(sleep_time)
         return wrapper
     return decorator
+
+def check_internet_connection():
+    """Check if there’s an active internet connection."""
+    try:
+        requests.get("https://www.google.com", timeout=5)
+        return True
+    except (requests.exceptions.RequestException, TimeoutError):
+        return False
 
 @retry(max_retries=3, delay=2)
 def fetch_nse_stock_list():
@@ -104,8 +114,9 @@ def validate_stock_data(data, symbol):
         return False
     return True
 
+@retry(max_retries=5, delay=2)
 def fetch_stock_data_cached(symbol, period="5y", interval="1d"):
-    """Fetch historical stock data from Yahoo Finance with disk caching."""
+    """Fetch historical stock data from Yahoo Finance with disk caching and connection check."""
     if ".NS" not in symbol:
         symbol += ".NS"
     cache_key = f"{symbol}_{period}_{interval}"
@@ -113,6 +124,12 @@ def fetch_stock_data_cached(symbol, period="5y", interval="1d"):
         data = cache[cache_key]
         if validate_stock_data(data, symbol):
             return data
+    
+    # Check internet connection before proceeding
+    if not check_internet_connection():
+        st.error("❌ No internet connection detected. Please check your network and try again.")
+        return pd.DataFrame()
+    
     try:
         stock = yf.Ticker(symbol)
         data = stock.history(period=period, interval=interval)
@@ -671,23 +688,26 @@ def analyze_stock_parallel(symbol):
     return None
 
 def update_progress(progress_bar, loading_text, progress_value, loading_messages, start_time, total_items, processed_items, current_task=""):
-    """Update progress bar with detailed task information."""
+    """Update progress bar with detailed task information and extended timeout."""
     progress_bar.progress(progress_value)
     loading_message = next(loading_messages)
     dots = "." * int((progress_value * 10) % 4)
     elapsed_time = time.time() - start_time
-    if elapsed_time > 60:
-        st.warning("⚠️ Progress taking longer than expected. Check your connection.")
+    
+    # Increase timeout threshold to 120 seconds
+    if elapsed_time > 120:
+        st.warning("⚠️ Progress taking longer than expected. Please verify your internet connection or try again later.")
+    
     if processed_items > 0:
         time_per_item = elapsed_time / processed_items
         remaining_items = total_items - processed_items
         eta = timedelta(seconds=int(time_per_item * remaining_items))
-        loading_text.text(f"{loading_message}{dots} - {current_task} (ETA: {eta})")
+        loading_text.text(f"{loading_message}{dots} - {current_task} (ETA: {eta}, Processed: {processed_items}/{total_items})")
     else:
         loading_text.text(f"{loading_message}{dots} - {current_task}")
 
 def analyze_all_stocks(stock_list, batch_size=50, price_range=None, progress_callback=None):
-    """Analyze all stocks and return top 10 with detailed progress."""
+    """Analyze all stocks and return top 10 with detailed progress and dynamic batch sizing."""
     if st.session_state.cancel_operation:
         st.warning("⚠️ Analysis canceled by user.")
         return pd.DataFrame()
@@ -696,17 +716,29 @@ def analyze_all_stocks(stock_list, batch_size=50, price_range=None, progress_cal
     total_items = len(stock_list)
     start_time = time.time()
     processed_items = 0
+    dynamic_batch_size = batch_size
     
-    for i in range(0, total_items, batch_size):
+    for i in range(0, total_items, dynamic_batch_size):
         if st.session_state.cancel_operation:
             st.warning("⚠️ Analysis canceled by user.")
             break
-        batch = stock_list[i:i + batch_size]
+        
+        batch = stock_list[i:i + dynamic_batch_size]
+        batch_start_time = time.time()
+        
         batch_results = analyze_batch(batch, lambda p, t: progress_callback(
             (processed_items + p * len(batch)) / total_items, t, start_time, processed_items + int(p * len(batch))
         ) if progress_callback else None)
+        
         results.extend(batch_results)
         processed_items += len(batch)
+        batch_elapsed = time.time() - batch_start_time
+        
+        # Adjust batch size if processing a batch takes too long (e.g., > 30 seconds)
+        if batch_elapsed > 30 and dynamic_batch_size > 10:
+            st.warning(f"⚠️ Slow processing detected. Reducing batch size from {dynamic_batch_size} to {dynamic_batch_size // 2}.")
+            dynamic_batch_size = max(10, dynamic_batch_size // 2)
+        
         if progress_callback:
             progress_callback(processed_items / total_items, f"Completed batch {i//batch_size + 1}/{(total_items + batch_size - 1)//batch_size}", start_time, processed_items)
     
@@ -731,7 +763,7 @@ def analyze_all_stocks(stock_list, batch_size=50, price_range=None, progress_cal
     return results_df.sort_values(by="Score", ascending=False).head(10)
 
 def analyze_intraday_stocks(stock_list, batch_size=50, price_range=None, progress_callback=None):
-    """Analyze stocks for intraday trading and return top 5 with detailed progress."""
+    """Analyze stocks for intraday trading and return top 5 with detailed progress and dynamic batch sizing."""
     if st.session_state.cancel_operation:
         st.warning("⚠️ Analysis canceled by user.")
         return pd.DataFrame()
@@ -740,17 +772,29 @@ def analyze_intraday_stocks(stock_list, batch_size=50, price_range=None, progres
     total_items = len(stock_list)
     start_time = time.time()
     processed_items = 0
+    dynamic_batch_size = batch_size
     
-    for i in range(0, total_items, batch_size):
+    for i in range(0, total_items, dynamic_batch_size):
         if st.session_state.cancel_operation:
             st.warning("⚠️ Analysis canceled by user.")
             break
-        batch = stock_list[i:i + batch_size]
+        
+        batch = stock_list[i:i + dynamic_batch_size]
+        batch_start_time = time.time()
+        
         batch_results = analyze_batch(batch, lambda p, t: progress_callback(
             (processed_items + p * len(batch)) / total_items, t, start_time, processed_items + int(p * len(batch))
         ) if progress_callback else None)
+        
         results.extend(batch_results)
         processed_items += len(batch)
+        batch_elapsed = time.time() - batch_start_time
+        
+        # Adjust batch size if processing a batch takes too long (e.g., > 30 seconds)
+        if batch_elapsed > 30 and dynamic_batch_size > 10:
+            st.warning(f"⚠️ Slow processing detected. Reducing batch size from {dynamic_batch_size} to {dynamic_batch_size // 2}.")
+            dynamic_batch_size = max(10, dynamic_batch_size // 2)
+        
         if progress_callback:
             progress_callback(processed_items / total_items, f"Completed batch {i//batch_size + 1}/{(total_items + batch_size - 1)//batch_size}", start_time, processed_items)
     
