@@ -4,8 +4,6 @@ import ta
 import streamlit as st
 from datetime import datetime, timedelta
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from functools import lru_cache
-from tqdm import tqdm
 import plotly.express as px
 import time
 import requests
@@ -17,6 +15,10 @@ from pytrends.request import TrendReq
 import numpy as np
 import itertools
 from arch import arch_model
+from diskcache import Cache  # Advanced caching
+
+# Setup diskcache
+cache = Cache("stock_cache", expire=86400)  # Cache directory, expires after 24 hours
 
 # API Keys (Consider moving to environment variables)
 NEWSAPI_KEY = "ed58659895e84dfb8162a8bb47d8525e"
@@ -62,13 +64,17 @@ def retry(max_retries=3, delay=1, backoff_factor=2, jitter=0.5):
 
 @retry(max_retries=3, delay=2)
 def fetch_nse_stock_list():
-    """Fetch list of NSE stock symbols from the official CSV."""
+    """Fetch list of NSE stock symbols from the official CSV, cached to disk."""
+    cache_key = "nse_stock_list"
+    if cache_key in cache:
+        return cache[cache_key]
     url = "https://archives.nseindia.com/content/equities/EQUITY_L.csv"
     try:
         response = requests.get(url, timeout=10)
         response.raise_for_status()
         nse_data = pd.read_csv(io.StringIO(response.text))
         stock_list = [f"{symbol}.NS" for symbol in nse_data['SYMBOL']]
+        cache[cache_key] = stock_list
         return stock_list
     except Exception as e:
         st.error(f"❌ Failed to fetch NSE stock list: {str(e)}")
@@ -80,17 +86,42 @@ def fetch_nse_stock_list():
             "ABFRL.NS",
         ]
 
-@lru_cache(maxsize=100)
+def validate_stock_data(data, symbol):
+    """Validate stock data for completeness and accuracy."""
+    required_cols = ['Open', 'High', 'Low', 'Close', 'Volume']
+    missing_cols = [col for col in required_cols if col not in data.columns]
+    if missing_cols:
+        st.error(f"❌ Data for {symbol} missing columns: {', '.join(missing_cols)}")
+        return False
+    if data[required_cols].isnull().any().any():
+        st.warning(f"⚠️ Data for {symbol} contains NaN values.")
+        return False
+    if (data[['Open', 'High', 'Low', 'Close']] < 0).any().any():
+        st.error(f"❌ Data for {symbol} contains negative prices.")
+        return False
+    if data.index.duplicated().any():
+        st.warning(f"⚠️ Data for {symbol} contains duplicate dates.")
+        return False
+    return True
+
 def fetch_stock_data_cached(symbol, period="5y", interval="1d"):
-    """Fetch historical stock data from Yahoo Finance with caching."""
+    """Fetch historical stock data from Yahoo Finance with disk caching."""
+    if ".NS" not in symbol:
+        symbol += ".NS"
+    cache_key = f"{symbol}_{period}_{interval}"
+    if cache_key in cache:
+        data = cache[cache_key]
+        if validate_stock_data(data, symbol):
+            return data
     try:
-        if ".NS" not in symbol:
-            symbol += ".NS"
         stock = yf.Ticker(symbol)
         data = stock.history(period=period, interval=interval)
         if data.empty:
             raise ValueError(f"No data found for {symbol}")
-        return data
+        if validate_stock_data(data, symbol):
+            cache[cache_key] = data
+            return data
+        return pd.DataFrame()
     except Exception as e:
         st.error(f"❌ Failed to fetch data for {symbol}: {str(e)}")
         return pd.DataFrame()
@@ -117,13 +148,12 @@ def adjust_window(data, default_window, min_window=5):
 def monte_carlo_simulation(data, simulations=1000, days=30):
     """Simulate future stock prices using Monte Carlo with GARCH or basic model."""
     returns = data['Close'].pct_change().dropna()
-    # Trim outliers
     returns = returns[(returns > returns.quantile(0.05)) & (returns < returns.quantile(0.95))]
     if len(returns) < 30:
         st.warning(f"⚠️ Limited data ({len(returns)} days) for GARCH; using basic simulation.")
         mean_return = returns.mean()
         std_return = returns.std() if returns.std() != 0 else 0.01
-        if std_return > 0.1:  # High volatility check
+        if std_return > 0.1:
             st.warning("⚠️ High volatility detected; simulation may be unreliable.")
         simulation_results = []
         for _ in range(simulations):
@@ -171,8 +201,7 @@ def fetch_news_sentiment_vader(query, api_key, source="newsapi"):
             text = f"{title} {description}"
             sentiment = analyzer.polarity_scores(text)['compound']
             sentiment_scores.append(sentiment)
-        avg_sentiment = sum(sentiment_scores) / len(sentiment_scores)
-        return avg_sentiment
+        return sum(sentiment_scores) / len(sentiment_scores)
     except Exception as e:
         st.error(f"❌ Failed to fetch news sentiment for {query}: {str(e)}")
         return 0
@@ -507,7 +536,6 @@ def generate_recommendations(data, symbol=None):
         buy_score = 0
         sell_score = 0
         
-        # Fallback if RSI is missing
         if 'RSI' not in data.columns or data['RSI'].iloc[-1] is None:
             if data['Close'].iloc[-1] > data['Close'].iloc[0]:
                 buy_score += 1
@@ -598,13 +626,19 @@ def generate_recommendations(data, symbol=None):
         st.error(f"❌ Error generating recommendations: {str(e)}")
     return recommendations
 
-def analyze_batch(stock_batch):
-    """Analyze a batch of stocks concurrently with dynamic worker limits."""
+def analyze_batch(stock_batch, progress_callback=None):
+    """Analyze a batch of stocks concurrently with detailed progress updates."""
     results = []
+    total_stocks = len(stock_batch)
+    processed_stocks = 0
+    
     with ThreadPoolExecutor(max_workers=min(10, len(stock_batch))) as executor:
         futures = {executor.submit(analyze_stock_parallel, symbol): symbol for symbol in stock_batch}
         for future in as_completed(futures):
             symbol = futures[future]
+            processed_stocks += 1
+            if progress_callback:
+                progress_callback(processed_stocks / total_stocks, f"Processing {symbol} ({processed_stocks}/{total_stocks})")
             try:
                 result = future.result()
                 if result:
@@ -636,8 +670,8 @@ def analyze_stock_parallel(symbol):
         }
     return None
 
-def update_progress(progress_bar, loading_text, progress_value, loading_messages, start_time, total_items, processed_items):
-    """Update progress bar with timeout check."""
+def update_progress(progress_bar, loading_text, progress_value, loading_messages, start_time, total_items, processed_items, current_task=""):
+    """Update progress bar with detailed task information."""
     progress_bar.progress(progress_value)
     loading_message = next(loading_messages)
     dots = "." * int((progress_value * 10) % 4)
@@ -648,12 +682,12 @@ def update_progress(progress_bar, loading_text, progress_value, loading_messages
         time_per_item = elapsed_time / processed_items
         remaining_items = total_items - processed_items
         eta = timedelta(seconds=int(time_per_item * remaining_items))
-        loading_text.text(f"{loading_message}{dots} (ETA: {eta})")
+        loading_text.text(f"{loading_message}{dots} - {current_task} (ETA: {eta})")
     else:
-        loading_text.text(f"{loading_message}{dots}")
+        loading_text.text(f"{loading_message}{dots} - {current_task}")
 
 def analyze_all_stocks(stock_list, batch_size=50, price_range=None, progress_callback=None):
-    """Analyze all stocks and return top 10."""
+    """Analyze all stocks and return top 10 with detailed progress."""
     if st.session_state.cancel_operation:
         st.warning("⚠️ Analysis canceled by user.")
         return pd.DataFrame()
@@ -661,17 +695,20 @@ def analyze_all_stocks(stock_list, batch_size=50, price_range=None, progress_cal
     results = []
     total_items = len(stock_list)
     start_time = time.time()
+    processed_items = 0
     
     for i in range(0, total_items, batch_size):
         if st.session_state.cancel_operation:
             st.warning("⚠️ Analysis canceled by user.")
             break
         batch = stock_list[i:i + batch_size]
-        batch_results = analyze_batch(batch)
+        batch_results = analyze_batch(batch, lambda p, t: progress_callback(
+            (processed_items + p * len(batch)) / total_items, t, start_time, processed_items + int(p * len(batch))
+        ) if progress_callback else None)
         results.extend(batch_results)
-        processed_items = min(i + len(batch), total_items)
+        processed_items += len(batch)
         if progress_callback:
-            progress_callback(processed_items / total_items, start_time, total_items, processed_items)
+            progress_callback(processed_items / total_items, f"Completed batch {i//batch_size + 1}/{(total_items + batch_size - 1)//batch_size}", start_time, processed_items)
     
     if not results:
         return pd.DataFrame()
@@ -694,7 +731,7 @@ def analyze_all_stocks(stock_list, batch_size=50, price_range=None, progress_cal
     return results_df.sort_values(by="Score", ascending=False).head(10)
 
 def analyze_intraday_stocks(stock_list, batch_size=50, price_range=None, progress_callback=None):
-    """Analyze stocks for intraday trading and return top 5."""
+    """Analyze stocks for intraday trading and return top 5 with detailed progress."""
     if st.session_state.cancel_operation:
         st.warning("⚠️ Analysis canceled by user.")
         return pd.DataFrame()
@@ -702,17 +739,20 @@ def analyze_intraday_stocks(stock_list, batch_size=50, price_range=None, progres
     results = []
     total_items = len(stock_list)
     start_time = time.time()
+    processed_items = 0
     
     for i in range(0, total_items, batch_size):
         if st.session_state.cancel_operation:
             st.warning("⚠️ Analysis canceled by user.")
             break
         batch = stock_list[i:i + batch_size]
-        batch_results = analyze_batch(batch)
+        batch_results = analyze_batch(batch, lambda p, t: progress_callback(
+            (processed_items + p * len(batch)) / total_items, t, start_time, processed_items + int(p * len(batch))
+        ) if progress_callback else None)
         results.extend(batch_results)
-        processed_items = min(i + len(batch), total_items)
+        processed_items += len(batch)
         if progress_callback:
-            progress_callback(processed_items / total_items, start_time, total_items, processed_items)
+            progress_callback(processed_items / total_items, f"Completed batch {i//batch_size + 1}/{(total_items + batch_size - 1)//batch_size}", start_time, processed_items)
     
     results_df = pd.DataFrame([r for r in results if r is not None])
     if results_df.empty:
@@ -754,20 +794,20 @@ def display_dashboard(symbol=None, data=None, recommendations=None, NSE_STOCKS=N
         loading_text = st.empty()
         cancel_button = st.button("❌ Cancel Analysis")
         loading_messages = itertools.cycle([
-            "Analyzing trends...", "Fetching data...", "Crunching numbers...",
-            "Evaluating indicators...", "Finalizing results..."
+            "Fetching stock data", "Calculating indicators", "Generating recommendations",
+            "Ranking stocks", "Finalizing results"
         ])
         
         if cancel_button:
             st.session_state.cancel_operation = True
             st.warning("⚠️ Analysis canceled by user.")
-            st.session_state.cancel_operation = False  # Reset state
+            st.session_state.cancel_operation = False
         
         results_df = analyze_all_stocks(
             NSE_STOCKS,
             price_range=price_range,
-            progress_callback=lambda progress, start_time, total, processed: update_progress(
-                progress_bar, loading_text, progress, loading_messages, start_time, total, processed
+            progress_callback=lambda progress, task, start_time, processed: update_progress(
+                progress_bar, loading_text, progress, loading_messages, start_time, len(NSE_STOCKS), processed, task
             )
         )
         progress_bar.empty()
@@ -801,20 +841,20 @@ def display_dashboard(symbol=None, data=None, recommendations=None, NSE_STOCKS=N
         loading_text = st.empty()
         cancel_button = st.button("❌ Cancel Intraday Analysis")
         loading_messages = itertools.cycle([
-            "Scanning intraday trends...", "Detecting buy signals...", "Calculating stop-loss levels...",
-            "Optimizing targets...", "Finalizing top picks..."
+            "Fetching intraday data", "Analyzing buy signals", "Computing stop-loss levels",
+            "Setting targets", "Selecting top picks"
         ])
         
         if cancel_button:
             st.session_state.cancel_operation = True
             st.warning("⚠️ Analysis canceled by user.")
-            st.session_state.cancel_operation = False  # Reset state
+            st.session_state.cancel_operation = False
         
         intraday_results = analyze_intraday_stocks(
             NSE_STOCKS,
             price_range=price_range,
-            progress_callback=lambda progress, start_time, total, processed: update_progress(
-                progress_bar, loading_text, progress, loading_messages, start_time, total, processed
+            progress_callback=lambda progress, task, start_time, processed: update_progress(
+                progress_bar, loading_text, progress, loading_messages, start_time, len(NSE_STOCKS), processed, task
             )
         )
         progress_bar.empty()
@@ -874,8 +914,7 @@ def display_dashboard(symbol=None, data=None, recommendations=None, NSE_STOCKS=N
             valid_price_cols = [col for col in price_cols if col in data.columns and pd.api.types.is_numeric_dtype(data[col])]
             if valid_price_cols:
                 fig = px.line(data, y=valid_price_cols, title="Price with Moving Averages",
-                              labels={'value': 'Price (₹)', 'variable': 'Indicator'},
-                              template="plotly_white")
+                              labels={'value': 'Price (₹)', 'variable': 'Indicator'}, template="plotly_white")
                 fig.update_layout(legend_title_text='Indicator')
                 st.plotly_chart(fig)
             else:
@@ -886,8 +925,7 @@ def display_dashboard(symbol=None, data=None, recommendations=None, NSE_STOCKS=N
             valid_momentum_cols = [col for col in momentum_cols if col in data.columns and pd.api.types.is_numeric_dtype(data[col])]
             if valid_momentum_cols:
                 fig = px.line(data, y=valid_momentum_cols, title="Momentum Indicators",
-                              labels={'value': 'Value', 'variable': 'Indicator'},
-                              template="plotly_white")
+                              labels={'value': 'Value', 'variable': 'Indicator'}, template="plotly_white")
                 fig.update_layout(legend_title_text='Indicator')
                 st.plotly_chart(fig)
             else:
@@ -898,8 +936,7 @@ def display_dashboard(symbol=None, data=None, recommendations=None, NSE_STOCKS=N
             valid_volatility_cols = [col for col in volatility_cols if col in data.columns and pd.api.types.is_numeric_dtype(data[col])]
             if valid_volatility_cols:
                 fig = px.line(data, y=valid_volatility_cols, title="Volatility Analysis",
-                              labels={'value': 'Value', 'variable': 'Indicator'},
-                              template="plotly_white")
+                              labels={'value': 'Value', 'variable': 'Indicator'}, template="plotly_white")
                 fig.update_layout(legend_title_text='Indicator')
                 st.plotly_chart(fig)
             else:
@@ -910,8 +947,7 @@ def display_dashboard(symbol=None, data=None, recommendations=None, NSE_STOCKS=N
             mc_df = pd.DataFrame(mc_results).T
             mc_df.columns = [f"Sim {i+1}" for i in range(len(mc_results))]
             fig = px.line(mc_df, title="Monte Carlo Price Simulations (30 Days)",
-                          labels={'value': 'Price (₹)', 'variable': 'Simulation'},
-                          template="plotly_white")
+                          labels={'value': 'Price (₹)', 'variable': 'Simulation'}, template="plotly_white")
             fig.update_layout(legend_title_text='Simulation')
             st.plotly_chart(fig)
         
@@ -920,8 +956,7 @@ def display_dashboard(symbol=None, data=None, recommendations=None, NSE_STOCKS=N
             valid_new_cols = [col for col in new_cols if col in data.columns and pd.api.types.is_numeric_dtype(data[col])]
             if valid_new_cols:
                 fig = px.line(data, y=valid_new_cols, title="New Indicators (Ichimoku & CMF)",
-                              labels={'value': 'Value', 'variable': 'Indicator'},
-                              template="plotly_white")
+                              labels={'value': 'Value', 'variable': 'Indicator'}, template="plotly_white")
                 fig.update_layout(legend_title_text='Indicator')
                 st.plotly_chart(fig)
             else:
