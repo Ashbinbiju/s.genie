@@ -48,7 +48,6 @@ TOOLTIPS = {
 def tooltip(label, explanation):
     return f"{label} 📌 ({explanation})"
 
-# Helper functions (retry, check_internet_connection unchanged)
 def retry(max_retries=5, delay=2, backoff_factor=1.5, jitter=0.5):
     def decorator(func):
         def wrapper(*args, **kwargs):
@@ -340,22 +339,24 @@ def prepare_ml_data(data):
     if data.empty or len(data) < 2:
         return None, None
     
-    features = ['RSI', 'MACD', 'MACD_signal', 'ATR', 'ADX', 'SlowK', 'SlowD', 'OBV', 'VWAP', 'CMF',
-                'Keltner_Upper', 'Keltner_Lower', 'Force_Index', 'Z_Score',
-                'Lag1_Return', 'Lag2_Return', 'Volatility_5', 'Volatility_20', 'Day_of_Week', 'Month']
-    X = data[features].dropna()
+    # Base features from indicator calculations
+    base_features = ['RSI', 'MACD', 'MACD_signal', 'ATR', 'ADX', 'SlowK', 'SlowD', 'OBV', 'VWAP', 'CMF',
+                     'Keltner_Upper', 'Keltner_Lower', 'Force_Index', 'Z_Score']
     
-    # Enhanced features
+    # Compute additional features
     returns = data['Close'].pct_change()
-    X['Lag1_Return'] = returns.shift(1)
-    X['Lag2_Return'] = returns.shift(2)
-    X['Volatility_5'] = returns.rolling(window=5).std()
-    X['Volatility_20'] = returns.rolling(window=20).std()
+    data['Lag1_Return'] = returns.shift(1)
+    data['Lag2_Return'] = returns.shift(2)
+    data['Volatility_5'] = returns.rolling(window=5).std()
+    data['Volatility_20'] = returns.rolling(window=20).std()
+    data['Day_of_Week'] = data.index.dayofweek  # 0=Monday, 6=Sunday
+    data['Month'] = data.index.month            # 1=Jan, 12=Dec
     
-    # Time-based features
-    X['Day_of_Week'] = data.index.dayofweek  # 0=Monday, 6=Sunday
-    X['Month'] = data.index.month            # 1=Jan, 12=Dec
+    # Combine all features
+    all_features = base_features + ['Lag1_Return', 'Lag2_Return', 'Volatility_5', 'Volatility_20', 'Day_of_Week', 'Month']
+    X = data[all_features].dropna()
     
+    # Target variable
     price_changes = returns.shift(-1).dropna()
     y = (price_changes > 0).astype(int)
     
