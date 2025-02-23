@@ -16,6 +16,9 @@ import numpy as np
 import itertools
 from arch import arch_model
 from diskcache import Cache  # Advanced caching
+from sklearn.ensemble import RandomForestClassifier
+from sklearn.model_selection import train_test_split
+from sklearn.preprocessing import StandardScaler
 
 # Setup diskcache
 cache = Cache("stock_cache", expire=86400)  # Cache directory, expires after 24 hours
@@ -318,8 +321,71 @@ def check_data_sufficiency(data):
     if not data.empty and data.index.to_series().diff().max() > pd.Timedelta(days=2):
         st.warning("⚠️ Irregular data intervals detected; results may be unreliable.")
 
+def prepare_ml_data(data):
+    """Prepare data for machine learning by extracting features and labels."""
+    if data.empty or len(data) < 2:
+        return None, None
+    
+    # Define features (technical indicators)
+    features = ['RSI', 'MACD', 'MACD_signal', 'ATR', 'ADX', 'SlowK', 'SlowD', 'OBV', 'VWAP', 'CMF']
+    X = data[features].dropna()
+    
+    # Create labels based on price movement (1 for increase, 0 for decrease/stable)
+    price_changes = data['Close'].pct_change().shift(-1).dropna()
+    y = (price_changes > 0).astype(int)  # 1 if price increases, 0 if decreases or stays stable
+    
+    # Align features and labels
+    common_index = X.index.intersection(y.index)
+    X = X.loc[common_index]
+    y = y.loc[common_index]
+    
+    return X, y
+
+def train_ml_model(X, y):
+    """Train a Random Forest Classifier for stock price prediction."""
+    if X is None or y is None or X.empty or y.empty:
+        st.warning("⚠️ Insufficient data for machine learning training.")
+        return None
+    
+    # Split data into training and testing sets
+    X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
+    
+    # Scale features
+    scaler = StandardScaler()
+    X_train_scaled = scaler.fit_transform(X_train)
+    X_test_scaled = scaler.transform(X_test)
+    
+    # Train Random Forest Classifier
+    model = RandomForestClassifier(n_estimators=100, random_state=42)
+    model.fit(X_train_scaled, y_train)
+    
+    # Evaluate model (optional, for debugging)
+    accuracy = model.score(X_test_scaled, y_test)
+    st.info(f"Machine Learning Model Accuracy: {accuracy:.2f}")
+    
+    return model, scaler
+
+def predict_stock_trend(data, model, scaler):
+    """Predict stock trend using the trained machine learning model."""
+    if data.empty or model is None or scaler is None:
+        return "Hold"
+    
+    # Prepare features for prediction
+    features = ['RSI', 'MACD', 'MACD_signal', 'ATR', 'ADX', 'SlowK', 'SlowD', 'OBV', 'VWAP', 'CMF']
+    X = data[features].dropna().tail(1)
+    
+    if X.empty:
+        return "Hold"
+    
+    # Scale features
+    X_scaled = scaler.transform(X)
+    
+    # Predict (1 = Buy/Increase, 0 = Sell/Decrease)
+    prediction = model.predict(X_scaled)[0]
+    return "Buy" if prediction == 1 else "Sell"
+
 def analyze_stock(data):
-    """Analyze stock data with technical indicators."""
+    """Analyze stock data with technical indicators and prepare for machine learning."""
     if data.empty:
         st.warning("⚠️ No data available to analyze.")
         return data
@@ -482,6 +548,14 @@ def analyze_stock(data):
         data['Donchian_Lower'] = None
         data['Donchian_Middle'] = None
     
+    # Prepare data for machine learning and train the model
+    X, y = prepare_ml_data(data)
+    if X is not None and y is not None and not X.empty and not y.empty:
+        model, scaler = train_ml_model(X, y)
+        data['ML_Prediction'] = predict_stock_trend(data, model, scaler)
+    else:
+        data['ML_Prediction'] = "Hold"
+    
     return data
 
 def calculate_buy_at(data):
@@ -538,10 +612,11 @@ def evaluate_indicator(data, indicator, condition):
     return False
 
 def generate_recommendations(data, symbol=None):
-    """Generate trading recommendations based on indicators."""
+    """Generate trading recommendations based on indicators and machine learning."""
     recommendations = {
         "Intraday": "Hold", "Swing": "Hold", "Short-Term": "Hold", "Long-Term": "Hold",
         "Mean_Reversion": "Hold", "Breakout": "Hold", "Ichimoku_Trend": "Hold",
+        "ML_Prediction": "Hold",  # New field for machine learning prediction
         "Current Price": None, "Buy At": None, "Stop Loss": None, "Target": None, "Score": 0
     }
     if data.empty or 'Close' not in data.columns or data['Close'].iloc[-1] is None:
@@ -634,6 +709,9 @@ def generate_recommendations(data, symbol=None):
         elif sell_score >= 4:
             recommendations["Intraday"] = "Strong Sell"
         
+        # Add machine learning prediction to recommendations
+        recommendations["ML_Prediction"] = data['ML_Prediction'].iloc[-1] if 'ML_Prediction' in data.columns else "Hold"
+        
         recommendations["Buy At"] = calculate_buy_at(data)
         recommendations["Stop Loss"] = calculate_stop_loss(data)
         recommendations["Target"] = calculate_target(data)
@@ -683,6 +761,7 @@ def analyze_stock_parallel(symbol):
             "Mean_Reversion": recommendations["Mean_Reversion"],
             "Breakout": recommendations["Breakout"],
             "Ichimoku_Trend": recommendations["Ichimoku_Trend"],
+            "ML_Prediction": recommendations["ML_Prediction"],  # New field for ML prediction
             "Score": recommendations.get("Score", 0),
         }
     return None
@@ -825,7 +904,7 @@ def colored_recommendation(recommendation):
     return recommendation
 
 def display_dashboard(symbol=None, data=None, recommendations=None, NSE_STOCKS=None):
-    """Display the stock analysis dashboard."""
+    """Display the stock analysis dashboard with machine learning predictions."""
     st.title("📊 StockGenie Pro - NSE Analysis")
     st.subheader(f"📅 Analysis for {datetime.now().strftime('%d %b %Y')}")
     
@@ -873,7 +952,8 @@ def display_dashboard(symbol=None, data=None, recommendations=None, NSE_STOCKS=N
                     Long-Term: {colored_recommendation(row['Long-Term'])}  
                     Mean Reversion: {colored_recommendation(row['Mean_Reversion'])}  
                     Breakout: {colored_recommendation(row['Breakout'])}  
-                    Ichimoku Trend: {colored_recommendation(row['Ichimoku_Trend'])}
+                    Ichimoku Trend: {colored_recommendation(row['Ichimoku_Trend'])}  
+                    ML Prediction: {colored_recommendation(row['ML_Prediction'])}  <!-- New ML prediction display -->
                     """, unsafe_allow_html=True)
         elif not st.session_state.cancel_operation:
             st.warning("⚠️ No top picks available due to data issues.")
@@ -915,6 +995,7 @@ def display_dashboard(symbol=None, data=None, recommendations=None, NSE_STOCKS=N
                     Buy At: ₹{buy_at} | Stop Loss: ₹{stop_loss}  
                     Target: ₹{target}  
                     Intraday: {colored_recommendation(row['Intraday'])}  
+                    ML Prediction: {colored_recommendation(row['ML_Prediction'])}  <!-- New ML prediction display -->
                     """, unsafe_allow_html=True)
         elif not st.session_state.cancel_operation:
             st.warning("⚠️ No intraday picks available due to data issues.")
@@ -945,7 +1026,7 @@ def display_dashboard(symbol=None, data=None, recommendations=None, NSE_STOCKS=N
         
         st.subheader("📈 Additional Strategies")
         cols = st.columns(3)
-        new_strategies = ["Mean_Reversion", "Breakout", "Ichimoku_Trend"]
+        new_strategies = ["Mean_Reversion", "Breakout", "Ichimoku_Trend", "ML_Prediction"]
         for col, strategy in zip(cols, new_strategies):
             with col:
                 st.markdown(f"**{strategy.replace('_', ' ')}**", unsafe_allow_html=True)
@@ -995,13 +1076,17 @@ def display_dashboard(symbol=None, data=None, recommendations=None, NSE_STOCKS=N
             st.plotly_chart(fig)
         
         with tab5:
-            new_cols = ['Ichimoku_Span_A', 'Ichimoku_Span_B', 'Ichimoku_Tenkan', 'Ichimoku_Kijun', 'CMF']
-            valid_new_cols = [col for col in new_cols if col in data.columns and pd.api.types.is_numeric_dtype(data[col])]
+            new_cols = ['Ichimoku_Span_A', 'Ichimoku_Span_B', 'Ichimoku_Tenkan', 'Ichimoku_Kijun', 'CMF', 'ML_Prediction']
+            valid_new_cols = [col for col in new_cols if col in data.columns and pd.api.types.is_numeric_dtype(data[col]) or col == 'ML_Prediction']
             if valid_new_cols:
-                fig = px.line(data, y=valid_new_cols, title="New Indicators (Ichimoku & CMF)",
-                              labels={'value': 'Value', 'variable': 'Indicator'}, template="plotly_white")
-                fig.update_layout(legend_title_text='Indicator')
-                st.plotly_chart(fig)
+                if 'ML_Prediction' in valid_new_cols:
+                    valid_new_cols.remove('ML_Prediction')  # Remove non-numeric ML prediction for plotting
+                if valid_new_cols:
+                    fig = px.line(data, y=valid_new_cols, title="New Indicators (Ichimoku & CMF)",
+                                  labels={'value': 'Value', 'variable': 'Indicator'}, template="plotly_white")
+                    fig.update_layout(legend_title_text='Indicator')
+                    st.plotly_chart(fig)
+                st.write(f"ML Prediction: {data['ML_Prediction'].iloc[-1]}")
             else:
                 st.warning("⚠️ No valid new indicators available for plotting.")
         
