@@ -5,7 +5,6 @@ import streamlit as st
 from datetime import datetime, timedelta
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from functools import lru_cache
-from tqdm import tqdm
 import plotly.express as px
 import time
 import requests
@@ -73,6 +72,7 @@ def fetch_nse_stock_list():
         stock_list = [f"{symbol}.NS" for symbol in nse_data['SYMBOL']]
         return stock_list
     except Exception:
+        st.warning("⚠️ Failed to fetch NSE stock list; using fallback list.")
         return [
             "20MICRONS.NS", "21STCENMGM.NS", "360ONE.NS", "3IINFOLTD.NS", "3MINDIA.NS", "5PAISA.NS", "63MOONS.NS",
             "A2ZINFRA.NS", "AAATECH.NS", "AADHARHFC.NS", "AAKASH.NS", "AAREYDRUGS.NS", "AARON.NS", "AARTECH.NS",
@@ -89,9 +89,12 @@ def fetch_stock_data_cached(symbol, period="5y", interval="1d"):
         stock = yf.Ticker(symbol)
         data = stock.history(period=period, interval=interval)
         if data.empty:
-            raise ValueError(f"No data found for {symbol}")
+            st.warning(f"⚠️ No data returned for {symbol} from Yahoo Finance.")
+            return pd.DataFrame()
+        st.info(f"✅ Fetched {len(data)} days of data for {symbol}")
         return data
-    except Exception:
+    except Exception as e:
+        st.warning(f"⚠️ Error fetching data for {symbol}: {str(e)}")
         return pd.DataFrame()
 
 def calculate_advance_decline_ratio(stock_list):
@@ -99,7 +102,7 @@ def calculate_advance_decline_ratio(stock_list):
     declines = 0
     for symbol in stock_list:
         data = fetch_stock_data_cached(symbol)
-        if not data.empty:
+        if not data.empty and len(data) > 1:
             if data['Close'].iloc[-1] > data['Close'].iloc[-2]:
                 advances += 1
             else:
@@ -281,7 +284,6 @@ def analyze_stock(data):
         st.warning(f"⚠️ Missing required columns: {', '.join(missing_cols)}")
         return data
     
-    # Precompute window sizes
     windows = {
         'rsi': min(optimize_rsi_window(data), max(5, days - 1)),
         'macd_slow': min(26, max(5, days - 1)),
@@ -302,7 +304,6 @@ def analyze_stock(data):
         'donchian': min(20, max(5, days - 1)),
     }
 
-    # Compute indicators conditionally
     if days >= windows['rsi'] + 1:
         try:
             data['RSI'] = ta.momentum.RSIIndicator(data['Close'], window=windows['rsi']).rsi()
@@ -328,7 +329,7 @@ def analyze_stock(data):
             sma_20 = ta.trend.SMAIndicator(data['Close'], window=windows['sma_20']).sma_indicator()
             data['EMA_20'] = ta.trend.EMAIndicator(data['Close'], window=windows['sma_20']).ema_indicator()
             bollinger = ta.volatility.BollingerBands(data['Close'], window=windows['bollinger'], window_dev=2)
-            data['Middle_Band'] = sma_20  # Reuse SMA
+            data['Middle_Band'] = sma_20
             data['Upper_Band'] = bollinger.bollinger_hband()
             data['Lower_Band'] = bollinger.bollinger_lband()
         except Exception as e:
@@ -455,7 +456,6 @@ def analyze_stock(data):
 
 def calculate_buy_at(data):
     if data.empty or 'RSI' not in data.columns or pd.isna(data['RSI'].iloc[-1]):
-        st.warning("⚠️ Cannot calculate Buy At due to missing or invalid RSI data.")
         return None
     last_close = data['Close'].iloc[-1]
     last_rsi = data['RSI'].iloc[-1]
@@ -466,7 +466,6 @@ def calculate_buy_at(data):
 
 def calculate_stop_loss(data, atr_multiplier=2.5):
     if data.empty or 'ATR' not in data.columns or pd.isna(data['ATR'].iloc[-1]):
-        st.warning("⚠️ Cannot calculate Stop Loss due to missing or invalid ATR data.")
         return None
     last_close = data['Close'].iloc[-1]
     last_atr = data['ATR'].iloc[-1]
@@ -482,7 +481,6 @@ def calculate_stop_loss(data, atr_multiplier=2.5):
 def calculate_target(data, risk_reward_ratio=3):
     stop_loss = calculate_stop_loss(data)
     if stop_loss is None:
-        st.warning("⚠️ Cannot calculate Target due to missing Stop Loss data.")
         return None
     last_close = data['Close'].iloc[-1]
     if pd.notnull(last_close) and pd.notnull(stop_loss):
@@ -515,7 +513,6 @@ def generate_recommendations(data, symbol=None):
         "Current Price": None, "Buy At": None, "Stop Loss": None, "Target": None, "Score": 0
     }
     if data.empty or 'Close' not in data.columns or pd.isna(data['Close'].iloc[-1]):
-        st.warning("⚠️ No valid data available for recommendations.")
         return recommendations
     
     try:
@@ -524,81 +521,68 @@ def generate_recommendations(data, symbol=None):
         sell_score = 0
         last_close = data['Close'].iloc[-1]
 
-        # Basic trend
         if pd.notnull(last_close) and pd.notnull(data['Close'].iloc[0]):
             if last_close > data['Close'].iloc[0]:
                 buy_score += 1
             else:
                 sell_score += 1
 
-        # RSI
         if 'RSI' in data.columns and pd.notnull(data['RSI'].iloc[-1]):
             if data['RSI'].iloc[-1] < 30:
                 buy_score += 2
             elif data['RSI'].iloc[-1] > 70:
                 sell_score += 2
 
-        # MACD
         if 'MACD' in data.columns and 'MACD_signal' in data.columns and pd.notnull(data['MACD'].iloc[-1]) and pd.notnull(data['MACD_signal'].iloc[-1]):
             if data['MACD'].iloc[-1] > data['MACD_signal'].iloc[-1]:
                 buy_score += 1
             elif data['MACD'].iloc[-1] < data['MACD_signal'].iloc[-1]:
                 sell_score += 1
 
-        # Bollinger Bands
         if 'Lower_Band' in data.columns and 'Upper_Band' in data.columns and pd.notnull(last_close):
             if pd.notnull(data['Lower_Band'].iloc[-1]) and last_close < data['Lower_Band'].iloc[-1]:
                 buy_score += 1
             elif pd.notnull(data['Upper_Band'].iloc[-1]) and last_close > data['Upper_Band'].iloc[-1]:
                 sell_score += 1
 
-        # VWAP
         if 'VWAP' in data.columns and pd.notnull(data['VWAP'].iloc[-1]) and pd.notnull(last_close):
             if last_close > data['VWAP'].iloc[-1]:
                 buy_score += 1
             elif last_close < data['VWAP'].iloc[-1]:
                 sell_score += 1
 
-        # Volume Spike
         if 'Volume_Spike' in data.columns and pd.notnull(data['Volume_Spike'].iloc[-1]):
             if data['Volume_Spike'].iloc[-1]:
                 buy_score += 1
 
-        # Divergence
         if 'Divergence' in data.columns and pd.notnull(data['Divergence'].iloc[-1]):
             if data['Divergence'].iloc[-1] == "Bullish Divergence":
                 buy_score += 1
             elif data['Divergence'].iloc[-1] == "Bearish Divergence":
                 sell_score += 1
 
-        # Enhanced Ichimoku logic
         if all(col in data.columns for col in ['Ichimoku_Tenkan', 'Ichimoku_Kijun', 'Ichimoku_Span_A', 'Ichimoku_Span_B', 'Ichimoku_Chikou']):
             if all(pd.notnull(data[col].iloc[-1]) for col in ['Ichimoku_Tenkan', 'Ichimoku_Kijun', 'Ichimoku_Span_A', 'Ichimoku_Span_B', 'Ichimoku_Chikou']):
-                # Strong Buy: Price above cloud, Tenkan > Kijun, Chikou above price
                 if (last_close > max(data['Ichimoku_Span_A'].iloc[-1], data['Ichimoku_Span_B'].iloc[-1]) and
                     data['Ichimoku_Tenkan'].iloc[-1] > data['Ichimoku_Kijun'].iloc[-1] and
                     data['Ichimoku_Chikou'].iloc[-1] > last_close):
                     buy_score += 2
                     recommendations["Ichimoku_Trend"] = "Strong Buy"
-                # Strong Sell: Price below cloud, Tenkan < Kijun, Chikou below price
                 elif (last_close < min(data['Ichimoku_Span_A'].iloc[-1], data['Ichimoku_Span_B'].iloc[-1]) and
                       data['Ichimoku_Tenkan'].iloc[-1] < data['Ichimoku_Kijun'].iloc[-1] and
                       data['Ichimoku_Chikou'].iloc[-1] < last_close):
                     sell_score += 2
                     recommendations["Ichimoku_Trend"] = "Strong Sell"
-                # Cloud thickness as trend strength
                 cloud_thickness = data['Ichimoku_Span_A'].iloc[-1] - data['Ichimoku_Span_B'].iloc[-1]
                 if cloud_thickness > 0 and last_close > data['Ichimoku_Span_A'].iloc[-1]:
                     buy_score += 0.5
 
-        # CMF
         if 'CMF' in data.columns and pd.notnull(data['CMF'].iloc[-1]):
             if data['CMF'].iloc[-1] > 0.2:
                 buy_score += 1
             elif data['CMF'].iloc[-1] < -0.2:
                 sell_score += 1
 
-        # Donchian Breakout
         if 'Donchian_Upper' in data.columns and 'Donchian_Lower' in data.columns and pd.notnull(last_close):
             if pd.notnull(data['Donchian_Upper'].iloc[-1]) and last_close > data['Donchian_Upper'].iloc[-1]:
                 buy_score += 1
@@ -607,7 +591,6 @@ def generate_recommendations(data, symbol=None):
                 sell_score += 1
                 recommendations["Breakout"] = "Sell"
 
-        # Mean Reversion
         if 'RSI' in data.columns and 'Lower_Band' in data.columns and pd.notnull(last_close):
             if pd.notnull(data['RSI'].iloc[-1]) and pd.notnull(data['Lower_Band'].iloc[-1]):
                 if data['RSI'].iloc[-1] < 30 and last_close <= data['Lower_Band'].iloc[-1]:
@@ -617,14 +600,12 @@ def generate_recommendations(data, symbol=None):
                     sell_score += 2
                     recommendations["Mean_Reversion"] = "Sell"
 
-        # Wave Pattern
         if 'Wave_Pattern' in data.columns and pd.notnull(data['Wave_Pattern'].iloc[-1]):
             if data['Wave_Pattern'].iloc[-1] == "Potential Uptrend (Wave 5?)":
                 buy_score += 1
             elif data['Wave_Pattern'].iloc[-1] == "Potential Downtrend (Wave C?)":
                 sell_score += 1
 
-        # Fundamentals
         if symbol:
             fundamentals = fetch_fundamentals(symbol)
             if pd.notnull(fundamentals['P/E']) and fundamentals['P/E'] < 15 and fundamentals['EPS'] > 0:
@@ -635,7 +616,6 @@ def generate_recommendations(data, symbol=None):
                 buy_score += 0.5
                 recommendations["Long-Term"] = "Buy" if buy_score > sell_score else "Hold"
 
-        # Assign recommendations
         if buy_score >= 4:
             recommendations["Intraday"] = "Strong Buy"
             recommendations["Swing"] = "Buy"
@@ -666,10 +646,10 @@ def analyze_batch(stock_batch):
         valid_futures = {}
         for symbol in stock_batch:
             data = fetch_stock_data_cached(symbol)
-            if not data.empty and len(data) >= 20:  # Minimum threshold
+            if not data.empty:  # Relaxed the 20-day threshold for debugging
                 valid_futures[executor.submit(analyze_stock_parallel, symbol)] = symbol
             else:
-                errors.append(f"⚠️ Skipping {symbol}: insufficient data")
+                errors.append(f"⚠️ Skipping {symbol}: no data retrieved")
         
         for future in as_completed(valid_futures):
             symbol = valid_futures[future]
