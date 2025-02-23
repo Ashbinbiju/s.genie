@@ -17,7 +17,8 @@ import itertools
 from arch import arch_model
 from diskcache import Cache
 from sklearn.ensemble import RandomForestClassifier
-from sklearn.model_selection import train_test_split, cross_val_score
+from sklearn.model_selection import train_test_split, cross_val_score, TimeSeriesSplit
+from sklearn.feature_selection import RFE
 from sklearn.preprocessing import StandardScaler
 
 # Setup diskcache
@@ -28,7 +29,7 @@ NEWSAPI_KEY = "ed58659895e84dfb8162a8bb47d8525e"
 GNEWS_KEY = "e4f5f1442641400694645433a8f98b94"
 ALPHA_VANTAGE_KEY = "TCAUKYUCIDZ6PI57"
 
-# Tooltip explanations
+# Tooltip explanations (unchanged)
 TOOLTIPS = {
     "RSI": "Relative Strength Index (30=Oversold, 70=Overbought)",
     "ATR": "Average True Range - Measures market volatility",
@@ -47,6 +48,7 @@ TOOLTIPS = {
 def tooltip(label, explanation):
     return f"{label} 📌 ({explanation})"
 
+# Helper functions (retry, check_internet_connection unchanged)
 def retry(max_retries=5, delay=2, backoff_factor=1.5, jitter=0.5):
     def decorator(func):
         def wrapper(*args, **kwargs):
@@ -111,7 +113,6 @@ def validate_stock_data(data, symbol):
         st.warning(f"⚠️ Data for {symbol} contains duplicate dates.")
         return False
     
-    # Outlier detection using IQR
     for col in ['Open', 'High', 'Low', 'Close']:
         Q1 = data[col].quantile(0.25)
         Q3 = data[col].quantile(0.75)
@@ -144,7 +145,7 @@ def fetch_stock_data_cached(symbol, period="5y", interval="1d"):
     try:
         stock = yf.Ticker(symbol)
         data = stock.history(period=period, interval=interval)
-        time.sleep(0.5)  # Throttle API calls
+        time.sleep(0.5)
         if data.empty:
             raise ValueError(f"No data found for {symbol}")
         if validate_stock_data(data, symbol):
@@ -193,7 +194,6 @@ def monte_carlo_simulation(data, simulations=1000, days=30, distribution="normal
             simulation_results.append(price_series)
         return simulation_results
     
-    # Dynamic GARCH parameter selection
     best_p, best_q = 1, 1
     best_aic = float('inf')
     for p, q in [(1, 1), (1, 2), (2, 1)]:
@@ -340,7 +340,9 @@ def prepare_ml_data(data):
     if data.empty or len(data) < 2:
         return None, None
     
-    features = ['RSI', 'MACD', 'MACD_signal', 'ATR', 'ADX', 'SlowK', 'SlowD', 'OBV', 'VWAP', 'CMF']
+    features = ['RSI', 'MACD', 'MACD_signal', 'ATR', 'ADX', 'SlowK', 'SlowD', 'OBV', 'VWAP', 'CMF',
+                'Keltner_Upper', 'Keltner_Lower', 'Force_Index', 'Z_Score',
+                'Lag1_Return', 'Lag2_Return', 'Volatility_5', 'Volatility_20', 'Day_of_Week', 'Month']
     X = data[features].dropna()
     
     # Enhanced features
@@ -349,6 +351,10 @@ def prepare_ml_data(data):
     X['Lag2_Return'] = returns.shift(2)
     X['Volatility_5'] = returns.rolling(window=5).std()
     X['Volatility_20'] = returns.rolling(window=20).std()
+    
+    # Time-based features
+    X['Day_of_Week'] = data.index.dayofweek  # 0=Monday, 6=Sunday
+    X['Month'] = data.index.month            # 1=Jan, 12=Dec
     
     price_changes = returns.shift(-1).dropna()
     y = (price_changes > 0).astype(int)
@@ -368,10 +374,16 @@ def train_ml_model(X, y):
     X_scaled = scaler.fit_transform(X)
     
     model = RandomForestClassifier(n_estimators=100, random_state=42)
-    cv_scores = cross_val_score(model, X_scaled, y, cv=5, scoring='accuracy')
-    model.fit(X_scaled, y)
+    rfe = RFE(estimator=model, n_features_to_select=10)
+    X_rfe = rfe.fit_transform(X_scaled, y)
+    selected_features = X.columns[rfe.support_].tolist()
+    st.info(f"Selected Features by RFE: {', '.join(selected_features)}")
     
-    st.info(f"Cross-Validation Accuracy: {cv_scores.mean():.2f} (±{cv_scores.std():.2f})")
+    tscv = TimeSeriesSplit(n_splits=5)
+    cv_scores = cross_val_score(model, X_rfe, y, cv=tscv, scoring='accuracy')
+    model.fit(X_rfe, y)
+    
+    st.info(f"Time-Series CV Accuracy with RFE: {cv_scores.mean():.2f} (±{cv_scores.std():.2f})")
     return model, scaler
 
 def predict_stock_trend(data, model, scaler):
@@ -379,14 +391,16 @@ def predict_stock_trend(data, model, scaler):
         return "Hold"
     
     features = ['RSI', 'MACD', 'MACD_signal', 'ATR', 'ADX', 'SlowK', 'SlowD', 'OBV', 'VWAP', 'CMF',
-                'Lag1_Return', 'Lag2_Return', 'Volatility_5', 'Volatility_20']
+                'Keltner_Upper', 'Keltner_Lower', 'Force_Index', 'Z_Score',
+                'Lag1_Return', 'Lag2_Return', 'Volatility_5', 'Volatility_20', 'Day_of_Week', 'Month']
     X = data[features].dropna().tail(1)
     
     if X.empty:
         return "Hold"
     
     X_scaled = scaler.transform(X)
-    prediction = model.predict(X_scaled)[0]
+    X_rfe = X_scaled[:, :10]  # Match RFE selection (top 10 features)
+    prediction = model.predict(X_rfe)[0]
     return "Buy" if prediction == 1 else "Sell"
 
 def calculate_momentum_indicators(data):
@@ -447,6 +461,17 @@ def calculate_volatility_indicators(data):
         data['Donchian_Upper'] = None
         data['Donchian_Lower'] = None
         data['Donchian_Middle'] = None
+    
+    try:
+        keltner = ta.volatility.KeltnerChannel(data['High'], data['Low'], data['Close'], window=20, window_atr=10)
+        data['Keltner_Upper'] = keltner.keltner_channel_hband()
+        data['Keltner_Middle'] = keltner.keltner_channel_mband()
+        data['Keltner_Lower'] = keltner.keltner_channel_lband()
+    except Exception as e:
+        st.error(f"❌ Failed to compute Keltner Channels: {str(e)}")
+        data['Keltner_Upper'] = None
+        data['Keltner_Middle'] = None
+        data['Keltner_Lower'] = None
     
     return data
 
@@ -522,6 +547,12 @@ def calculate_volume_indicators(data):
         st.error(f"❌ Failed to compute CMF: {str(e)}")
         data['CMF'] = None
     
+    try:
+        data['Force_Index'] = ta.volume.ForceIndexIndicator(data['Close'], data['Volume'], window=13).force_index()
+    except Exception as e:
+        st.error(f"❌ Failed to compute Force Index: {str(e)}")
+        data['Force_Index'] = None
+    
     return data
 
 def analyze_stock(data):
@@ -535,6 +566,11 @@ def analyze_stock(data):
     if missing_cols:
         st.error(f"❌ Missing required columns: {', '.join(missing_cols)}")
         return data
+    
+    data[required_columns] = data[required_columns].interpolate(method='linear', limit_direction='both')
+    if data[required_columns].isnull().any().any():
+        st.warning("⚠️ Some NaNs remain after interpolation; filling with forward-fill.")
+        data[required_columns] = data[required_columns].fillna(method='ffill').fillna(method='bfill')
     
     data = calculate_momentum_indicators(data)
     data = calculate_volatility_indicators(data)
@@ -561,6 +597,12 @@ def analyze_stock(data):
     except Exception as e:
         st.error(f"❌ Failed to compute Divergence: {str(e)}")
         data['Divergence'] = "No Divergence"
+    
+    try:
+        data['Z_Score'] = (data['Close'] - data['Close'].rolling(window=20).mean()) / data['Close'].rolling(window=20).std()
+    except Exception as e:
+        st.error(f"❌ Failed to compute Z-Score: {str(e)}")
+        data['Z_Score'] = None
     
     X, y = prepare_ml_data(data)
     if X is not None and y is not None and not X.empty and not y.empty:
@@ -608,11 +650,13 @@ def fetch_fundamentals(symbol):
         return {
             'P/E': info.get('trailingPE', float('inf')),
             'EPS': info.get('trailingEps', 0),
-            'RevenueGrowth': info.get('revenueGrowth', 0)
+            'RevenueGrowth': info.get('revenueGrowth', 0),
+            'DebtToEquity': info.get('debtToEquity', None),
+            'DividendYield': info.get('dividendYield', 0)
         }
     except Exception as e:
         st.error(f"❌ Failed to fetch fundamentals for {symbol}: {str(e)}")
-        return {'P/E': float('inf'), 'EPS': 0, 'RevenueGrowth': 0}
+        return {'P/E': float('inf'), 'EPS': 0, 'RevenueGrowth': 0, 'DebtToEquity': None, 'DividendYield': 0}
 
 def evaluate_indicator(data, indicator, condition):
     if indicator in data.columns and data[indicator].iloc[-1] is not None:
@@ -709,6 +753,12 @@ def generate_recommendations(data, symbol=None):
             if fundamentals['P/E'] < 15 and fundamentals['EPS'] > 0:
                 buy_score += 1
             if fundamentals['RevenueGrowth'] > 0.1:
+                buy_score += 0.5
+            if fundamentals['DebtToEquity'] is not None and fundamentals['DebtToEquity'] < 1.0:
+                buy_score += 0.5
+            elif fundamentals['DebtToEquity'] is not None and fundamentals['DebtToEquity'] > 2.0:
+                sell_score += 0.5
+            if fundamentals['DividendYield'] > 0.02:
                 buy_score += 0.5
         
         if buy_score >= 4:
@@ -817,7 +867,7 @@ def analyze_all_stocks(stock_list, batch_size=50, price_range=None, progress_cal
         if batch_elapsed > 30 and dynamic_batch_size > 10:
             dynamic_batch_size = max(10, dynamic_batch_size // 2)
         
-        time.sleep(1)  # Throttle between batches
+        time.sleep(1)
         if progress_callback:
             progress_callback(processed_items / total_items, f"Completed batch {i//batch_size + 1}/{(total_items + batch_size - 1)//batch_size}", start_time, processed_items)
     
@@ -871,7 +921,7 @@ def analyze_intraday_stocks(stock_list, batch_size=50, price_range=None, progres
         if batch_elapsed > 30 and dynamic_batch_size > 10:
             dynamic_batch_size = max(10, dynamic_batch_size // 2)
         
-        time.sleep(1)  # Throttle between batches
+        time.sleep(1)
         if progress_callback:
             progress_callback(processed_items / total_items, f"Completed batch {i//batch_size + 1}/{(total_items + batch_size - 1)//batch_size}", start_time, processed_items)
     
@@ -1053,7 +1103,7 @@ def display_dashboard(symbol=None, data=None, recommendations=None, NSE_STOCKS=N
                 st.warning("⚠️ No valid momentum indicators available for plotting.")
         
         with tab3:
-            volatility_cols = ['ATR', 'Upper_Band', 'Lower_Band', 'Donchian_Upper', 'Donchian_Lower']
+            volatility_cols = ['ATR', 'Upper_Band', 'Lower_Band', 'Donchian_Upper', 'Donchian_Lower', 'Keltner_Upper', 'Keltner_Lower']
             valid_volatility_cols = [col for col in volatility_cols if col in data.columns and pd.api.types.is_numeric_dtype(data[col])]
             if valid_volatility_cols:
                 fig = px.line(data, y=valid_volatility_cols, title="Volatility Analysis",
@@ -1074,19 +1124,14 @@ def display_dashboard(symbol=None, data=None, recommendations=None, NSE_STOCKS=N
             st.plotly_chart(fig)
         
         with tab5:
-            new_cols = ['Ichimoku_Span_A', 'Ichimoku_Span_B', 'Ichimoku_Tenkan', 'Ichimoku_Kijun', 'CMF', 'ML_Prediction']
-            valid_new_cols = [col for col in new_cols if col in data.columns and pd.api.types.is_numeric_dtype(data[col]) or col == 'ML_Prediction']
+            new_cols = ['Ichimoku_Span_A', 'Ichimoku_Span_B', 'Ichimoku_Tenkan', 'Ichimoku_Kijun', 'CMF', 'Force_Index', 'Z_Score']
+            valid_new_cols = [col for col in new_cols if col in data.columns and pd.api.types.is_numeric_dtype(data[col])]
             if valid_new_cols:
-                if 'ML_Prediction' in valid_new_cols:
-                    valid_new_cols.remove('ML_Prediction')
-                if valid_new_cols:
-                    fig = px.line(data, y=valid_new_cols, title="New Indicators (Ichimoku & CMF)",
-                                  labels={'value': 'Value', 'variable': 'Indicator'}, template="plotly_white")
-                    fig.update_layout(legend_title_text='Indicator')
-                    st.plotly_chart(fig)
-                st.write(f"ML Prediction: {data['ML_Prediction'].iloc[-1]}")
-            else:
-                st.warning("⚠️ No valid new indicators available for plotting.")
+                fig = px.line(data, y=valid_new_cols, title="New Indicators (Ichimoku, CMF, Force, Z-Score)",
+                              labels={'value': 'Value', 'variable': 'Indicator'}, template="plotly_white")
+                fig.update_layout(legend_title_text='Indicator')
+                st.plotly_chart(fig)
+            st.write(f"ML Prediction: {data['ML_Prediction'].iloc[-1]}")
         
         if st.button("Analyze News Sentiment"):
             news_sentiment = fetch_news_sentiment_vader(symbol.split('.')[0], NEWSAPI_KEY)
