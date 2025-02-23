@@ -76,7 +76,7 @@ def check_internet_connection():
 
 # Initialize SQLite database
 def init_db():
-    conn = sqlite3.connect('stock_data.db')
+    conn = sqlite3.connect('stock_data.db', check_same_thread=False)  # Allow multi-thread access
     c = conn.cursor()
     c.execute('''CREATE TABLE IF NOT EXISTS stock_data (
                     symbol TEXT, 
@@ -91,6 +91,9 @@ def init_db():
                  )''')
     conn.commit()
     return conn
+
+# Global SQLite connection
+DB_CONN = None
 
 @retry(max_retries=3, delay=1)
 def fetch_nse_stock_list():
@@ -146,24 +149,30 @@ def validate_stock_data(data, symbol):
 
 @retry(max_retries=3, delay=1)
 def fetch_stock_data_cached(symbol, period="5y", interval="1d"):
+    global DB_CONN
+    if DB_CONN is None:
+        DB_CONN = init_db()  # Ensure DB is initialized if not already
+    
     if ".NS" not in symbol:
         symbol += ".NS"
     
-    conn = init_db()
-    c = conn.cursor()
+    c = DB_CONN.cursor()
     
     # Check if data exists in SQLite
-    c.execute("SELECT * FROM stock_data WHERE symbol = ?", (symbol,))
-    rows = c.fetchall()
-    if rows:
-        data = pd.DataFrame(rows, columns=['symbol', 'date', 'open', 'high', 'low', 'close', 'volume', 'last_updated'])
-        data['date'] = pd.to_datetime(data['date'])
-        data.set_index('date', inplace=True)
-        if validate_stock_data(data.drop(columns=['symbol', 'last_updated']), symbol):
-            last_updated = pd.to_datetime(data['last_updated'].iloc[0])
-            if (datetime.now() - last_updated).days < 1:  # Cache valid for 1 day
-                conn.close()
-                return data.drop(columns=['symbol', 'last_updated'])
+    try:
+        c.execute("SELECT * FROM stock_data WHERE symbol = ?", (symbol,))
+        rows = c.fetchall()
+        if rows:
+            data = pd.DataFrame(rows, columns=['symbol', 'date', 'open', 'high', 'low', 'close', 'volume', 'last_updated'])
+            data['date'] = pd.to_datetime(data['date'])
+            data.set_index('date', inplace=True)
+            if validate_stock_data(data.drop(columns=['symbol', 'last_updated']), symbol):
+                last_updated = pd.to_datetime(data['last_updated'].iloc[0])
+                if (datetime.now() - last_updated).days < 1:  # Cache valid for 1 day
+                    return data.drop(columns=['symbol', 'last_updated'])
+    except sqlite3.OperationalError as e:
+        st.error(f"❌ SQLite error for {symbol}: {str(e)}")
+        # Table might not exist yet; proceed to fetch and create
     
     # Fetch from Yahoo Finance if not in cache or outdated
     try:
@@ -175,15 +184,12 @@ def fetch_stock_data_cached(symbol, period="5y", interval="1d"):
             data_reset = data.reset_index()
             data_reset['symbol'] = symbol
             data_reset['last_updated'] = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-            data_reset.to_sql('stock_data', conn, if_exists='replace', index=False)
-            conn.commit()
-            conn.close()
+            data_reset.to_sql('stock_data', DB_CONN, if_exists='replace', index=False)
+            DB_CONN.commit()
             return data
-        conn.close()
         return pd.DataFrame()
     except Exception as e:
         st.error(f"❌ Failed to fetch data for {symbol}: {str(e)}. Falling back to cache.")
-        conn.close()
         return pd.DataFrame()
 
 def calculate_advance_decline_ratio(stock_list):
@@ -1156,9 +1162,13 @@ def display_dashboard(symbol=None, data=None, recommendations=None, NSE_STOCKS=N
         st.warning("⚠️ No data available for the selected stock.")
 
 def main():
+    global DB_CONN
     if 'cancel_operation' not in st.session_state:
         st.session_state.cancel_operation = False
-
+    
+    # Initialize SQLite database at startup
+    DB_CONN = init_db()
+    
     st.sidebar.title("🔍 Stock Search")
     NSE_STOCKS = fetch_nse_stock_list()
     
@@ -1190,6 +1200,10 @@ def main():
             st.error("❌ Failed to load data for this symbol")
     else:
         display_dashboard(None, None, None, NSE_STOCKS)
+    
+    # Close the database connection when done
+    if DB_CONN is not None:
+        DB_CONN.close()
 
 if __name__ == "__main__":
     main()
