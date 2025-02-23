@@ -91,7 +91,6 @@ def fetch_stock_data_cached(symbol, period="5y", interval="1d"):
         if data.empty:
             st.warning(f"⚠️ No data returned for {symbol} from Yahoo Finance.")
             return pd.DataFrame()
-        st.info(f"✅ Fetched {len(data)} days of data for {symbol}")
         return data
     except Exception as e:
         st.warning(f"⚠️ Error fetching data for {symbol}: {str(e)}")
@@ -264,8 +263,8 @@ def detect_waves(data):
 def check_data_sufficiency(data):
     days = len(data)
     st.info(f"📅 Data available: {days} days")
-    if days < 20:
-        st.warning("⚠️ Less than 20 days; most indicators unavailable or unreliable.")
+    if days < 15:
+        st.warning("⚠️ Less than 15 days; most indicators unavailable or unreliable.")
     elif days < 50:
         st.warning("⚠️ Less than 50 days; some indicators (e.g., SMA_50, Ichimoku) may be limited.")
     elif days < 200:
@@ -600,7 +599,7 @@ def generate_recommendations(data, symbol=None):
                     sell_score += 2
                     recommendations["Mean_Reversion"] = "Sell"
 
-        if 'Wave_Pattern' in data.columns and pd.notnull(data['Wave_Pattern'].iloc[-1]):
+        if 'Wave_Pattern' in data.columns and pd.notnull(data['Wave_Pattern'].curry[-1]):
             if data['Wave_Pattern'].iloc[-1] == "Potential Uptrend (Wave 5?)":
                 buy_score += 1
             elif data['Wave_Pattern'].iloc[-1] == "Potential Downtrend (Wave C?)":
@@ -646,10 +645,10 @@ def analyze_batch(stock_batch):
         valid_futures = {}
         for symbol in stock_batch:
             data = fetch_stock_data_cached(symbol)
-            if not data.empty:  # Relaxed the 20-day threshold for debugging
+            if not data.empty and len(data) >= 15:  # Minimum 15 days for basic indicators
                 valid_futures[executor.submit(analyze_stock_parallel, symbol)] = symbol
             else:
-                errors.append(f"⚠️ Skipping {symbol}: no data retrieved")
+                errors.append(f"⚠️ Skipping {symbol}: insufficient data ({len(data)} days)")
         
         for future in as_completed(valid_futures):
             symbol = valid_futures[future]
