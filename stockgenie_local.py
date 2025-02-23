@@ -21,6 +21,13 @@ from scipy.signal import find_peaks
 import torch
 from transformers import BertTokenizer, BertForSequenceClassification
 
+# Global cache for precomputed indicators
+indicator_cache = {}
+
+# Global FinBERT model initialization
+finbert_tokenizer = BertTokenizer.from_pretrained('yiyanghkust/finbert-tone')
+finbert_model = BertForSequenceClassification.from_pretrained('yiyanghkust/finbert-tone')
+
 # API Keys (Consider moving to environment variables)
 NEWSAPI_KEY = "ed58659895e84dfb8162a8bb47d8525e"
 GNEWS_KEY = "e4f5f1442641400694645433a8f98b94"
@@ -89,21 +96,22 @@ def fetch_stock_data_cached(symbol, period="5y", interval="1d"):
         stock = yf.Ticker(symbol)
         data = stock.history(period=period, interval=interval)
         if data.empty:
-            raise ValueError(f"No data found for {symbol}")
+            return None  # Return None instead of empty DataFrame
         return data
     except Exception:
-        return pd.DataFrame()
+        return None
 
 def calculate_advance_decline_ratio(stock_list):
     advances = 0
     declines = 0
     for symbol in stock_list:
         data = fetch_stock_data_cached(symbol)
-        if not data.empty:
-            if data['Close'].iloc[-1] > data['Close'].iloc[-2]:
-                advances += 1
-            else:
-                declines += 1
+        if data is not None and not data.empty:
+            if pd.notnull(data['Close'].iloc[-1]) and pd.notnull(data['Close'].iloc[-2]):
+                if data['Close'].iloc[-1] > data['Close'].iloc[-2]:
+                    advances += 1
+                else:
+                    declines += 1
     return advances / declines if declines != 0 else 0
 
 def adjust_window(data, default_window, min_window=5):
@@ -113,18 +121,17 @@ def monte_carlo_simulation(data, simulations=1000, days=30):
     returns = data['Close'].pct_change().dropna()
     if len(returns) < 30:
         st.warning(f"⚠️ Limited data ({len(returns)} days); using basic simulation.")
+        last_price = data['Close'].iloc[-1]
         mean_return = returns.mean()
         std_return = returns.std() or 0.01
-        simulation_results = []
-        for _ in range(simulations):
-            price_series = [data['Close'].iloc[-1]]
-            for _ in range(days):
-                price = price_series[-1] * (1 + np.random.normal(mean_return, std_return))
-                price_series.append(price)
-            simulation_results.append(price_series)
-        return simulation_results
+        # Use NumPy for vectorized simulation
+        price_paths = np.zeros((simulations, days + 1))
+        price_paths[:, 0] = last_price
+        random_returns = np.random.normal(mean_return, std_return, (simulations, days))
+        price_paths[:, 1:] = last_price * np.cumprod(1 + random_returns, axis=1)
+        return price_paths.T.tolist()  # Convert to list for compatibility
     
-    model = arch_model(returns, vol='GARCH', p=1, q=1, dist='t')  # Enhanced with Student's t
+    model = arch_model(returns, vol='GARCH', p=1, q=1, dist='t')
     garch_fit = model.fit(disp='off')
     forecasts = garch_fit.forecast(horizon=days)
     volatility = np.sqrt(forecasts.variance.iloc[-1].values)
@@ -133,8 +140,7 @@ def monte_carlo_simulation(data, simulations=1000, days=30):
     for _ in range(simulations):
         price_series = [data['Close'].iloc[-1]]
         for i in range(days):
-            # Use np.random.standard_t with correct parameters (no 'loc' or 'scale')
-            t_value = np.random.standard_t(df=5, size=1)[0]  # Generate a single t-distributed value
+            t_value = np.random.standard_t(df=5, size=1)[0]
             price = price_series[-1] * (1 + mean_return + t_value * volatility[i])
             price_series.append(price)
         simulation_results.append(price_series)
@@ -181,11 +187,9 @@ def fetch_news_sentiment_vader(query, api_key, source="newsapi"):
 
 def analyze_sentiment_finbert(text):
     try:
-        tokenizer = BertTokenizer.from_pretrained('yiyanghkust/finbert-tone')
-        model = BertForSequenceClassification.from_pretrained('yiyanghkust/finbert-tone')
-        inputs = tokenizer(text, return_tensors="pt", truncation=True, padding=True)
+        inputs = finbert_tokenizer(text, return_tensors="pt", truncation=True, padding=True)
         with torch.no_grad():
-            outputs = model(**inputs)
+            outputs = finbert_model(**inputs)
         probs = torch.nn.functional.softmax(outputs.logits, dim=-1)
         return probs.argmax().item()
     except Exception:
@@ -266,208 +270,207 @@ def detect_waves(data):
                 return "Potential Downtrend (Wave C?)"
     return "No Clear Wave Pattern"
 
-def check_data_sufficiency(data):
-    days = len(data)
-    st.info(f"📅 Data available: {days} days")
-    if days < 20:
-        st.warning("⚠️ Less than 20 days; most indicators unavailable or unreliable.")
-    elif days < 50:
-        st.warning("⚠️ Less than 50 days; some indicators (e.g., SMA_50, Ichimoku) may be limited.")
-    elif days < 200:
-        st.warning("⚠️ Less than 200 days; long-term indicators like SMA_200 unavailable.")
-
-def analyze_stock(data):
-    if data.empty:
-        st.warning("⚠️ No data available to analyze.")
-        return data
+def precompute_indicators(data):
+    if data is None or data.empty:
+        return None
     
-    check_data_sufficiency(data)
-    
-    required_columns = ['Open', 'High', 'Low', 'Close', 'Volume']
-    missing_cols = [col for col in required_columns if col not in data.columns]
-    if missing_cols:
-        st.warning(f"⚠️ Missing required columns: {', '.join(missing_cols)}")
-        return data
-    
+    indicators = {}
     try:
         rsi_window = adjust_window(data, optimize_rsi_window(data), min_window=5)
-        data['RSI'] = ta.momentum.RSIIndicator(data['Close'], window=rsi_window).rsi()
+        indicators['RSI'] = ta.momentum.RSIIndicator(data['Close'], window=rsi_window).rsi()
     except Exception as e:
         st.warning(f"⚠️ Failed to compute RSI: {str(e)}")
-        data['RSI'] = None
+        indicators['RSI'] = None
     
     try:
         macd_window_slow = adjust_window(data, 17, min_window=5)
         macd_window_fast = adjust_window(data, 8, min_window=3)
         macd_window_sign = adjust_window(data, 9, min_window=3)
         macd = ta.trend.MACD(data['Close'], window_slow=macd_window_slow, window_fast=macd_window_fast, window_sign=macd_window_sign)
-        data['MACD'] = macd.macd()
-        data['MACD_signal'] = macd.macd_signal()
-        data['MACD_hist'] = macd.macd_diff()
+        indicators['MACD'] = macd.macd()
+        indicators['MACD_signal'] = macd.macd_signal()
+        indicators['MACD_hist'] = macd.macd_diff()
     except Exception as e:
         st.warning(f"⚠️ Failed to compute MACD: {str(e)}")
-        data['MACD'] = None
-        data['MACD_signal'] = None
-        data['MACD_hist'] = None
+        indicators['MACD'] = None
+        indicators['MACD_signal'] = None
+        indicators['MACD_hist'] = None
     
     try:
         sma_50_window = adjust_window(data, 50, min_window=10)
         sma_200_window = adjust_window(data, 200, min_window=20)
-        data['SMA_50'] = ta.trend.SMAIndicator(data['Close'], window=sma_50_window).sma_indicator()
+        indicators['SMA_50'] = ta.trend.SMAIndicator(data['Close'], window=sma_50_window).sma_indicator()
         if len(data) >= 200:
-            data['SMA_200'] = ta.trend.SMAIndicator(data['Close'], window=sma_200_window).sma_indicator()
+            indicators['SMA_200'] = ta.trend.SMAIndicator(data['Close'], window=sma_200_window).sma_indicator()
         else:
-            data['SMA_200'] = None
-        data['EMA_20'] = ta.trend.EMAIndicator(data['Close'], window=adjust_window(data, 20, min_window=5)).ema_indicator()
-        data['EMA_50'] = ta.trend.EMAIndicator(data['Close'], window=sma_50_window).ema_indicator()
+            indicators['SMA_200'] = None
+        indicators['EMA_20'] = ta.trend.EMAIndicator(data['Close'], window=adjust_window(data, 20, min_window=5)).ema_indicator()
+        indicators['EMA_50'] = ta.trend.EMAIndicator(data['Close'], window=sma_50_window).ema_indicator()
     except Exception as e:
         st.warning(f"⚠️ Failed to compute Moving Averages: {str(e)}")
-        data['SMA_50'] = None
-        data['SMA_200'] = None
-        data['EMA_20'] = None
-        data['EMA_50'] = None
+        indicators['SMA_50'] = None
+        indicators['SMA_200'] = None
+        indicators['EMA_20'] = None
+        indicators['EMA_50'] = None
     
     try:
         bollinger_window = adjust_window(data, 20, min_window=5)
         bollinger = ta.volatility.BollingerBands(data['Close'], window=bollinger_window, window_dev=2)
-        data['Upper_Band'] = bollinger.bollinger_hband()
-        data['Middle_Band'] = bollinger.bollinger_mavg()
-        data['Lower_Band'] = bollinger.bollinger_lband()
+        indicators['Upper_Band'] = bollinger.bollinger_hband()
+        indicators['Middle_Band'] = bollinger.bollinger_mavg()
+        indicators['Lower_Band'] = bollinger.bollinger_lband()
     except Exception as e:
         st.warning(f"⚠️ Failed to compute Bollinger Bands: {str(e)}")
-        data['Upper_Band'] = None
-        data['Middle_Band'] = None
-        data['Lower_Band'] = None
+        indicators['Upper_Band'] = None
+        indicators['Middle_Band'] = None
+        indicators['Lower_Band'] = None
     
     try:
         stoch_window = adjust_window(data, 14, min_window=5)
         stoch = ta.momentum.StochasticOscillator(data['High'], data['Low'], data['Close'], window=stoch_window, smooth_window=3)
-        data['SlowK'] = stoch.stoch()
-        data['SlowD'] = stoch.stoch_signal()
+        indicators['SlowK'] = stoch.stoch()
+        indicators['SlowD'] = stoch.stoch_signal()
     except Exception as e:
         st.warning(f"⚠️ Failed to compute Stochastic: {str(e)}")
-        data['SlowK'] = None
-        data['SlowD'] = None
+        indicators['SlowK'] = None
+        indicators['SlowD'] = None
     
     try:
         atr_window = adjust_window(data, 14, min_window=5)
-        data['ATR'] = ta.volatility.AverageTrueRange(data['High'], data['Low'], data['Close'], window=atr_window).average_true_range()
+        indicators['ATR'] = ta.volatility.AverageTrueRange(data['High'], data['Low'], data['Close'], window=atr_window).average_true_range()
     except Exception as e:
         st.warning(f"⚠️ Failed to compute ATR: {str(e)}")
-        data['ATR'] = None
+        indicators['ATR'] = None
     
     try:
         adx_window = adjust_window(data, 14, min_window=5)
         if len(data) >= adx_window + 1:
-            data['ADX'] = ta.trend.ADXIndicator(data['High'], data['Low'], data['Close'], window=adx_window).adx()
+            indicators['ADX'] = ta.trend.ADXIndicator(data['High'], data['Low'], data['Close'], window=adx_window).adx()
         else:
-            data['ADX'] = None
+            indicators['ADX'] = None
     except Exception as e:
         st.warning(f"⚠️ Failed to compute ADX: {str(e)}")
-        data['ADX'] = None
+        indicators['ADX'] = None
     
     try:
-        data['OBV'] = ta.volume.OnBalanceVolumeIndicator(data['Close'], data['Volume']).on_balance_volume()
+        indicators['OBV'] = ta.volume.OnBalanceVolumeIndicator(data['Close'], data['Volume']).on_balance_volume()
     except Exception as e:
         st.warning(f"⚠️ Failed to compute OBV: {str(e)}")
-        data['OBV'] = None
+        indicators['OBV'] = None
     
     try:
-        data['Cumulative_TP'] = ((data['High'] + data['Low'] + data['Close']) / 3) * data['Volume']
-        data['Cumulative_Volume'] = data['Volume'].cumsum()
-        data['VWAP'] = data['Cumulative_TP'].cumsum() / data['Cumulative_Volume']
+        indicators['Cumulative_TP'] = ((data['High'] + data['Low'] + data['Close']) / 3) * data['Volume']
+        indicators['Cumulative_Volume'] = data['Volume'].cumsum()
+        indicators['VWAP'] = indicators['Cumulative_TP'].cumsum() / indicators['Cumulative_Volume']
     except Exception as e:
         st.warning(f"⚠️ Failed to compute VWAP: {str(e)}")
-        data['VWAP'] = None
+        indicators['VWAP'] = None
     
     try:
         volume_window = adjust_window(data, 10, min_window=5)
-        data['Avg_Volume'] = data['Volume'].rolling(window=volume_window).mean()
-        data['Volume_Spike'] = data['Volume'] > (data['Avg_Volume'] * 1.5)
+        indicators['Avg_Volume'] = data['Volume'].rolling(window=volume_window).mean()
+        indicators['Volume_Spike'] = data['Volume'] > (indicators['Avg_Volume'] * 1.5)
     except Exception as e:
         st.warning(f"⚠️ Failed to compute Volume Spike: {str(e)}")
-        data['Volume_Spike'] = None
+        indicators['Volume_Spike'] = None
     
     try:
-        data['Parabolic_SAR'] = ta.trend.PSARIndicator(data['High'], data['Low'], data['Close']).psar()
+        indicators['Parabolic_SAR'] = ta.trend.PSARIndicator(data['High'], data['Low'], data['Close']).psar()
     except Exception as e:
         st.warning(f"⚠️ Failed to compute Parabolic SAR: {str(e)}")
-        data['Parabolic_SAR'] = None
+        indicators['Parabolic_SAR'] = None
     
     try:
         high = data['High'].max()
         low = data['Low'].min()
         diff = high - low
-        data['Fib_23.6'] = high - diff * 0.236
-        data['Fib_38.2'] = high - diff * 0.382
-        data['Fib_50.0'] = high - diff * 0.5
-        data['Fib_61.8'] = high - diff * 0.618
+        indicators['Fib_23.6'] = high - diff * 0.236
+        indicators['Fib_38.2'] = high - diff * 0.382
+        indicators['Fib_50.0'] = high - diff * 0.5
+        indicators['Fib_61.8'] = high - diff * 0.618
     except Exception as e:
         st.warning(f"⚠️ Failed to compute Fibonacci: {str(e)}")
-        data['Fib_23.6'] = None
-        data['Fib_38.2'] = None
-        data['Fib_50.0'] = None
-        data['Fib_61.8'] = None
+        indicators['Fib_23.6'] = None
+        indicators['Fib_38.2'] = None
+        indicators['Fib_50.0'] = None
+        indicators['Fib_61.8'] = None
     
     try:
-        data['Divergence'] = detect_divergence(data)
+        indicators['Divergence'] = detect_divergence(data)
     except Exception as e:
         st.warning(f"⚠️ Failed to compute Divergence: {str(e)}")
-        data['Divergence'] = "No Divergence"
+        indicators['Divergence'] = "No Divergence"
     
     try:
         ichimoku_w1 = adjust_window(data, 9, min_window=3)
         ichimoku_w2 = adjust_window(data, 26, min_window=5)
         ichimoku_w3 = adjust_window(data, 52, min_window=10)
         ichimoku = ta.trend.IchimokuIndicator(data['High'], data['Low'], window1=ichimoku_w1, window2=ichimoku_w2, window3=ichimoku_w3)
-        data['Ichimoku_Tenkan'] = ichimoku.ichimoku_conversion_line()
-        data['Ichimoku_Kijun'] = ichimoku.ichimoku_base_line()
-        data['Ichimoku_Span_A'] = ichimoku.ichimoku_a()
-        data['Ichimoku_Span_B'] = ichimoku.ichimoku_b()
-        data['Ichimoku_Chikou'] = data['Close'].shift(-min(26, len(data) - 1))
+        indicators['Ichimoku_Tenkan'] = ichimoku.ichimoku_conversion_line()
+        indicators['Ichimoku_Kijun'] = ichimoku.ichimoku_base_line()
+        indicators['Ichimoku_Span_A'] = ichimoku.ichimoku_a()
+        indicators['Ichimoku_Span_B'] = ichimoku.ichimoku_b()
+        indicators['Ichimoku_Chikou'] = data['Close'].shift(-min(26, len(data) - 1))
     except Exception as e:
         st.warning(f"⚠️ Failed to compute Ichimoku: {str(e)}")
-        data['Ichimoku_Tenkan'] = None
-        data['Ichimoku_Kijun'] = None
-        data['Ichimoku_Span_A'] = None
-        data['Ichimoku_Span_B'] = None
-        data['Ichimoku_Chikou'] = None
+        indicators['Ichimoku_Tenkan'] = None
+        indicators['Ichimoku_Kijun'] = None
+        indicators['Ichimoku_Span_A'] = None
+        indicators['Ichimoku_Span_B'] = None
+        indicators['Ichimoku_Chikou'] = None
     
     try:
         cmf_window = adjust_window(data, 20, min_window=5)
-        data['CMF'] = ta.volume.ChaikinMoneyFlowIndicator(data['High'], data['Low'], data['Close'], data['Volume'], window=cmf_window).chaikin_money_flow()
+        indicators['CMF'] = ta.volume.ChaikinMoneyFlowIndicator(data['High'], data['Low'], data['Close'], data['Volume'], window=cmf_window).chaikin_money_flow()
     except Exception as e:
         st.warning(f"⚠️ Failed to compute CMF: {str(e)}")
-        data['CMF'] = None
+        indicators['CMF'] = None
     
     try:
         donchian_window = adjust_window(data, 20, min_window=5)
         donchian = ta.volatility.DonchianChannel(data['High'], data['Low'], data['Close'], window=donchian_window)
-        data['Donchian_Upper'] = donchian.donchian_channel_hband()
-        data['Donchian_Lower'] = donchian.donchian_channel_lband()
-        data['Donchian_Middle'] = donchian.donchian_channel_mband()
+        indicators['Donchian_Upper'] = donchian.donchian_channel_hband()
+        indicators['Donchian_Lower'] = donchian.donchian_channel_lband()
+        indicators['Donchian_Middle'] = donchian.donchian_channel_mband()
     except Exception as e:
         st.warning(f"⚠️ Failed to compute Donchian: {str(e)}")
-        data['Donchian_Upper'] = None
-        data['Donchian_Lower'] = None
-        data['Donchian_Middle'] = None
+        indicators['Donchian_Upper'] = None
+        indicators['Donchian_Lower'] = None
+        indicators['Donchian_Middle'] = None
     
     try:
-        data['Volume_Profile'] = calculate_volume_profile(data)
+        indicators['Volume_Profile'] = calculate_volume_profile(data)
     except Exception as e:
         st.warning(f"⚠️ Failed to compute Volume Profile: {str(e)}")
-        data['Volume_Profile'] = None
+        indicators['Volume_Profile'] = None
     
     try:
-        data['Wave_Pattern'] = detect_waves(data)
+        indicators['Wave_Pattern'] = detect_waves(data)
     except Exception as e:
         st.warning(f"⚠️ Failed to compute Wave Pattern: {str(e)}")
-        data['Wave_Pattern'] = "No Clear Wave Pattern"
+        indicators['Wave_Pattern'] = "No Clear Wave Pattern"
     
-    return data
+    return indicators
+
+def analyze_stock(data):
+    if data is None or data.empty:
+        st.warning("⚠️ No data available to analyze.")
+        return None
+    
+    global indicator_cache
+    if data.to_json() in indicator_cache:
+        return pd.concat([data, pd.DataFrame(indicator_cache[data.to_json()])], axis=1)
+    
+    indicators = precompute_indicators(data)
+    if indicators is None:
+        return data
+    
+    result = pd.concat([data, pd.DataFrame(indicators)], axis=1)
+    indicator_cache[data.to_json()] = indicators
+    return result
 
 def calculate_buy_at(data):
-    if data.empty or 'RSI' not in data.columns or pd.isna(data['RSI'].iloc[-1]):
+    if data is None or data.empty or 'RSI' not in data.columns or pd.isna(data['RSI'].iloc[-1]):
         st.warning("⚠️ Cannot calculate Buy At due to missing or invalid RSI data.")
         return None
     last_close = data['Close'].iloc[-1]
@@ -478,7 +481,7 @@ def calculate_buy_at(data):
     return None
 
 def calculate_stop_loss(data, atr_multiplier=2.5):
-    if data.empty or 'ATR' not in data.columns or pd.isna(data['ATR'].iloc[-1]):
+    if data is None or data.empty or 'ATR' not in data.columns or pd.isna(data['ATR'].iloc[-1]):
         st.warning("⚠️ Cannot calculate Stop Loss due to missing or invalid ATR data.")
         return None
     last_close = data['Close'].iloc[-1]
@@ -529,7 +532,7 @@ def generate_recommendations(data, symbol=None):
         "Current Price": None, "Buy At": None,
         "Stop Loss": None, "Target": None, "Score": 0
     }
-    if data.empty or 'Close' not in data.columns or pd.isna(data['Close'].iloc[-1]):
+    if data is None or data.empty or 'Close' not in data.columns or pd.isna(data['Close'].iloc[-1]):
         st.warning("⚠️ No valid data available for recommendations.")
         return recommendations
     
@@ -538,19 +541,41 @@ def generate_recommendations(data, symbol=None):
         buy_score = 0
         sell_score = 0
         
-        if 'RSI' not in data.columns or pd.isna(data['RSI'].iloc[-1]):
-            if pd.notnull(data['Close'].iloc[-1]) and pd.notnull(data['Close'].iloc[0]):
-                if data['Close'].iloc[-1] > data['Close'].iloc[0]:
-                    buy_score += 1
-                else:
-                    sell_score += 1
-        
+        # Existing checks remain, but add Ichimoku, Volume Profile, and Wave Pattern
+        if 'Ichimoku_Span_A' in data.columns and 'Ichimoku_Span_B' in data.columns and pd.notnull(data['Ichimoku_Span_A'].iloc[-1]) and pd.notnull(data['Ichimoku_Span_B'].iloc[-1]) and pd.notnull(data['Close'].iloc[-1]):
+            if data['Close'].iloc[-1] > max(data['Ichimoku_Span_A'].iloc[-1], data['Ichimoku_Span_B'].iloc[-1]):
+                buy_score += 1
+                recommendations["Ichimoku_Trend"] = "Strong Buy"
+            elif data['Close'].iloc[-1] < min(data['Ichimoku_Span_A'].iloc[-1], data['Ichimoku_Span_B'].iloc[-1]):
+                sell_score += 1
+                recommendations["Ichimoku_Trend"] = "Strong Sell"
+
+        if 'Volume_Profile' in data.columns and pd.notnull(data['Volume_Profile'].iloc[-1]):
+            vp = data['Volume_Profile']
+            last_close = data['Close'].iloc[-1]
+            if pd.notnull(last_close):
+                max_vp_price = vp.idxmax()
+                if pd.notnull(max_vp_price) and abs(last_close - max_vp_price) < last_close * 0.02:
+                    buy_score += 0.5  # Support/resistance confirmation
+
+        if 'Wave_Pattern' in data.columns:
+            if data['Wave_Pattern'].iloc[-1] == "Potential Uptrend (Wave 5?)":
+                buy_score += 0.5
+            elif data['Wave_Pattern'].iloc[-1] == "Potential Downtrend (Wave C?)":
+                sell_score += 0.5
+
         if 'RSI' in data.columns and pd.notnull(data['RSI'].iloc[-1]):
             if data['RSI'].iloc[-1] < 30:
                 buy_score += 2
             elif data['RSI'].iloc[-1] > 70:
                 sell_score += 2
-        
+        else:
+            if 'Close' in data.columns and pd.notnull(data['Close'].iloc[-1]) and pd.notnull(data['Close'].iloc[0]):
+                if data['Close'].iloc[-1] > data['Close'].iloc[0]:
+                    buy_score += 1
+                else:
+                    sell_score += 1
+
         if 'MACD' in data.columns and 'MACD_signal' in data.columns and pd.notnull(data['MACD'].iloc[-1]) and pd.notnull(data['MACD_signal'].iloc[-1]):
             if data['MACD'].iloc[-1] > data['MACD_signal'].iloc[-1]:
                 buy_score += 1
@@ -583,17 +608,6 @@ def generate_recommendations(data, symbol=None):
                 buy_score += 1
             elif data['Divergence'].iloc[-1] == "Bearish Divergence":
                 sell_score += 1
-        
-        if 'Ichimoku_Span_A' in data.columns and 'Ichimoku_Span_B' in data.columns:
-            if (pd.notnull(data['Ichimoku_Span_A'].iloc[-1]) and 
-                pd.notnull(data['Ichimoku_Span_B'].iloc[-1]) and 
-                pd.notnull(data['Close'].iloc[-1])):
-                if data['Close'].iloc[-1] > max(data['Ichimoku_Span_A'].iloc[-1], data['Ichimoku_Span_B'].iloc[-1]):
-                    buy_score += 1
-                    recommendations["Ichimoku_Trend"] = "Buy"
-                elif data['Close'].iloc[-1] < min(data['Ichimoku_Span_A'].iloc[-1], data['Ichimoku_Span_B'].iloc[-1]):
-                    sell_score += 1
-                    recommendations["Ichimoku_Trend"] = "Sell"
         
         if 'CMF' in data.columns and pd.notnull(data['CMF'].iloc[-1]):
             if data['CMF'].iloc[-1] > 0:
@@ -636,20 +650,6 @@ def generate_recommendations(data, symbol=None):
                       data['Close'].iloc[-1] < data['Ichimoku_Span_B'].iloc[-1]):
                     sell_score += 1
                     recommendations["Ichimoku_Trend"] = "Strong Sell"
-
-        if 'Volume_Profile' in data.columns and pd.notnull(data['Volume_Profile'].iloc[-1]):
-            vp = data['Volume_Profile']
-            last_close = data['Close'].iloc[-1]
-            if pd.notnull(last_close):
-                max_vp_price = vp.idxmax()
-                if pd.notnull(max_vp_price) and abs(last_close - max_vp_price) < last_close * 0.02:
-                    buy_score += 0.5
-
-        if 'Wave_Pattern' in data.columns:
-            if data['Wave_Pattern'].iloc[-1] == "Potential Uptrend (Wave 5?)":
-                buy_score += 0.5
-            elif data['Wave_Pattern'].iloc[-1] == "Potential Downtrend (Wave C?)":
-                sell_score += 0.5
 
         if symbol:
             fundamentals = fetch_fundamentals(symbol)
@@ -694,6 +694,8 @@ def analyze_batch(stock_batch):
 
 def analyze_stock_parallel(symbol):
     data = fetch_stock_data_cached(symbol)
+    if data is None:
+        return None
     if not data.empty:
         data = analyze_stock(data)
         recommendations = generate_recommendations(data, symbol)
@@ -1030,7 +1032,7 @@ def main():
         if symbol not in NSE_STOCKS:
             st.sidebar.warning("⚠️ Unverified symbol - data may be unreliable")
         data = fetch_stock_data_cached(symbol)
-        if not data.empty:
+        if data is not None and not data.empty:
             data = analyze_stock(data)
             recommendations = generate_recommendations(data, symbol)
             display_dashboard(symbol, data, recommendations, NSE_STOCKS)
