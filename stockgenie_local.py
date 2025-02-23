@@ -688,26 +688,27 @@ def analyze_stock_parallel(symbol):
     return None
 
 def update_progress(progress_bar, loading_text, progress_value, loading_messages, start_time, total_items, processed_items, current_task=""):
-    """Update progress bar with detailed task information and extended timeout."""
+    """Update progress bar with detailed task information without showing warnings."""
     progress_bar.progress(progress_value)
     loading_message = next(loading_messages)
     dots = "." * int((progress_value * 10) % 4)
     elapsed_time = time.time() - start_time
     
-    # Increase timeout threshold to 120 seconds
-    if elapsed_time > 120:
-        st.warning("⚠️ Progress taking longer than expected. Please verify your internet connection or try again later.")
-    
+    # Remove the warning for progress taking longer than expected, but keep the logic
     if processed_items > 0:
         time_per_item = elapsed_time / processed_items
         remaining_items = total_items - processed_items
         eta = timedelta(seconds=int(time_per_item * remaining_items))
-        loading_text.text(f"{loading_message}{dots} - {current_task} (ETA: {eta}, Processed: {processed_items}/{total_items})")
+        # Optional: Add a neutral progress message instead of a warning
+        if elapsed_time > 120:
+            loading_text.text(f"{loading_message}{dots} - {current_task} (Processing may take a moment, ETA: {eta}, Processed: {processed_items}/{total_items})")
+        else:
+            loading_text.text(f"{loading_message}{dots} - {current_task} (ETA: {eta}, Processed: {processed_items}/{total_items})")
     else:
         loading_text.text(f"{loading_message}{dots} - {current_task}")
 
 def analyze_all_stocks(stock_list, batch_size=50, price_range=None, progress_callback=None):
-    """Analyze all stocks and return top 10 with detailed progress and dynamic batch sizing."""
+    """Analyze all stocks and return top 10 with detailed progress and dynamic batch sizing, without showing slow processing warnings."""
     if st.session_state.cancel_operation:
         st.warning("⚠️ Analysis canceled by user.")
         return pd.DataFrame()
@@ -734,9 +735,8 @@ def analyze_all_stocks(stock_list, batch_size=50, price_range=None, progress_cal
         processed_items += len(batch)
         batch_elapsed = time.time() - batch_start_time
         
-        # Adjust batch size if processing a batch takes too long (e.g., > 30 seconds)
+        # Adjust batch size if processing a batch takes too long (e.g., > 30 seconds), without showing warning
         if batch_elapsed > 30 and dynamic_batch_size > 10:
-            st.warning(f"⚠️ Slow processing detected. Reducing batch size from {dynamic_batch_size} to {dynamic_batch_size // 2}.")
             dynamic_batch_size = max(10, dynamic_batch_size // 2)
         
         if progress_callback:
@@ -763,7 +763,7 @@ def analyze_all_stocks(stock_list, batch_size=50, price_range=None, progress_cal
     return results_df.sort_values(by="Score", ascending=False).head(10)
 
 def analyze_intraday_stocks(stock_list, batch_size=50, price_range=None, progress_callback=None):
-    """Analyze stocks for intraday trading and return top 5 with detailed progress and dynamic batch sizing."""
+    """Analyze stocks for intraday trading and return top 5 with detailed progress and dynamic batch sizing, without showing slow processing warnings."""
     if st.session_state.cancel_operation:
         st.warning("⚠️ Analysis canceled by user.")
         return pd.DataFrame()
@@ -790,9 +790,8 @@ def analyze_intraday_stocks(stock_list, batch_size=50, price_range=None, progres
         processed_items += len(batch)
         batch_elapsed = time.time() - batch_start_time
         
-        # Adjust batch size if processing a batch takes too long (e.g., > 30 seconds)
+        # Adjust batch size if processing a batch takes too long (e.g., > 30 seconds), without showing warning
         if batch_elapsed > 30 and dynamic_batch_size > 10:
-            st.warning(f"⚠️ Slow processing detected. Reducing batch size from {dynamic_batch_size} to {dynamic_batch_size // 2}.")
             dynamic_batch_size = max(10, dynamic_batch_size // 2)
         
         if progress_callback:
