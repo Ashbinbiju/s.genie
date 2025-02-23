@@ -20,16 +20,17 @@ from sklearn.ensemble import RandomForestClassifier
 from sklearn.model_selection import train_test_split, cross_val_score, TimeSeriesSplit
 from sklearn.feature_selection import RFE
 from sklearn.preprocessing import StandardScaler
+import sqlite3
 
 # Setup diskcache
 cache = Cache("stock_cache", expire=86400)
 
-# API Keys (Consider moving to environment variables)
+# API Keys
 NEWSAPI_KEY = "ed58659895e84dfb8162a8bb47d8525e"
 GNEWS_KEY = "e4f5f1442641400694645433a8f98b94"
 ALPHA_VANTAGE_KEY = "TCAUKYUCIDZ6PI57"
 
-# Tooltip explanations (unchanged)
+# Tooltip explanations
 TOOLTIPS = {
     "RSI": "Relative Strength Index (30=Oversold, 70=Overbought)",
     "ATR": "Average True Range - Measures market volatility",
@@ -48,7 +49,7 @@ TOOLTIPS = {
 def tooltip(label, explanation):
     return f"{label} 📌 ({explanation})"
 
-def retry(max_retries=5, delay=2, backoff_factor=1.5, jitter=0.5):
+def retry(max_retries=3, delay=1, backoff_factor=1.5, jitter=0.5):
     def decorator(func):
         def wrapper(*args, **kwargs):
             retries = 0
@@ -73,7 +74,25 @@ def check_internet_connection():
     except (requests.exceptions.RequestException, TimeoutError):
         return False
 
-@retry(max_retries=3, delay=2)
+# Initialize SQLite database
+def init_db():
+    conn = sqlite3.connect('stock_data.db')
+    c = conn.cursor()
+    c.execute('''CREATE TABLE IF NOT EXISTS stock_data (
+                    symbol TEXT, 
+                    date TEXT, 
+                    open REAL, 
+                    high REAL, 
+                    low REAL, 
+                    close REAL, 
+                    volume INTEGER, 
+                    last_updated TEXT,
+                    PRIMARY KEY (symbol, date)
+                 )''')
+    conn.commit()
+    return conn
+
+@retry(max_retries=3, delay=1)
 def fetch_nse_stock_list():
     cache_key = "nse_stock_list"
     if cache_key in cache:
@@ -125,35 +144,47 @@ def validate_stock_data(data, symbol):
     
     return True
 
-@retry(max_retries=5, delay=2)
+@retry(max_retries=3, delay=1)
 def fetch_stock_data_cached(symbol, period="5y", interval="1d"):
     if ".NS" not in symbol:
         symbol += ".NS"
-    cache_key = f"{symbol}_{period}_{interval}"
-    if cache_key in cache:
-        data = cache[cache_key]
-        if validate_stock_data(data, symbol):
-            return data
-        else:
-            st.warning(f"⚠️ Cached data for {symbol} invalid; fetching fresh data.")
     
-    if not check_internet_connection():
-        st.error("❌ No internet connection. Using cached data if available.")
-        return cache.get(cache_key, pd.DataFrame())
+    conn = init_db()
+    c = conn.cursor()
     
+    # Check if data exists in SQLite
+    c.execute("SELECT * FROM stock_data WHERE symbol = ?", (symbol,))
+    rows = c.fetchall()
+    if rows:
+        data = pd.DataFrame(rows, columns=['symbol', 'date', 'open', 'high', 'low', 'close', 'volume', 'last_updated'])
+        data['date'] = pd.to_datetime(data['date'])
+        data.set_index('date', inplace=True)
+        if validate_stock_data(data.drop(columns=['symbol', 'last_updated']), symbol):
+            last_updated = pd.to_datetime(data['last_updated'].iloc[0])
+            if (datetime.now() - last_updated).days < 1:  # Cache valid for 1 day
+                conn.close()
+                return data.drop(columns=['symbol', 'last_updated'])
+    
+    # Fetch from Yahoo Finance if not in cache or outdated
     try:
         stock = yf.Ticker(symbol)
         data = stock.history(period=period, interval=interval)
-        time.sleep(0.5)
         if data.empty:
             raise ValueError(f"No data found for {symbol}")
         if validate_stock_data(data, symbol):
-            cache[cache_key] = data
+            data_reset = data.reset_index()
+            data_reset['symbol'] = symbol
+            data_reset['last_updated'] = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+            data_reset.to_sql('stock_data', conn, if_exists='replace', index=False)
+            conn.commit()
+            conn.close()
             return data
+        conn.close()
         return pd.DataFrame()
     except Exception as e:
         st.error(f"❌ Failed to fetch data for {symbol}: {str(e)}. Falling back to cache.")
-        return cache.get(cache_key, pd.DataFrame())
+        conn.close()
+        return pd.DataFrame()
 
 def calculate_advance_decline_ratio(stock_list):
     advances = 0
@@ -339,24 +370,20 @@ def prepare_ml_data(data):
     if data.empty or len(data) < 2:
         return None, None
     
-    # Base features from indicator calculations
     base_features = ['RSI', 'MACD', 'MACD_signal', 'ATR', 'ADX', 'SlowK', 'SlowD', 'OBV', 'VWAP', 'CMF',
                      'Keltner_Upper', 'Keltner_Lower', 'Force_Index', 'Z_Score']
     
-    # Compute additional features
     returns = data['Close'].pct_change()
     data['Lag1_Return'] = returns.shift(1)
     data['Lag2_Return'] = returns.shift(2)
     data['Volatility_5'] = returns.rolling(window=5).std()
     data['Volatility_20'] = returns.rolling(window=20).std()
-    data['Day_of_Week'] = data.index.dayofweek  # 0=Monday, 6=Sunday
-    data['Month'] = data.index.month            # 1=Jan, 12=Dec
+    data['Day_of_Week'] = data.index.dayofweek
+    data['Month'] = data.index.month
     
-    # Combine all features
     all_features = base_features + ['Lag1_Return', 'Lag2_Return', 'Volatility_5', 'Volatility_20', 'Day_of_Week', 'Month']
     X = data[all_features].dropna()
     
-    # Target variable
     price_changes = returns.shift(-1).dropna()
     y = (price_changes > 0).astype(int)
     
@@ -400,7 +427,7 @@ def predict_stock_trend(data, model, scaler):
         return "Hold"
     
     X_scaled = scaler.transform(X)
-    X_rfe = X_scaled[:, :10]  # Match RFE selection (top 10 features)
+    X_rfe = X_scaled[:, :10]
     prediction = model.predict(X_rfe)[0]
     return "Buy" if prediction == 1 else "Sell"
 
@@ -783,7 +810,7 @@ def analyze_batch(stock_batch, progress_callback=None):
     total_stocks = len(stock_batch)
     processed_stocks = 0
     
-    with ThreadPoolExecutor(max_workers=min(10, len(stock_batch))) as executor:
+    with ThreadPoolExecutor(max_workers=min(50, total_stocks)) as executor:
         futures = {executor.submit(analyze_stock_parallel, symbol): symbol for symbol in stock_batch}
         for future in as_completed(futures):
             symbol = futures[future]
@@ -847,30 +874,23 @@ def analyze_all_stocks(stock_list, batch_size=50, price_range=None, progress_cal
     total_items = len(stock_list)
     start_time = time.time()
     processed_items = 0
-    dynamic_batch_size = batch_size
     
-    for i in range(0, total_items, dynamic_batch_size):
-        if st.session_state.cancel_operation:
-            st.warning("⚠️ Analysis canceled by user.")
-            break
-        
-        batch = stock_list[i:i + dynamic_batch_size]
-        batch_start_time = time.time()
-        
-        batch_results = analyze_batch(batch, lambda p, t: progress_callback(
-            (processed_items + p * len(batch)) / total_items, t, start_time, processed_items + int(p * len(batch))
-        ) if progress_callback else None)
-        
-        results.extend(batch_results)
-        processed_items += len(batch)
-        batch_elapsed = time.time() - batch_start_time
-        
-        if batch_elapsed > 30 and dynamic_batch_size > 10:
-            dynamic_batch_size = max(10, dynamic_batch_size // 2)
-        
-        time.sleep(1)
-        if progress_callback:
-            progress_callback(processed_items / total_items, f"Completed batch {i//batch_size + 1}/{(total_items + batch_size - 1)//batch_size}", start_time, processed_items)
+    with ThreadPoolExecutor(max_workers=min(50, total_items)) as executor:
+        futures = {executor.submit(analyze_stock_parallel, symbol): symbol for symbol in stock_list}
+        for future in as_completed(futures):
+            if st.session_state.cancel_operation:
+                st.warning("⚠️ Analysis canceled by user.")
+                break
+            symbol = futures[future]
+            processed_items += 1
+            if progress_callback:
+                progress_callback(processed_items / total_items, f"Processing {symbol} ({processed_items}/{total_items})", start_time, processed_items)
+            try:
+                result = future.result()
+                if result:
+                    results.append(result)
+            except Exception as e:
+                st.error(f"❌ Error processing stock {symbol}: {str(e)}")
     
     if not results:
         return pd.DataFrame()
@@ -901,30 +921,23 @@ def analyze_intraday_stocks(stock_list, batch_size=50, price_range=None, progres
     total_items = len(stock_list)
     start_time = time.time()
     processed_items = 0
-    dynamic_batch_size = batch_size
     
-    for i in range(0, total_items, dynamic_batch_size):
-        if st.session_state.cancel_operation:
-            st.warning("⚠️ Analysis canceled by user.")
-            break
-        
-        batch = stock_list[i:i + dynamic_batch_size]
-        batch_start_time = time.time()
-        
-        batch_results = analyze_batch(batch, lambda p, t: progress_callback(
-            (processed_items + p * len(batch)) / total_items, t, start_time, processed_items + int(p * len(batch))
-        ) if progress_callback else None)
-        
-        results.extend(batch_results)
-        processed_items += len(batch)
-        batch_elapsed = time.time() - batch_start_time
-        
-        if batch_elapsed > 30 and dynamic_batch_size > 10:
-            dynamic_batch_size = max(10, dynamic_batch_size // 2)
-        
-        time.sleep(1)
-        if progress_callback:
-            progress_callback(processed_items / total_items, f"Completed batch {i//batch_size + 1}/{(total_items + batch_size - 1)//batch_size}", start_time, processed_items)
+    with ThreadPoolExecutor(max_workers=min(50, total_items)) as executor:
+        futures = {executor.submit(analyze_stock_parallel, symbol): symbol for symbol in stock_list}
+        for future in as_completed(futures):
+            if st.session_state.cancel_operation:
+                st.warning("⚠️ Analysis canceled by user.")
+                break
+            symbol = futures[future]
+            processed_items += 1
+            if progress_callback:
+                progress_callback(processed_items / total_items, f"Processing {symbol} ({processed_items}/{total_items})", start_time, processed_items)
+            try:
+                result = future.result()
+                if result:
+                    results.append(result)
+            except Exception as e:
+                st.error(f"❌ Error processing stock {symbol}: {str(e)}")
     
     results_df = pd.DataFrame([r for r in results if r is not None])
     if results_df.empty:
