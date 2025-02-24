@@ -599,7 +599,7 @@ def generate_recommendations(data, symbol=None):
                     sell_score += 2
                     recommendations["Mean_Reversion"] = "Sell"
 
-        if 'Wave_Pattern' in data.columns and pd.notnull(data['Wave_Pattern'].curry[-1]):
+        if 'Wave_Pattern' in data.columns and pd.notnull(data['Wave_Pattern'].iloc[-1]):
             if data['Wave_Pattern'].iloc[-1] == "Potential Uptrend (Wave 5?)":
                 buy_score += 1
             elif data['Wave_Pattern'].iloc[-1] == "Potential Downtrend (Wave C?)":
