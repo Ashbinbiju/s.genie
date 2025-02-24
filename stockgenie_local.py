@@ -19,6 +19,8 @@ from arch import arch_model
 from scipy.signal import find_peaks
 import torch
 from transformers import BertTokenizer, BertForSequenceClassification
+from bs4 import BeautifulSoup
+import re
 
 # API Keys (Consider moving to environment variables)
 NEWSAPI_KEY = "ed58659895e84dfb8162a8bb47d8525e"
@@ -151,27 +153,98 @@ def scenario_analysis(data, days=30):
         bear_scenario.append(bear_scenario[-1] * (1 + bear_return))
     return bull_scenario, bear_scenario
 
-def fetch_news_sentiment_vader(query, api_key, source="newsapi"):
-    analyzer = SentimentIntensityAnalyzer()
+@lru_cache(maxsize=100)
+@retry(max_retries=3, delay=2)
+def fetch_moneycontrol_news(query):
+    url = f"https://www.moneycontrol.com/news/tags/{query.lower().replace(' ', '-')}.html"
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"
+    }
     try:
-        if source == "newsapi":
-            url = f"https://newsapi.org/v2/everything?q={query}&apiKey=ed58659895e84dfb8162a8bb47d8525e&language=en&sortBy=publishedAt&pageSize=5"
-        elif source == "gnews":
-            url = f"https://gnews.io/api/v4/search?q={query}&token=e4f5f1442641400694645433a8f98b94&lang=en&max=5"
-        response = requests.get(url)
+        response = requests.get(url, headers=headers, timeout=10)
+        response.raise_for_status()
+        soup = BeautifulSoup(response.text, 'html.parser')
+        articles = soup.select('.news-list .title a')[:5]
+        news_texts = [article.get_text(strip=True) for article in articles if article]
+        return tuple(news_texts) if news_texts else ("No recent news found on Moneycontrol.",)
+    except Exception as e:
+        st.warning(f"⚠️ Failed to fetch Moneycontrol news for {query}: {str(e)}")
+        return ("Error fetching Moneycontrol news.",)
+
+@lru_cache(maxsize=100)
+@retry(max_retries=3, delay=2)
+def fetch_livemint_news(query):
+    url = f"https://www.livemint.com/market/stock-market-news/{query.lower().replace(' ', '-')}"
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"
+    }
+    try:
+        response = requests.get(url, headers=headers, timeout=10)
+        response.raise_for_status()
+        soup = BeautifulSoup(response.text, 'html.parser')
+        articles = soup.select('.headline a')[:5]
+        news_texts = [article.get_text(strip=True) for article in articles if article]
+        return tuple(news_texts) if news_texts else ("No recent news found on LiveMint.",)
+    except Exception as e:
+        st.warning(f"⚠️ Failed to fetch LiveMint news for {query}: {str(e)}")
+        return ("Error fetching LiveMint news.",)
+
+@lru_cache(maxsize=100)
+def fetch_newsapi_sentiment(query):
+    analyzer = SentimentIntensityAnalyzer()
+    url = f"https://newsapi.org/v2/everything?q={query}&apiKey=ed58659895e84dfb8162a8bb47d8525e&language=en&sortBy=publishedAt&pageSize=5"
+    try:
+        response = requests.get(url, timeout=10)
         response.raise_for_status()
         articles = response.json().get("articles", [])
-        sentiment_scores = []
-        for article in articles:
-            title = article.get("title", "")
-            description = article.get("description", "")
-            text = f"{title} {description}"
-            sentiment = analyzer.polarity_scores(text)['compound']
-            sentiment_scores.append(sentiment)
+        news_texts = [f"{article.get('title', '')} {article.get('description', '')}" for article in articles]
+        sentiment_scores = [analyzer.polarity_scores(text)['compound'] for text in news_texts if text.strip()]
         avg_sentiment = sum(sentiment_scores) / len(sentiment_scores) if sentiment_scores else 0
-        return avg_sentiment
-    except Exception:
-        return 0
+        return avg_sentiment, tuple(news_texts) if news_texts else ("No recent news from NewsAPI.",)
+    except Exception as e:
+        st.warning(f"⚠️ Failed to fetch NewsAPI news for {query}: {str(e)}")
+        return 0, ("Error fetching NewsAPI news.",)
+
+@lru_cache(maxsize=100)
+def fetch_gnews_sentiment(query):
+    analyzer = SentimentIntensityAnalyzer()
+    url = f"https://gnews.io/api/v4/search?q={query}&token=e4f5f1442641400694645433a8f98b94&lang=en&max=5"
+    try:
+        response = requests.get(url, timeout=10)
+        response.raise_for_status()
+        articles = response.json().get("articles", [])
+        news_texts = [f"{article.get('title', '')} {article.get('description', '')}" for article in articles]
+        sentiment_scores = [analyzer.polarity_scores(text)['compound'] for text in news_texts if text.strip()]
+        avg_sentiment = sum(sentiment_scores) / len(sentiment_scores) if sentiment_scores else 0
+        return avg_sentiment, tuple(news_texts) if news_texts else ("No recent news from GNews.",)
+    except Exception as e:
+        st.warning(f"⚠️ Failed to fetch GNews news for {query}: {str(e)}")
+        return 0, ("Error fetching GNews news.",)
+
+@lru_cache(maxsize=100)
+def fetch_combined_news_sentiment(query):
+    analyzer = SentimentIntensityAnalyzer()
+    moneycontrol_sentiment, moneycontrol_news = fetch_moneycontrol_news(query)
+    livemint_sentiment, livemint_news = fetch_livemint_news(query)
+    newsapi_sentiment, newsapi_news = fetch_newsapi_sentiment(query)
+    gnews_sentiment, gnews_news = fetch_gnews_sentiment(query)
+
+    all_news = list(moneycontrol_news) + list(livemint_news) + list(newsapi_news) + list(gnews_news)
+    sentiment_scores = []
+
+    for news in all_news:
+        if "Error" not in news and "No recent news" not in news:
+            sentiment = analyzer.polarity_scores(news)['compound']
+            sentiment_scores.append(sentiment)
+
+    avg_sentiment = sum(sentiment_scores) / len(sentiment_scores) if sentiment_scores else 0
+    return {
+        "Overall": avg_sentiment,
+        "Moneycontrol": moneycontrol_sentiment,
+        "LiveMint": livemint_sentiment,
+        "NewsAPI": newsapi_sentiment,
+        "GNews": gnews_sentiment
+    }, all_news
 
 def analyze_sentiment_finbert(text):
     try:
@@ -505,11 +578,12 @@ def fetch_fundamentals(symbol):
     except Exception:
         return {'P/E': float('inf'), 'EPS': 0, 'RevenueGrowth': 0, 'DividendYield': 0}
 
-def generate_recommendations(data, symbol=None):
+def generate_recommendations(data, symbol=None, news_sentiment_weight=0.5):
     recommendations = {
         "Intraday": "Hold", "Swing": "Hold", "Short-Term": "Hold", "Long-Term": "Hold",
         "Mean_Reversion": "Hold", "Breakout": "Hold", "Ichimoku_Trend": "Hold",
-        "Current Price": None, "Buy At": None, "Stop Loss": None, "Target": None, "Score": 0
+        "Current Price": None, "Buy At": None, "Stop Loss": None, "Target": None, "Score": 0,
+        "News_Sentiment": None, "News_Articles": []
     }
     if data.empty or 'Close' not in data.columns or pd.isna(data['Close'].iloc[-1]):
         return recommendations
@@ -572,9 +646,6 @@ def generate_recommendations(data, symbol=None):
                       data['Ichimoku_Chikou'].iloc[-1] < last_close):
                     sell_score += 2
                     recommendations["Ichimoku_Trend"] = "Strong Sell"
-                cloud_thickness = data['Ichimoku_Span_A'].iloc[-1] - data['Ichimoku_Span_B'].iloc[-1]
-                if cloud_thickness > 0 and last_close > data['Ichimoku_Span_A'].iloc[-1]:
-                    buy_score += 0.5
 
         if 'CMF' in data.columns and pd.notnull(data['CMF'].iloc[-1]):
             if data['CMF'].iloc[-1] > 0.2:
@@ -599,13 +670,25 @@ def generate_recommendations(data, symbol=None):
                     sell_score += 2
                     recommendations["Mean_Reversion"] = "Sell"
 
-        if 'Wave_Pattern' in data.columns and pd.notnull(data['Wave_Pattern'].curry[-1]):
+        if 'Wave_Pattern' in data.columns and pd.notnull(data['Wave_Pattern'].iloc[-1]):
             if data['Wave_Pattern'].iloc[-1] == "Potential Uptrend (Wave 5?)":
                 buy_score += 1
             elif data['Wave_Pattern'].iloc[-1] == "Potential Downtrend (Wave C?)":
                 sell_score += 1
 
         if symbol:
+            stock_name = symbol.split('.')[0]
+            news_sentiment_dict, news_articles = fetch_combined_news_sentiment(stock_name)
+            recommendations["News_Sentiment"] = news_sentiment_dict["Overall"]
+            recommendations["News_Articles"] = news_articles
+            
+            if news_sentiment_dict["Overall"] > 0.3:
+                buy_score += news_sentiment_weight
+                recommendations["Short-Term"] = "Buy" if buy_score > sell_score else recommendations["Short-Term"]
+            elif news_sentiment_dict["Overall"] < -0.3:
+                sell_score += news_sentiment_weight
+                recommendations["Short-Term"] = "Sell" if sell_score > buy_score else recommendations["Short-Term"]
+
             fundamentals = fetch_fundamentals(symbol)
             if pd.notnull(fundamentals['P/E']) and fundamentals['P/E'] < 15 and fundamentals['EPS'] > 0:
                 buy_score += 1
@@ -645,7 +728,7 @@ def analyze_batch(stock_batch):
         valid_futures = {}
         for symbol in stock_batch:
             data = fetch_stock_data_cached(symbol)
-            if not data.empty and len(data) >= 15:  # Minimum 15 days for basic indicators
+            if not data.empty and len(data) >= 15:
                 valid_futures[executor.submit(analyze_stock_parallel, symbol)] = symbol
             else:
                 errors.append(f"⚠️ Skipping {symbol}: insufficient data ({len(data)} days)")
@@ -666,7 +749,7 @@ def analyze_stock_parallel(symbol):
     data = fetch_stock_data_cached(symbol)
     if not data.empty:
         data = analyze_stock(data)
-        recommendations = generate_recommendations(data, symbol)
+        recommendations = generate_recommendations(data, symbol, news_sentiment_weight=0.5)
         return {
             "Symbol": symbol,
             "Current Price": recommendations["Current Price"],
@@ -681,6 +764,7 @@ def analyze_stock_parallel(symbol):
             "Breakout": recommendations["Breakout"],
             "Ichimoku_Trend": recommendations["Ichimoku_Trend"],
             "Score": recommendations.get("Score", 0),
+            "News_Sentiment": recommendations["News_Sentiment"]
         }
     return None
 
@@ -823,6 +907,7 @@ def display_dashboard(symbol=None, data=None, recommendations=None, NSE_STOCKS=N
                     buy_at = f"{row['Buy At']:.2f}" if pd.notnull(row['Buy At']) else "N/A"
                     stop_loss = f"{row['Stop Loss']:.2f}" if pd.notnull(row['Stop Loss']) else "N/A"
                     target = f"{row['Target']:.2f}" if pd.notnull(row['Target']) else "N/A"
+                    news_sentiment = f"{row['News_Sentiment']:.2f}" if pd.notnull(row['News_Sentiment']) else "N/A"
                     st.markdown(f"""
                     {tooltip('Current Price', TOOLTIPS['Stop Loss'])}: ₹{current_price}  
                     Buy At: ₹{buy_at} | Stop Loss: ₹{stop_loss}  
@@ -833,7 +918,8 @@ def display_dashboard(symbol=None, data=None, recommendations=None, NSE_STOCKS=N
                     Long-Term: {colored_recommendation(row['Long-Term'])}  
                     Mean Reversion: {colored_recommendation(row['Mean_Reversion'])}  
                     Breakout: {colored_recommendation(row['Breakout'])}  
-                    Ichimoku Trend: {colored_recommendation(row['Ichimoku_Trend'])}
+                    Ichimoku Trend: {colored_recommendation(row['Ichimoku_Trend'])}  
+                    News Sentiment: {news_sentiment}
                     """, unsafe_allow_html=True)
         elif not st.session_state.cancel_operation:
             st.warning("⚠️ No top picks available due to data issues.")
@@ -868,11 +954,13 @@ def display_dashboard(symbol=None, data=None, recommendations=None, NSE_STOCKS=N
                     buy_at = f"{row['Buy At']:.2f}" if pd.notnull(row['Buy At']) else "N/A"
                     stop_loss = f"{row['Stop Loss']:.2f}" if pd.notnull(row['Stop Loss']) else "N/A"
                     target = f"{row['Target']:.2f}" if pd.notnull(row['Target']) else "N/A"
+                    news_sentiment = f"{row['News_Sentiment']:.2f}" if pd.notnull(row['News_Sentiment']) else "N/A"
                     st.markdown(f"""
                     {tooltip('Current Price', TOOLTIPS['Stop Loss'])}: ₹{current_price}  
                     Buy At: ₹{buy_at} | Stop Loss: ₹{stop_loss}  
                     Target: ₹{target}  
                     Intraday: {colored_recommendation(row['Intraday'])}  
+                    News Sentiment: {news_sentiment}
                     """, unsafe_allow_html=True)
         elif not st.session_state.cancel_operation:
             st.warning("⚠️ No intraday picks available due to data issues.")
@@ -906,9 +994,9 @@ def display_dashboard(symbol=None, data=None, recommendations=None, NSE_STOCKS=N
             with col:
                 st.markdown(f"**{strategy.replace('_', ' ')}**", unsafe_allow_html=True)
                 st.markdown(colored_recommendation(recommendations[strategy]), unsafe_allow_html=True)
-        tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
+        tab1, tab2, tab3, tab4, tab5, tab6, tab7 = st.tabs([
             "📊 Price Action", "📉 Momentum", "📊 Volatility", 
-            "📈 Monte Carlo", "📉 New Indicators", "📊 Volume Profile & Waves"
+            "📈 Monte Carlo", "📉 New Indicators", "📊 Volume Profile & Waves", "📰 News Sentiment"
         ])
         with tab1:
             price_cols = ['Close', 'SMA_50', 'SMA_200', 'EMA_20', 'EMA_50']
@@ -965,11 +1053,22 @@ def display_dashboard(symbol=None, data=None, recommendations=None, NSE_STOCKS=N
                 st.plotly_chart(vp_fig)
             if 'Wave_Pattern' in data.columns:
                 st.write(f"Wave Pattern: {data['Wave_Pattern'].iloc[-1]}")
-        if st.button("Analyze News Sentiment"):
-            news_sentiment = fetch_news_sentiment_vader(symbol.split('.')[0], NEWSAPI_KEY)
-            finbert_sentiment = analyze_sentiment_finbert(f"Latest news about {symbol.split('.')[0]}")
-            st.write(f"VADER Sentiment: {news_sentiment:.2f}")
-            st.write(f"FinBERT Sentiment: {finbert_sentiment} (0=Negative, 1=Neutral, 2=Positive)")
+        with tab7:
+            st.subheader("📰 News Sentiment Analysis")
+            if recommendations["News_Sentiment"] is not None:
+                sentiment_dict, news_articles = fetch_combined_news_sentiment(symbol.split('.')[0])
+                st.write(f"**Overall Sentiment (All Sources):** {sentiment_dict['Overall']:.2f}")
+                st.write(f"**Moneycontrol Sentiment:** {sentiment_dict['Moneycontrol']:.2f}")
+                st.write(f"**LiveMint Sentiment:** {sentiment_dict['LiveMint']:.2f}")
+                st.write(f"**NewsAPI Sentiment:** {sentiment_dict['NewsAPI']:.2f}")
+                st.write(f"**GNews Sentiment:** {sentiment_dict['GNews']:.2f}")
+                st.write("Positive (>0.3) suggests bullish sentiment, Negative (<-0.3) suggests bearish. Cached: Yes")
+                
+                st.write("**Recent Headlines:**")
+                for article in news_articles:
+                    st.write(f"- {article}")
+            else:
+                st.write("No news sentiment data available.")
     elif symbol:
         st.warning("⚠️ No data available for the selected stock.")
 
@@ -1002,7 +1101,7 @@ def main():
         data = fetch_stock_data_cached(symbol)
         if not data.empty:
             data = analyze_stock(data)
-            recommendations = generate_recommendations(data, symbol)
+            recommendations = generate_recommendations(data, symbol, news_sentiment_weight=0.5)
             display_dashboard(symbol, data, recommendations, NSE_STOCKS)
         else:
             st.error("❌ Failed to load data for this symbol")
