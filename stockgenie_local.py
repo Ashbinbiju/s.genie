@@ -788,194 +788,204 @@ def colored_recommendation(recommendation):
         return recommendation
 
 def display_dashboard(symbol=None, data=None, recommendations=None, NSE_STOCKS=None):
-    st.title("📊 StockGenie Pro - NSE Analysis")
-    st.subheader(f"📅 Analysis for {datetime.now().strftime('%d %b %Y')}")
+    # Clear previous content by resetting the main container
+    st.empty()  # Clears the existing content in the main area
+    main_container = st.container()  # Use a container to manage new content
     
-    price_range = st.sidebar.slider("Select Price Range (₹)", min_value=0, max_value=10000, value=(100, 1000))
-    
-    if st.button("🚀 Generate Daily Top Picks"):
-        st.session_state.cancel_operation = False
-        progress_bar = st.progress(0)
-        loading_text = st.empty()
-        cancel_button = st.button("❌ Cancel Analysis")
-        loading_messages = itertools.cycle([
-            "Analyzing trends...", "Fetching data...", "Crunching numbers...",
-            "Evaluating indicators...", "Finalizing results..."
-        ])
+    with main_container:
+        st.title("📊 StockGenie Pro - NSE Analysis")
+        st.subheader(f"📅 Analysis for {datetime.now().strftime('%d %b %Y')}")
         
-        if cancel_button:
-            st.session_state.cancel_operation = True
+        price_range = st.sidebar.slider("Select Price Range (₹)", min_value=0, max_value=10000, value=(100, 1000))
         
-        results_df = analyze_all_stocks(
-            NSE_STOCKS,
-            price_range=price_range,
-            progress_callback=lambda progress, start_time, total, processed: update_progress(
-                progress_bar, loading_text, progress, loading_messages, start_time, total, processed
+        if st.button("🚀 Generate Daily Top Picks"):
+            st.session_state.cancel_operation = False
+            st.session_state.current_view = "daily_top_picks"  # Track the current view
+            progress_bar = st.progress(0)
+            loading_text = st.empty()
+            cancel_button = st.button("❌ Cancel Analysis")
+            loading_messages = itertools.cycle([
+                "Analyzing trends...", "Fetching data...", "Crunching numbers...",
+                "Evaluating indicators...", "Finalizing results..."
+            ])
+            
+            if cancel_button:
+                st.session_state.cancel_operation = True
+            
+            results_df = analyze_all_stocks(
+                NSE_STOCKS,
+                price_range=price_range,
+                progress_callback=lambda progress, start_time, total, processed: update_progress(
+                    progress_bar, loading_text, progress, loading_messages, start_time, total, processed
+                )
             )
-        )
-        progress_bar.empty()
-        loading_text.empty()
-        if not results_df.empty and not st.session_state.cancel_operation:
-            st.subheader("🏆 Today's Top 10 Stocks")
-            for _, row in results_df.iterrows():
-                with st.expander(f"{row['Symbol']} - Score: {row['Score']}/7"):
-                    current_price = f"{row['Current Price']:.2f}" if pd.notnull(row['Current Price']) else "N/A"
-                    buy_at = f"{row['Buy At']:.2f}" if pd.notnull(row['Buy At']) else "N/A"
-                    stop_loss = f"{row['Stop Loss']:.2f}" if pd.notnull(row['Stop Loss']) else "N/A"
-                    target = f"{row['Target']:.2f}" if pd.notnull(row['Target']) else "N/A"
-                    st.markdown(f"""
-                    {tooltip('Current Price', TOOLTIPS['Stop Loss'])}: ₹{current_price}  
-                    Buy At: ₹{buy_at} | Stop Loss: ₹{stop_loss}  
-                    Target: ₹{target}  
-                    Intraday: {colored_recommendation(row['Intraday'])}  
-                    Swing: {colored_recommendation(row['Swing'])}  
-                    Short-Term: {colored_recommendation(row['Short-Term'])}  
-                    Long-Term: {colored_recommendation(row['Long-Term'])}  
-                    Mean Reversion: {colored_recommendation(row['Mean_Reversion'])}  
-                    Breakout: {colored_recommendation(row['Breakout'])}  
-                    Ichimoku Trend: {colored_recommendation(row['Ichimoku_Trend'])}
-                    """, unsafe_allow_html=True)
-        elif not st.session_state.cancel_operation:
-            st.warning("⚠️ No top picks available due to data issues.")
-    
-    if st.button("⚡ Generate Intraday Top 5 Picks"):
-        st.session_state.cancel_operation = False
-        progress_bar = st.progress(0)
-        loading_text = st.empty()
-        cancel_button = st.button("❌ Cancel Intraday Analysis")
-        loading_messages = itertools.cycle([
-            "Scanning intraday trends...", "Detecting buy signals...", "Calculating stop-loss levels...",
-            "Optimizing targets...", "Finalizing top picks..."
-        ])
+            progress_bar.empty()
+            loading_text.empty()
+            if not results_df.empty and not st.session_state.cancel_operation:
+                st.subheader("🏆 Today's Top 10 Stocks")
+                for _, row in results_df.iterrows():
+                    with st.expander(f"{row['Symbol']} - Score: {row['Score']}/7"):
+                        current_price = f"{row['Current Price']:.2f}" if pd.notnull(row['Current Price']) else "N/A"
+                        buy_at = f"{row['Buy At']:.2f}" if pd.notnull(row['Buy At']) else "N/A"
+                        stop_loss = f"{row['Stop Loss']:.2f}" if pd.notnull(row['Stop Loss']) else "N/A"
+                        target = f"{row['Target']:.2f}" if pd.notnull(row['Target']) else "N/A"
+                        st.markdown(f"""
+                        {tooltip('Current Price', TOOLTIPS['Stop Loss'])}: ₹{current_price}  
+                        Buy At: ₹{buy_at} | Stop Loss: ₹{stop_loss}  
+                        Target: ₹{target}  
+                        Intraday: {colored_recommendation(row['Intraday'])}  
+                        Swing: {colored_recommendation(row['Swing'])}  
+                        Short-Term: {colored_recommendation(row['Short-Term'])}  
+                        Long-Term: {colored_recommendation(row['Long-Term'])}  
+                        Mean Reversion: {colored_recommendation(row['Mean_Reversion'])}  
+                        Breakout: {colored_recommendation(row['Breakout'])}  
+                        Ichimoku Trend: {colored_recommendation(row['Ichimoku_Trend'])}
+                        """, unsafe_allow_html=True)
+            elif not st.session_state.cancel_operation:
+                st.warning("⚠️ No top picks available due to data issues.")
         
-        if cancel_button:
-            st.session_state.cancel_operation = True
-        
-        intraday_results = analyze_intraday_stocks(
-            NSE_STOCKS,
-            price_range=price_range,
-            progress_callback=lambda progress, start_time, total, processed: update_progress(
-                progress_bar, loading_text, progress, loading_messages, start_time, total, processed
+        if st.button("⚡ Generate Intraday Top 5 Picks"):
+            st.session_state.cancel_operation = False
+            st.session_state.current_view = "intraday_top_picks"  # Track the current view
+            progress_bar = st.progress(0)
+            loading_text = st.empty()
+            cancel_button = st.button("❌ Cancel Intraday Analysis")
+            loading_messages = itertools.cycle([
+                "Scanning intraday trends...", "Detecting buy signals...", "Calculating stop-loss levels...",
+                "Optimizing targets...", "Finalizing top picks..."
+            ])
+            
+            if cancel_button:
+                st.session_state.cancel_operation = True
+            
+            intraday_results = analyze_intraday_stocks(
+                NSE_STOCKS,
+                price_range=price_range,
+                progress_callback=lambda progress, start_time, total, processed: update_progress(
+                    progress_bar, loading_text, progress, loading_messages, start_time, total, processed
+                )
             )
-        )
-        progress_bar.empty()
-        loading_text.empty()
-        if not intraday_results.empty and not st.session_state.cancel_operation:
-            st.subheader("🏆 Top 5 Intraday Stocks")
-            for _, row in intraday_results.iterrows():
-                with st.expander(f"{row['Symbol']} - Score: {row['Score']}/7"):
-                    current_price = f"{row['Current Price']:.2f}" if pd.notnull(row['Current Price']) else "N/A"
-                    buy_at = f"{row['Buy At']:.2f}" if pd.notnull(row['Buy At']) else "N/A"
-                    stop_loss = f"{row['Stop Loss']:.2f}" if pd.notnull(row['Stop Loss']) else "N/A"
-                    target = f"{row['Target']:.2f}" if pd.notnull(row['Target']) else "N/A"
-                    st.markdown(f"""
-                    {tooltip('Current Price', TOOLTIPS['Stop Loss'])}: ₹{current_price}  
-                    Buy At: ₹{buy_at} | Stop Loss: ₹{stop_loss}  
-                    Target: ₹{target}  
-                    Intraday: {colored_recommendation(row['Intraday'])}  
-                    """, unsafe_allow_html=True)
-        elif not st.session_state.cancel_operation:
-            st.warning("⚠️ No intraday picks available due to data issues.")
-    
-    if symbol and data is not None and recommendations is not None:
-        st.header(f"📋 {symbol.split('.')[0]} Analysis")
-        col1, col2, col3, col4 = st.columns(4)
-        with col1:
-            current_price = f"{recommendations['Current Price']:.2f}" if recommendations['Current Price'] is not None else "N/A"
-            st.metric(tooltip("Current Price", TOOLTIPS['RSI']), f"₹{current_price}")
-        with col2:
-            buy_at = f"{recommendations['Buy At']:.2f}" if recommendations['Buy At'] is not None else "N/A"
-            st.metric(tooltip("Buy At", "Recommended entry price"), f"₹{buy_at}")
-        with col3:
-            stop_loss = f"{recommendations['Stop Loss']:.2f}" if recommendations['Stop Loss'] is not None else "N/A"
-            st.metric(tooltip("Stop Loss", TOOLTIPS['Stop Loss']), f"₹{stop_loss}")
-        with col4:
-            target = f"{recommendations['Target']:.2f}" if recommendations['Target'] is not None else "N/A"
-            st.metric(tooltip("Target", "Price target based on risk/reward"), f"₹{target}")
-        st.subheader("📈 Trading Recommendations")
-        cols = st.columns(4)
-        strategy_names = ["Intraday", "Swing", "Short-Term", "Long-Term"]
-        for col, strategy in zip(cols, strategy_names):
-            with col:
-                st.markdown(f"**{strategy}**", unsafe_allow_html=True)
-                st.markdown(colored_recommendation(recommendations[strategy]), unsafe_allow_html=True)
-        st.subheader("📈 Additional Strategies")
-        cols = st.columns(3)
-        new_strategies = ["Mean_Reversion", "Breakout", "Ichimoku_Trend"]
-        for col, strategy in zip(cols, new_strategies):
-            with col:
-                st.markdown(f"**{strategy.replace('_', ' ')}**", unsafe_allow_html=True)
-                st.markdown(colored_recommendation(recommendations[strategy]), unsafe_allow_html=True)
-        tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
-            "📊 Price Action", "📉 Momentum", "📊 Volatility", 
-            "📈 Monte Carlo", "📉 New Indicators", "📊 Volume Profile & Waves"
-        ])
-        with tab1:
-            price_cols = ['Close', 'SMA_50', 'SMA_200', 'EMA_20', 'EMA_50']
-            valid_price_cols = [col for col in price_cols if col in data.columns and pd.api.types.is_numeric_dtype(data[col])]
-            if valid_price_cols:
-                fig = px.line(data, y=valid_price_cols, title="Price with Moving Averages")
+            progress_bar.empty()
+            loading_text.empty()
+            if not intraday_results.empty and not st.session_state.cancel_operation:
+                st.subheader("🏆 Top 5 Intraday Stocks")
+                for _, row in intraday_results.iterrows():
+                    with st.expander(f"{row['Symbol']} - Score: {row['Score']}/7"):
+                        current_price = f"{row['Current Price']:.2f}" if pd.notnull(row['Current Price']) else "N/A"
+                        buy_at = f"{row['Buy At']:.2f}" if pd.notnull(row['Buy At']) else "N/A"
+                        stop_loss = f"{row['Stop Loss']:.2f}" if pd.notnull(row['Stop Loss']) else "N/A"
+                        target = f"{row['Target']:.2f}" if pd.notnull(row['Target']) else "N/A"
+                        st.markdown(f"""
+                        {tooltip('Current Price', TOOLTIPS['Stop Loss'])}: ₹{current_price}  
+                        Buy At: ₹{buy_at} | Stop Loss: ₹{stop_loss}  
+                        Target: ₹{target}  
+                        Intraday: {colored_recommendation(row['Intraday'])}  
+                        """, unsafe_allow_html=True)
+            elif not st.session_state.cancel_operation:
+                st.warning("⚠️ No intraday picks available due to data issues.")
+        
+        # Only display individual stock analysis if no batch view is active or explicitly selected
+        if symbol and data is not None and recommendations is not None and st.session_state.get("current_view") not in ["daily_top_picks", "intraday_top_picks"]:
+            st.header(f"📋 {symbol.split('.')[0]} Analysis")
+            col1, col2, col3, col4 = st.columns(4)
+            with col1:
+                current_price = f"{recommendations['Current Price']:.2f}" if recommendations['Current Price'] is not None else "N/A"
+                st.metric(tooltip("Current Price", TOOLTIPS['RSI']), f"₹{current_price}")
+            with col2:
+                buy_at = f"{recommendations['Buy At']:.2f}" if recommendations['Buy At'] is not None else "N/A"
+                st.metric(tooltip("Buy At", "Recommended entry price"), f"₹{buy_at}")
+            with col3:
+                stop_loss = f"{recommendations['Stop Loss']:.2f}" if recommendations['Stop Loss'] is not None else "N/A"
+                st.metric(tooltip("Stop Loss", TOOLTIPS['Stop Loss']), f"₹{stop_loss}")
+            with col4:
+                target = f"{recommendations['Target']:.2f}" if recommendations['Target'] is not None else "N/A"
+                st.metric(tooltip("Target", "Price target based on risk/reward"), f"₹{target}")
+            st.subheader("📈 Trading Recommendations")
+            cols = st.columns(4)
+            strategy_names = ["Intraday", "Swing", "Short-Term", "Long-Term"]
+            for col, strategy in zip(cols, strategy_names):
+                with col:
+                    st.markdown(f"**{strategy}**", unsafe_allow_html=True)
+                    st.markdown(colored_recommendation(recommendations[strategy]), unsafe_allow_html=True)
+            st.subheader("📈 Additional Strategies")
+            cols = st.columns(3)
+            new_strategies = ["Mean_Reversion", "Breakout", "Ichimoku_Trend"]
+            for col, strategy in zip(cols, new_strategies):
+                with col:
+                    st.markdown(f"**{strategy.replace('_', ' ')}**", unsafe_allow_html=True)
+                    st.markdown(colored_recommendation(recommendations[strategy]), unsafe_allow_html=True)
+            tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
+                "📊 Price Action", "📉 Momentum", "📊 Volatility", 
+                "📈 Monte Carlo", "📉 New Indicators", "📊 Volume Profile & Waves"
+            ])
+            with tab1:
+                price_cols = ['Close', 'SMA_50', 'SMA_200', 'EMA_20', 'EMA_50']
+                valid_price_cols = [col for col in price_cols if col in data.columns and pd.api.types.is_numeric_dtype(data[col])]
+                if valid_price_cols:
+                    fig = px.line(data, y=valid_price_cols, title="Price with Moving Averages")
+                    st.plotly_chart(fig)
+                else:
+                    st.warning("⚠️ No valid price action data available for plotting.")
+            with tab2:
+                momentum_cols = ['RSI', 'MACD', 'MACD_signal']
+                valid_momentum_cols = [col for col in momentum_cols if col in data.columns and pd.api.types.is_numeric_dtype(data[col])]
+                if valid_momentum_cols:
+                    fig = px.line(data, y=valid_momentum_cols, title="Momentum Indicators")
+                    st.plotly_chart(fig)
+                else:
+                    st.warning("⚠️ No valid momentum indicators available for plotting.")
+            with tab3:
+                volatility_cols = ['ATR', 'Upper_Band', 'Lower_Band', 'Donchian_Upper', 'Donchian_Lower']
+                valid_volatility_cols = [col for col in volatility_cols if col in data.columns and pd.api.types.is_numeric_dtype(data[col])]
+                if valid_volatility_cols:
+                    fig = px.line(data, y=valid_volatility_cols, title="Volatility Analysis")
+                    st.plotly_chart(fig)
+                else:
+                    st.warning("⚠️ No valid volatility indicators available for plotting.")
+            with tab4:
+                mc_results = monte_carlo_simulation(data)
+                mc_df = pd.DataFrame(mc_results).T
+                lower_ci = mc_df.quantile(0.05, axis=1)
+                upper_ci = mc_df.quantile(0.95, axis=1)
+                mean_path = mc_df.mean(axis=1)
+                ci_df = pd.DataFrame({
+                    'Mean': mean_path,
+                    'Lower 5% CI': lower_ci,
+                    'Upper 95% CI': upper_ci
+                })
+                fig = px.line(ci_df, title="Monte Carlo with 90% Confidence Interval")
                 st.plotly_chart(fig)
-            else:
-                st.warning("⚠️ No valid price action data available for plotting.")
-        with tab2:
-            momentum_cols = ['RSI', 'MACD', 'MACD_signal']
-            valid_momentum_cols = [col for col in momentum_cols if col in data.columns and pd.api.types.is_numeric_dtype(data[col])]
-            if valid_momentum_cols:
-                fig = px.line(data, y=valid_momentum_cols, title="Momentum Indicators")
-                st.plotly_chart(fig)
-            else:
-                st.warning("⚠️ No valid momentum indicators available for plotting.")
-        with tab3:
-            volatility_cols = ['ATR', 'Upper_Band', 'Lower_Band', 'Donchian_Upper', 'Donchian_Lower']
-            valid_volatility_cols = [col for col in volatility_cols if col in data.columns and pd.api.types.is_numeric_dtype(data[col])]
-            if valid_volatility_cols:
-                fig = px.line(data, y=valid_volatility_cols, title="Volatility Analysis")
-                st.plotly_chart(fig)
-            else:
-                st.warning("⚠️ No valid volatility indicators available for plotting.")
-        with tab4:
-            mc_results = monte_carlo_simulation(data)
-            mc_df = pd.DataFrame(mc_results).T
-            lower_ci = mc_df.quantile(0.05, axis=1)
-            upper_ci = mc_df.quantile(0.95, axis=1)
-            mean_path = mc_df.mean(axis=1)
-            ci_df = pd.DataFrame({
-                'Mean': mean_path,
-                'Lower 5% CI': lower_ci,
-                'Upper 95% CI': upper_ci
-            })
-            fig = px.line(ci_df, title="Monte Carlo with 90% Confidence Interval")
-            st.plotly_chart(fig)
-            bull, bear = scenario_analysis(data)
-            scenario_df = pd.DataFrame({'Bull Scenario': bull, 'Bear Scenario': bear})
-            fig2 = px.line(scenario_df, title="Bull vs Bear Scenarios (30 Days)")
-            st.plotly_chart(fig2)
-        with tab5:
-            new_cols = ['Ichimoku_Span_A', 'Ichimoku_Span_B', 'Ichimoku_Tenkan', 'Ichimoku_Kijun', 'CMF']
-            valid_new_cols = [col for col in new_cols if col in data.columns and pd.api.types.is_numeric_dtype(data[col])]
-            if valid_new_cols:
-                fig = px.line(data, y=valid_new_cols, title="New Indicators (Ichimoku & CMF)")
-                st.plotly_chart(fig)
-            else:
-                st.warning("⚠️ No valid new indicators available for plotting.")
-        with tab6:
-            if 'Volume_Profile' in data.columns and pd.notnull(data['Volume_Profile'].iloc[-1]):
-                vp_fig = px.bar(data['Volume_Profile'], title="Volume Profile")
-                st.plotly_chart(vp_fig)
-            if 'Wave_Pattern' in data.columns:
-                st.write(f"Wave Pattern: {data['Wave_Pattern'].iloc[-1]}")
-        if st.button("Analyze News Sentiment"):
-            news_sentiment = fetch_news_sentiment_vader(symbol.split('.')[0], NEWSAPI_KEY)
-            finbert_sentiment = analyze_sentiment_finbert(f"Latest news about {symbol.split('.')[0]}")
-            st.write(f"VADER Sentiment: {news_sentiment:.2f}")
-            st.write(f"FinBERT Sentiment: {finbert_sentiment} (0=Negative, 1=Neutral, 2=Positive)")
-    elif symbol:
-        st.warning("⚠️ No data available for the selected stock.")
+                bull, bear = scenario_analysis(data)
+                scenario_df = pd.DataFrame({'Bull Scenario': bull, 'Bear Scenario': bear})
+                fig2 = px.line(scenario_df, title="Bull vs Bear Scenarios (30 Days)")
+                st.plotly_chart(fig2)
+            with tab5:
+                new_cols = ['Ichimoku_Span_A', 'Ichimoku_Span_B', 'Ichimoku_Tenkan', 'Ichimoku_Kijun', 'CMF']
+                valid_new_cols = [col for col in new_cols if col in data.columns and pd.api.types.is_numeric_dtype(data[col])]
+                if valid_new_cols:
+                    fig = px.line(data, y=valid_new_cols, title="New Indicators (Ichimoku & CMF)")
+                    st.plotly_chart(fig)
+                else:
+                    st.warning("⚠️ No valid new indicators available for plotting.")
+            with tab6:
+                if 'Volume_Profile' in data.columns and pd.notnull(data['Volume_Profile'].iloc[-1]):
+                    vp_fig = px.bar(data['Volume_Profile'], title="Volume Profile")
+                    st.plotly_chart(vp_fig)
+                if 'Wave_Pattern' in data.columns:
+                    st.write(f"Wave Pattern: {data['Wave_Pattern'].iloc[-1]}")
+            if st.button("Analyze News Sentiment"):
+                news_sentiment = fetch_news_sentiment_vader(symbol.split('.')[0], NEWSAPI_KEY)
+                finbert_sentiment = analyze_sentiment_finbert(f"Latest news about {symbol.split('.')[0]}")
+                st.write(f"VADER Sentiment: {news_sentiment:.2f}")
+                st.write(f"FinBERT Sentiment: {finbert_sentiment} (0=Negative, 1=Neutral, 2=Positive)")
+        elif symbol and st.session_state.get("current_view") not in ["daily_top_picks", "intraday_top_picks"]:
+            st.warning("⚠️ No data available for the selected stock.")
 
 def main():
     if 'cancel_operation' not in st.session_state:
         st.session_state.cancel_operation = False
+    if 'current_view' not in st.session_state:
+        st.session_state.current_view = None  # Track the current view mode
 
     st.sidebar.title("🔍 Stock Search")
     NSE_STOCKS = fetch_nse_stock_list()
@@ -1003,6 +1013,8 @@ def main():
         if not data.empty:
             data = analyze_stock(data)
             recommendations = generate_recommendations(data, symbol)
+            # Reset the current view to individual stock analysis when a new stock is selected
+            st.session_state.current_view = "individual_stock"
             display_dashboard(symbol, data, recommendations, NSE_STOCKS)
         else:
             st.error("❌ Failed to load data for this symbol")
