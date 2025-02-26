@@ -52,17 +52,25 @@ def retry(max_retries=3, delay=1, backoff_factor=2, jitter=0.5):
             retries = 0
             while retries < max_retries:
                 try:
-                    return func(*args, **kwargs)
-                except (requests.exceptions.RequestException, ConnectionError) as e:
-                    retries += 1
-                    if retries == max_retries:
-                        raise e
-                    sleep_time = (delay * (backoff_factor ** retries)) + random.uniform(0, jitter)
-                    time.sleep(sleep_time)
+                    result = func(*args, **kwargs)
+                    time.sleep(1)  # Delay after every successful call to respect rate limits
+                    return result
+                except Exception as e:
+                    if "Too Many Requests" in str(e) or "rate limited" in str(e).lower():
+                        retries += 1
+                        if retries == max_retries:
+                            st.warning(f"Max retries reached for {args[0]}: {str(e)}. Skipping this stock.")
+                            return pd.DataFrame()  # Return empty DataFrame to skip gracefully
+                        sleep_time = delay * (backoff_factor ** retries) + random.uniform(0, jitter)
+                        st.warning(f"Rate limited for {args[0]}. Waiting {sleep_time:.2f} seconds before retry ({retries}/{max_retries})...")
+                        time.sleep(sleep_time)
+                    else:
+                        st.warning(f"Error fetching data for {args[0]}: {str(e)}")
+                        return pd.DataFrame()
         return wrapper
     return decorator
 
-@retry(max_retries=3, delay=2)
+@retry(max_retries=3, delay=5)
 def fetch_nse_stock_list():
     url = "https://archives.nseindia.com/content/equities/EQUITY_L.csv"
     try:
@@ -81,11 +89,11 @@ def fetch_nse_stock_list():
             "ABFRL.NS",
         ]
 
-@lru_cache(maxsize=100)
+@lru_cache(maxsize=1000)  # Increased cache size to handle more stocks
 def fetch_stock_data_cached(symbol, period="5y", interval="1d"):
+    if ".NS" not in symbol:
+        symbol += ".NS"
     try:
-        if ".NS" not in symbol:
-            symbol += ".NS"
         stock = yf.Ticker(symbol)
         data = stock.history(period=period, interval=interval)
         if data.empty:
@@ -93,8 +101,7 @@ def fetch_stock_data_cached(symbol, period="5y", interval="1d"):
             return pd.DataFrame()
         return data
     except Exception as e:
-        st.warning(f"⚠️ Error fetching data for {symbol}: {str(e)}")
-        return pd.DataFrame()
+        raise e  # Let retry decorator handle the exception
 
 def calculate_advance_decline_ratio(stock_list):
     advances = 0
@@ -641,7 +648,7 @@ def generate_recommendations(data, symbol=None):
 def analyze_batch(stock_batch):
     results = []
     errors = []
-    with ThreadPoolExecutor(max_workers=10) as executor:
+    with ThreadPoolExecutor(max_workers=5) as executor:  # Reduced to 5 workers to limit concurrency
         valid_futures = {}
         for symbol in stock_batch:
             data = fetch_stock_data_cached(symbol)
@@ -698,11 +705,14 @@ def update_progress(progress_bar, loading_text, progress_value, loading_messages
     else:
         loading_text.text(f"{loading_message}{dots} | Processed 0/{total_items} stocks")
 
-def analyze_all_stocks(stock_list, batch_size=50, price_range=None, progress_callback=None):
+def analyze_all_stocks(stock_list, batch_size=20, price_range=None, progress_callback=None, max_stocks=200):
     if st.session_state.cancel_operation:
         st.warning("⚠️ Analysis canceled by user.")
         return pd.DataFrame()
 
+    # Limit the number of stocks analyzed
+    stock_list = stock_list[:max_stocks]  # Cap at max_stocks (default 200)
+    st.info(f"Analyzing up to {max_stocks} stocks to avoid rate limits.")
     results = []
     total_items = len(stock_list)
     start_time = time.time()
@@ -718,6 +728,7 @@ def analyze_all_stocks(stock_list, batch_size=50, price_range=None, progress_cal
         processed_items = min(i + len(batch), total_items)
         if progress_callback:
             progress_callback(processed_items / total_items, start_time, total_items, processed_items)
+        time.sleep(2)  # Delay between batches to avoid rate limiting
     
     if not results:
         return pd.DataFrame()
@@ -739,11 +750,14 @@ def analyze_all_stocks(stock_list, batch_size=50, price_range=None, progress_cal
                                 (results_df['Current Price'] <= price_range[1])]
     return results_df.sort_values(by="Score", ascending=False).head(10)
 
-def analyze_intraday_stocks(stock_list, batch_size=50, price_range=None, progress_callback=None):
+def analyze_intraday_stocks(stock_list, batch_size=20, price_range=None, progress_callback=None, max_stocks=200):
     if st.session_state.cancel_operation:
         st.warning("⚠️ Analysis canceled by user.")
         return pd.DataFrame()
 
+    # Limit the number of stocks analyzed
+    stock_list = stock_list[:max_stocks]  # Cap at max_stocks (default 200)
+    st.info(f"Analyzing up to {max_stocks} stocks to avoid rate limits.")
     results = []
     total_items = len(stock_list)
     start_time = time.time()
@@ -759,6 +773,7 @@ def analyze_intraday_stocks(stock_list, batch_size=50, price_range=None, progres
         processed_items = min(i + len(batch), total_items)
         if progress_callback:
             progress_callback(processed_items / total_items, start_time, total_items, processed_items)
+        time.sleep(2)  # Delay between batches to avoid rate limiting
     
     results_df = pd.DataFrame([r for r in results if r is not None])
     if results_df.empty:
@@ -907,10 +922,12 @@ def display_dashboard(NSE_STOCKS):
         
         results_df = analyze_all_stocks(
             NSE_STOCKS,
+            batch_size=20,  # Smaller batch size
             price_range=price_range,
             progress_callback=lambda progress, start_time, total, processed: update_progress(
                 progress_bar, loading_text, progress, loading_messages, start_time, total, processed
-            )
+            ),
+            max_stocks=200  # Explicit limit
         )
         progress_bar.empty()
         loading_text.empty()
@@ -953,10 +970,12 @@ def display_dashboard(NSE_STOCKS):
         
         intraday_results = analyze_intraday_stocks(
             NSE_STOCKS,
+            batch_size=20,  # Smaller batch size
             price_range=price_range,
             progress_callback=lambda progress, start_time, total, processed: update_progress(
                 progress_bar, loading_text, progress, loading_messages, start_time, total, processed
-            )
+            ),
+            max_stocks=200  # Explicit limit
         )
         progress_bar.empty()
         loading_text.empty()
