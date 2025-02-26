@@ -4,7 +4,6 @@ import ta
 import streamlit as st
 from datetime import datetime, timedelta
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from functools import lru_cache
 import plotly.express as px
 import time
 import requests
@@ -19,6 +18,8 @@ from arch import arch_model
 from scipy.signal import find_peaks
 import torch
 from transformers import BertTokenizer, BertForSequenceClassification
+import pickle
+import os
 
 # API Keys (Consider moving to environment variables)
 NEWSAPI_KEY = "ed58659895e84dfb8162a8bb47d8525e"
@@ -46,26 +47,26 @@ TOOLTIPS = {
 def tooltip(label, explanation):
     return f"{label} 📌 ({explanation})"
 
-def retry(max_retries=3, delay=1, backoff_factor=2, jitter=0.5):
+def retry(max_retries=3, delay=5, backoff_factor=2, jitter=0.5):
     def decorator(func):
         def wrapper(*args, **kwargs):
             retries = 0
             while retries < max_retries:
                 try:
                     result = func(*args, **kwargs)
-                    time.sleep(1)  # Delay after every successful call to respect rate limits
+                    time.sleep(0.5)  # Base delay to respect rate limits
                     return result
                 except Exception as e:
                     if "Too Many Requests" in str(e) or "rate limited" in str(e).lower():
                         retries += 1
                         if retries == max_retries:
-                            st.warning(f"Max retries reached for {args[0]}: {str(e)}. Skipping this stock.")
-                            return pd.DataFrame()  # Return empty DataFrame to skip gracefully
+                            st.warning(f"Max retries reached for {args[0]}: {str(e)}. Skipping.")
+                            return pd.DataFrame()
                         sleep_time = delay * (backoff_factor ** retries) + random.uniform(0, jitter)
-                        st.warning(f"Rate limited for {args[0]}. Waiting {sleep_time:.2f} seconds before retry ({retries}/{max_retries})...")
+                        st.warning(f"Rate limited for {args[0]}. Waiting {sleep_time:.2f}s ({retries}/{max_retries})...")
                         time.sleep(sleep_time)
                     else:
-                        st.warning(f"Error fetching data for {args[0]}: {str(e)}")
+                        st.warning(f"Error for {args[0]}: {str(e)}")
                         return pd.DataFrame()
         return wrapper
     return decorator
@@ -89,8 +90,24 @@ def fetch_nse_stock_list():
             "ABFRL.NS",
         ]
 
-@lru_cache(maxsize=1000)  # Increased cache size to handle more stocks
+def load_cache():
+    cache_file = "stock_data_cache.pkl"
+    if os.path.exists(cache_file):
+        with open(cache_file, 'rb') as f:
+            return pickle.load(f)
+    return {}
+
+def save_cache(cache):
+    with open("stock_data_cache.pkl", 'wb') as f:
+        pickle.dump(cache, f)
+
+@retry(max_retries=3, delay=5)
 def fetch_stock_data_cached(symbol, period="5y", interval="1d"):
+    cache = load_cache()
+    cache_key = f"{symbol}_{period}_{interval}"
+    if cache_key in cache:
+        return cache[cache_key]
+    
     if ".NS" not in symbol:
         symbol += ".NS"
     try:
@@ -99,9 +116,11 @@ def fetch_stock_data_cached(symbol, period="5y", interval="1d"):
         if data.empty:
             st.warning(f"⚠️ No data returned for {symbol} from Yahoo Finance.")
             return pd.DataFrame()
+        cache[cache_key] = data
+        save_cache(cache)
         return data
     except Exception as e:
-        raise e  # Let retry decorator handle the exception
+        raise e
 
 def calculate_advance_decline_ratio(stock_list):
     advances = 0
@@ -648,11 +667,11 @@ def generate_recommendations(data, symbol=None):
 def analyze_batch(stock_batch):
     results = []
     errors = []
-    with ThreadPoolExecutor(max_workers=5) as executor:  # Reduced to 5 workers to limit concurrency
+    with ThreadPoolExecutor(max_workers=5) as executor:
         valid_futures = {}
         for symbol in stock_batch:
             data = fetch_stock_data_cached(symbol)
-            if not data.empty and len(data) >= 15:  # Minimum 15 days for basic indicators
+            if not data.empty and len(data) >= 15:
                 valid_futures[executor.submit(analyze_stock_parallel, symbol)] = symbol
             else:
                 errors.append(f"⚠️ Skipping {symbol}: insufficient data ({len(data)} days)")
@@ -699,22 +718,19 @@ def update_progress(progress_bar, loading_text, progress_value, loading_messages
     if processed_items > 0:
         time_per_item = elapsed_time / processed_items
         remaining_items = total_items - processed_items
-        estimated_remaining_seconds = time_per_item * remaining_items
-        eta = timedelta(seconds=int(estimated_remaining_seconds))
+        eta = timedelta(seconds=int(time_per_item * remaining_items))
         loading_text.text(f"{loading_message}{dots} | Processed {processed_items}/{total_items} stocks (ETA: {eta})")
     else:
         loading_text.text(f"{loading_message}{dots} | Processed 0/{total_items} stocks")
 
-def analyze_all_stocks(stock_list, batch_size=20, price_range=None, progress_callback=None, max_stocks=200):
+def analyze_all_stocks(stock_list, batch_size=20, price_range=None, progress_callback=None):
     if st.session_state.cancel_operation:
         st.warning("⚠️ Analysis canceled by user.")
         return pd.DataFrame()
 
-    # Limit the number of stocks analyzed
-    stock_list = stock_list[:max_stocks]  # Cap at max_stocks (default 200)
-    st.info(f"Analyzing up to {max_stocks} stocks to avoid rate limits.")
+    total_items = len(stock_list)  # ~2629 stocks
+    st.info(f"Analyzing all {total_items} NSE stocks. This may take ~{total_items // 60} minutes due to rate limits.")
     results = []
-    total_items = len(stock_list)
     start_time = time.time()
     
     for i in range(0, total_items, batch_size):
@@ -750,16 +766,14 @@ def analyze_all_stocks(stock_list, batch_size=20, price_range=None, progress_cal
                                 (results_df['Current Price'] <= price_range[1])]
     return results_df.sort_values(by="Score", ascending=False).head(10)
 
-def analyze_intraday_stocks(stock_list, batch_size=20, price_range=None, progress_callback=None, max_stocks=200):
+def analyze_intraday_stocks(stock_list, batch_size=20, price_range=None, progress_callback=None):
     if st.session_state.cancel_operation:
         st.warning("⚠️ Analysis canceled by user.")
         return pd.DataFrame()
 
-    # Limit the number of stocks analyzed
-    stock_list = stock_list[:max_stocks]  # Cap at max_stocks (default 200)
-    st.info(f"Analyzing up to {max_stocks} stocks to avoid rate limits.")
+    total_items = len(stock_list)  # ~2629 stocks
+    st.info(f"Analyzing all {total_items} NSE stocks for intraday picks. This may take ~{total_items // 60} minutes.")
     results = []
-    total_items = len(stock_list)
     start_time = time.time()
     
     for i in range(0, total_items, batch_size):
@@ -922,12 +936,11 @@ def display_dashboard(NSE_STOCKS):
         
         results_df = analyze_all_stocks(
             NSE_STOCKS,
-            batch_size=20,  # Smaller batch size
+            batch_size=20,
             price_range=price_range,
             progress_callback=lambda progress, start_time, total, processed: update_progress(
                 progress_bar, loading_text, progress, loading_messages, start_time, total, processed
-            ),
-            max_stocks=200  # Explicit limit
+            )
         )
         progress_bar.empty()
         loading_text.empty()
@@ -970,12 +983,11 @@ def display_dashboard(NSE_STOCKS):
         
         intraday_results = analyze_intraday_stocks(
             NSE_STOCKS,
-            batch_size=20,  # Smaller batch size
+            batch_size=20,
             price_range=price_range,
             progress_callback=lambda progress, start_time, total, processed: update_progress(
                 progress_bar, loading_text, progress, loading_messages, start_time, total, processed
-            ),
-            max_stocks=200  # Explicit limit
+            )
         )
         progress_bar.empty()
         loading_text.empty()
