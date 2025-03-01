@@ -20,11 +20,16 @@ import torch
 from transformers import BertTokenizer, BertForSequenceClassification
 import pickle
 import os
+import telegram  # Added for Telegram integration
+from telegram.error import TelegramError  # Added for error handling
+import asyncio
 
 # API Keys (Consider moving to environment variables)
 NEWSAPI_KEY = "ed58659895e84dfb8162a8bb47d8525e"
 GNEWS_KEY = "e4f5f1442641400694645433a8f98b94"
 ALPHA_VANTAGE_KEY = "TCAUKYUCIDZ6PI57"
+TELEGRAM_BOT_TOKEN = "7902319450:AAFPNcUyk9F6Sesy-h6SQnKHC_Yr6Uqk9ps"  # Your Telegram bot token
+TELEGRAM_CHAT_ID = "-1002411670969"  # Your Telegram supergroup ID
 
 # Tooltip explanations
 TOOLTIPS = {
@@ -816,6 +821,19 @@ def colored_recommendation(recommendation):
     else:
         return recommendation
 
+async def send_telegram_message(message):
+    try:
+        bot = telegram.Bot(token="7902319450:AAFPNcUyk9F6Sesy-h6SQnKHC_Yr6Uqk9ps")
+        await bot.send_message(
+            chat_id="-1002411670969",
+            text=message,
+            parse_mode='HTML'
+        )
+        return True
+    except TelegramError as e:
+        st.error(f"❌ Failed to send Telegram message: {str(e)}")
+        return False
+
 def display_stock_analysis(symbol, data, recommendations):
     with st.container():
         st.header(f"📋 {symbol.split('.')[0]} Analysis")
@@ -919,6 +937,7 @@ def display_dashboard(NSE_STOCKS):
     st.subheader(f"📅 Analysis for {datetime.now().strftime('%d %b %Y')}")
     
     price_range = st.sidebar.slider("Select Price Range (₹)", min_value=0, max_value=10000, value=(100, 1000))
+    send_to_telegram = st.sidebar.checkbox("Send results to Telegram", value=True)
     
     if st.button("🚀 Generate Daily Top Picks"):
         st.session_state.current_view = "daily_top_picks"
@@ -944,8 +963,11 @@ def display_dashboard(NSE_STOCKS):
         )
         progress_bar.empty()
         loading_text.empty()
+        
         if not results_df.empty and not st.session_state.cancel_operation:
             st.subheader("🏆 Today's Top 10 Stocks")
+            telegram_message = f"<b>🏆 Today's Top 10 Stocks - {datetime.now().strftime('%d %b %Y')}</b>\n\n"
+            
             for _, row in results_df.iterrows():
                 with st.expander(f"{row['Symbol']} - Score: {row['Score']}/7"):
                     current_price = f"{row['Current Price']:.2f}" if pd.notnull(row['Current Price']) else "N/A"
@@ -964,6 +986,19 @@ def display_dashboard(NSE_STOCKS):
                     Breakout: {colored_recommendation(row['Breakout'])}  
                     Ichimoku Trend: {colored_recommendation(row['Ichimoku_Trend'])}
                     """, unsafe_allow_html=True)
+                
+                telegram_message += f"<b>{row['Symbol']}</b> (Score: {row['Score']}/7)\n"
+                telegram_message += f"Price: ₹{current_price} | Buy: ₹{buy_at}\n"
+                telegram_message += f"SL: ₹{stop_loss} | Target: ₹{target}\n"
+                telegram_message += f"Intraday: {row['Intraday']} | Swing: {row['Swing']}\n\n"
+            
+            if send_to_telegram:
+                loop = asyncio.new_event_loop()
+                asyncio.set_event_loop(loop)
+                success = loop.run_until_complete(send_telegram_message(telegram_message))
+                if success:
+                    st.success("✅ Results sent to Telegram group!")
+        
         elif not st.session_state.cancel_operation:
             st.warning("⚠️ No top picks available due to data issues.")
     
@@ -991,8 +1026,11 @@ def display_dashboard(NSE_STOCKS):
         )
         progress_bar.empty()
         loading_text.empty()
+        
         if not strong_buy_results.empty and not st.session_state.cancel_operation:
             st.subheader("🏆 Top 5 Buy Picks (Strong Buy/Buy)")
+            telegram_message = f"<b>🏆 Top 5 Buy Picks - {datetime.now().strftime('%d %b %Y')}</b>\n\n"
+            
             for _, row in strong_buy_results.iterrows():
                 with st.expander(f"{row['Symbol']} - Score: {row['Score']}/7"):
                     current_price = f"{row['Current Price']:.2f}" if pd.notnull(row['Current Price']) else "N/A"
@@ -1008,10 +1046,29 @@ def display_dashboard(NSE_STOCKS):
                     Short-Term: {colored_recommendation(row['Short-Term'])}  
                     Long-Term: {colored_recommendation(row['Long-Term'])}  
                     """, unsafe_allow_html=True)
+                
+                telegram_message += f"<b>{row['Symbol']}</b> (Score: {row['Score']}/7)\n"
+                telegram_message += f"Price: ₹{current_price} | Buy: ₹{buy_at}\n"
+                telegram_message += f"SL: ₹{stop_loss} | Target: ₹{target}\n"
+                telegram_message += f"Intraday: {row['Intraday']} | Swing: {row['Swing']}\n\n"
+            
+            if send_to_telegram:
+                loop = asyncio.new_event_loop()
+                asyncio.set_event_loop(loop)
+                success = loop.run_until_complete(send_telegram_message(telegram_message))
+                if success:
+                    st.success("✅ Buy picks sent to Telegram group!")
+        
         elif not st.session_state.cancel_operation:
             st.warning("⚠️ No buy picks available due to data issues.")
 
 def main():
+    try:
+        import telegram
+    except ImportError:
+        st.error("❌ Please install python-telegram-bot: pip install python-telegram-bot --upgrade")
+        return
+
     if 'cancel_operation' not in st.session_state:
         st.session_state.cancel_operation = False
     if 'current_view' not in st.session_state:
