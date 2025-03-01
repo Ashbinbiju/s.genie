@@ -728,7 +728,7 @@ def analyze_all_stocks(stock_list, batch_size=20, price_range=None, progress_cal
         st.warning("⚠️ Analysis canceled by user.")
         return pd.DataFrame()
 
-    total_items = len(stock_list)  # ~2629 stocks
+    total_items = len(stock_list)
     st.info(f"Analyzing all {total_items} NSE stocks. This may take ~{total_items // 60} minutes due to rate limits.")
     results = []
     start_time = time.time()
@@ -744,7 +744,7 @@ def analyze_all_stocks(stock_list, batch_size=20, price_range=None, progress_cal
         processed_items = min(i + len(batch), total_items)
         if progress_callback:
             progress_callback(processed_items / total_items, start_time, total_items, processed_items)
-        time.sleep(2)  # Delay between batches to avoid rate limiting
+        time.sleep(2)
     
     if not results:
         return pd.DataFrame()
@@ -766,13 +766,13 @@ def analyze_all_stocks(stock_list, batch_size=20, price_range=None, progress_cal
                                 (results_df['Current Price'] <= price_range[1])]
     return results_df.sort_values(by="Score", ascending=False).head(10)
 
-def analyze_intraday_stocks(stock_list, batch_size=20, price_range=None, progress_callback=None):
+def analyze_strong_buy_stocks(stock_list, batch_size=20, price_range=None, progress_callback=None):
     if st.session_state.cancel_operation:
         st.warning("⚠️ Analysis canceled by user.")
         return pd.DataFrame()
 
-    total_items = len(stock_list)  # ~2629 stocks
-    st.info(f"Analyzing all {total_items} NSE stocks for intraday picks. This may take ~{total_items // 60} minutes.")
+    total_items = len(stock_list)
+    st.info(f"Analyzing all {total_items} NSE stocks for strong buy/buy picks. This may take ~{total_items // 60} minutes.")
     results = []
     start_time = time.time()
     
@@ -787,7 +787,7 @@ def analyze_intraday_stocks(stock_list, batch_size=20, price_range=None, progres
         processed_items = min(i + len(batch), total_items)
         if progress_callback:
             progress_callback(processed_items / total_items, start_time, total_items, processed_items)
-        time.sleep(2)  # Delay between batches to avoid rate limiting
+        time.sleep(2)
     
     results_df = pd.DataFrame([r for r in results if r is not None])
     if results_df.empty:
@@ -801,10 +801,10 @@ def analyze_intraday_stocks(stock_list, batch_size=20, price_range=None, progres
         results_df["Current Price"] = None
     if price_range:
         results_df = results_df[results_df['Current Price'].notnull() & 
-                                (results_df['Current Price'] >= price_range[0]) & 
-                                (results_df['Current Price'] <= price_range[1])]
-    intraday_df = results_df[results_df["Intraday"].str.contains("Buy", na=False)]
-    return intraday_df.sort_values(by="Score", ascending=False).head(5)
+                              (results_df['Current Price'] >= price_range[0]) & 
+                              (results_df['Current Price'] <= price_range[1])]
+    strong_buy_df = results_df[results_df["Intraday"].isin(["Strong Buy", "Buy"])]
+    return strong_buy_df.sort_values(by="Score", ascending=False).head(5)
 
 def colored_recommendation(recommendation):
     if "Buy" in recommendation:
@@ -967,21 +967,21 @@ def display_dashboard(NSE_STOCKS):
         elif not st.session_state.cancel_operation:
             st.warning("⚠️ No top picks available due to data issues.")
     
-    if st.button("⚡ Generate Intraday Top 5 Picks"):
-        st.session_state.current_view = "intraday_top_picks"
+    if st.button("🟢 Generate Top Buy Picks"):
+        st.session_state.current_view = "strong_buy_picks"
         st.session_state.cancel_operation = False
         progress_bar = st.progress(0)
         loading_text = st.empty()
-        cancel_button = st.button("❌ Cancel Intraday Analysis", key="cancel_intraday")
+        cancel_button = st.button("❌ Cancel Buy Analysis", key="cancel_strong_buy")
         loading_messages = itertools.cycle([
-            "Scanning intraday trends...", "Detecting buy signals...", "Calculating stop-loss levels...",
-            "Optimizing targets...", "Finalizing top picks..."
+            "Scanning for buy signals...", "Analyzing bullish trends...", "Calculating targets...",
+            "Filtering top buys...", "Finalizing buy picks..."
         ])
         
         if cancel_button:
             st.session_state.cancel_operation = True
         
-        intraday_results = analyze_intraday_stocks(
+        strong_buy_results = analyze_strong_buy_stocks(
             NSE_STOCKS,
             batch_size=20,
             price_range=price_range,
@@ -991,9 +991,9 @@ def display_dashboard(NSE_STOCKS):
         )
         progress_bar.empty()
         loading_text.empty()
-        if not intraday_results.empty and not st.session_state.cancel_operation:
-            st.subheader("🏆 Top 5 Intraday Stocks")
-            for _, row in intraday_results.iterrows():
+        if not strong_buy_results.empty and not st.session_state.cancel_operation:
+            st.subheader("🏆 Top 5 Buy Picks (Strong Buy/Buy)")
+            for _, row in strong_buy_results.iterrows():
                 with st.expander(f"{row['Symbol']} - Score: {row['Score']}/7"):
                     current_price = f"{row['Current Price']:.2f}" if pd.notnull(row['Current Price']) else "N/A"
                     buy_at = f"{row['Buy At']:.2f}" if pd.notnull(row['Buy At']) else "N/A"
@@ -1004,9 +1004,12 @@ def display_dashboard(NSE_STOCKS):
                     Buy At: ₹{buy_at} | Stop Loss: ₹{stop_loss}  
                     Target: ₹{target}  
                     Intraday: {colored_recommendation(row['Intraday'])}  
+                    Swing: {colored_recommendation(row['Swing'])}  
+                    Short-Term: {colored_recommendation(row['Short-Term'])}  
+                    Long-Term: {colored_recommendation(row['Long-Term'])}  
                     """, unsafe_allow_html=True)
         elif not st.session_state.cancel_operation:
-            st.warning("⚠️ No intraday picks available due to data issues.")
+            st.warning("⚠️ No buy picks available due to data issues.")
 
 def main():
     if 'cancel_operation' not in st.session_state:
