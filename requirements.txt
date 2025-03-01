@@ -15,3 +15,4 @@ torch==2.3.1
 scikit-learn==1.5.1
 beautifulsoup4>=4.12.3
 requests>=2.32.3
+python-telegram-bot
