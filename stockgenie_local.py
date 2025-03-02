@@ -157,9 +157,9 @@ def fetch_news_sentiment_vader(query, api_key, source="newsapi"):
     analyzer = SentimentIntensityAnalyzer()
     try:
         if source == "newsapi":
-            url = f"https://newsapi.org/v2/everything?q={query}&apiKey=ed58659895e84dfb8162a8bb47d8525e&language=en&sortBy=publishedAt&pageSize=5"
+            url = f"https://newsapi.org/v2/everything?q={query}&apiKey={"ed58659895e84dfb8162a8bb47d8525e"}&language=en&sortBy=publishedAt&pageSize=5"
         elif source == "gnews":
-            url = f"https://gnews.io/api/v4/search?q={query}&token=e4f5f1442641400694645433a8f98b94&lang=en&max=5"
+            url = f"https://gnews.io/api/v4/search?q={query}&token={e4f5f1442641400694645433a8f98b94"}&lang=en&max=5"
         response = requests.get(url)
         response.raise_for_status()
         articles = response.json().get("articles", [])
@@ -471,7 +471,7 @@ def calculate_stop_loss(data, atr_multiplier=2.5):
     last_close = data['Close'].iloc[-1]
     last_atr = data['ATR'].iloc[-1]
     if pd.notnull(last_close) and pd.notnull(last_atr):
-        if 'ADX' in data.columns and pd.notnull(data['ADX'].iloc[-1]) and data['ADX].iloc[-1] > 25:
+        if 'ADX' in data.columns and pd.notnull(data['ADX'].iloc[-1]) and data['ADX'].iloc[-1] > 25:
             atr_multiplier = 3.0
         else:
             atr_multiplier = 1.5
@@ -556,7 +556,7 @@ def generate_recommendations(data, symbol=None):
             if data['Volume_Spike'].iloc[-1]:
                 buy_score += 1
 
-        if 'Divergence' in data.columns and pd.notnull(data['Divergence'].iloc[-1]):
+        if 'Divergence' in data.columns and pd.notnull(data['Divergence'.iloc[-1]):
             if data['Divergence'].iloc[-1] == "Bullish Divergence":
                 buy_score += 1
             elif data['Divergence'].iloc[-1] == "Bearish Divergence":
@@ -739,7 +739,7 @@ def analyze_all_stocks(stock_list, batch_size=50, price_range=None, progress_cal
         results_df = results_df[results_df['Current Price'].notnull() & 
                                 (results_df['Current Price'] >= price_range[0]) & 
                                 (results_df['Current Price'] <= price_range[1])]
-    return results_df.sort_values(by="Score", ascending=False).head(5)  # Changed from 10 to 5
+    return results_df.sort_values(by="Score", ascending=False).head(5)
 
 def analyze_intraday_stocks(stock_list, batch_size=50, price_range=None, progress_callback=None):
     if st.session_state.cancel_operation:
