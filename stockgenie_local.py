@@ -23,6 +23,8 @@ from sklearn.decomposition import PCA
 from sklearn.preprocessing import StandardScaler
 from sklearn.metrics import mean_absolute_error, mean_absolute_percentage_error, r2_score
 import warnings
+from itertools import cycle
+from threading import Lock
 
 warnings.filterwarnings("ignore")
 
@@ -40,7 +42,70 @@ TOOLTIPS = {
     "Stop Loss": "Risk management level",
 }
 
-def retry(max_retries=3, delay=5):
+# Proxy API URL with filters (fast speed, HTTP protocol)
+PROXY_API_URL = "https://proxylist.geonode.com/api/proxy-list?limit=500&page=1&sort_by=lastChecked&sort_type=desc&speed=fast&protocols=http"
+PROXY_REFRESH_INTERVAL = 3600  # Refresh every hour (in seconds)
+PROXY_TEST_URL = "http://www.google.com"  # Simple URL to test proxy connectivity
+proxy_list = []
+proxy_cycle = None
+proxy_lock = Lock()
+last_proxy_refresh = 0
+
+def fetch_proxies_from_api():
+    global proxy_list, proxy_cycle, last_proxy_refresh
+    try:
+        response = requests.get(PROXY_API_URL, timeout=10)
+        response.raise_for_status()
+        proxy_data = response.json()['data']
+        proxies = [f"{proxy['protocols'][0]}://{proxy['ip']}:{proxy['port']}" 
+                   for proxy in proxy_data if 'ip' in proxy and 'port' in proxy and 'protocols' in proxy and proxy['protocols']]
+        if not proxies:
+            st.warning("No proxies returned from API.")
+            return False
+        
+        # Validate proxies
+        valid_proxies = []
+        with ThreadPoolExecutor(max_workers=10) as executor:
+            futures = {executor.submit(test_proxy, proxy): proxy for proxy in proxies[:50]}  # Test first 50 for speed
+            for future in as_completed(futures):
+                if future.result():
+                    valid_proxies.append(futures[future])
+        
+        if valid_proxies:
+            with proxy_lock:
+                proxy_list = valid_proxies
+                proxy_cycle = cycle(proxy_list)
+                last_proxy_refresh = time.time()
+            st.info(f"Fetched and validated {len(valid_proxies)} proxies from API.")
+            return True
+        else:
+            st.warning("No valid proxies found after testing.")
+            return False
+    except Exception as e:
+        st.warning(f"Failed to fetch proxies from API: {e}")
+        return False
+
+def test_proxy(proxy):
+    try:
+        response = requests.get(PROXY_TEST_URL, proxies={"http": proxy, "https": proxy}, timeout=5)
+        return response.status_code == 200
+    except Exception:
+        return False
+
+def refresh_proxies_if_needed():
+    global last_proxy_refresh
+    current_time = time.time()
+    if current_time - last_proxy_refresh > PROXY_REFRESH_INTERVAL or not proxy_list:
+        with proxy_lock:
+            if current_time - last_proxy_refresh > PROXY_REFRESH_INTERVAL or not proxy_list:
+                fetch_proxies_from_api()
+
+def get_proxy():
+    refresh_proxies_if_needed()
+    with proxy_lock:
+        return next(proxy_cycle) if proxy_cycle else "http://localhost:8080"  # Fallback
+
+def retry(max_retries=3, delay=5, backoff_factor=2):
     def decorator(func):
         def wrapper(*args, **kwargs):
             retries = 0
@@ -48,61 +113,81 @@ def retry(max_retries=3, delay=5):
                 try:
                     return func(*args, **kwargs)
                 except Exception as e:
-                    retries += 1
-                    if retries == max_retries:
-                        st.warning(f"Max retries reached for {args[0]}: {str(e)}")
-                        return pd.DataFrame()
-                    time.sleep(delay)
+                    if "Too Many Requests" in str(e) or "401" in str(e):
+                        retries += 1
+                        if retries == max_retries:
+                            st.warning(f"Max retries reached for {args[0]}: {str(e)}")
+                            return pd.DataFrame() if "fetch_stock_data" in func.__name__ else {'P/E': np.inf, 'EPS': 0, 'DividendYield': 0}
+                        sleep_time = delay * (backoff_factor ** retries) + random.uniform(0, 1)
+                        time.sleep(sleep_time)
+                    else:
+                        st.warning(f"Error in {func.__name__} for {args[0]}: {str(e)}")
+                        return pd.DataFrame() if "fetch_stock_data" in func.__name__ else {'P/E': np.inf, 'EPS': 0, 'DividendYield': 0}
         return wrapper
     return decorator
 
 @retry(max_retries=3, delay=5)
 def fetch_nse_stock_list():
-    url = "https://archives.nseindia.com/content/equities/EQUITY_L.csv"
-    response = requests.get(url, timeout=10)
+    proxy = get_proxy()
+    response = requests.get("https://archives.nseindia.com/content/equities/EQUITY_L.csv", proxies={"http": proxy, "https": proxy}, timeout=10)
     response.raise_for_status()
     return [f"{symbol}.NS" for symbol in pd.read_csv(io.StringIO(response.text))['SYMBOL']]
 
-def load_cache():
-    cache_file = "stock_data_cache.joblib"
+def load_cache(cache_type="data"):
+    cache_file = f"stock_{cache_type}_cache.joblib"
     return joblib.load(cache_file) if os.path.exists(cache_file) else {}
 
-def save_cache(cache):
-    joblib.dump(cache, "stock_data_cache.joblib", compress=3)
+def save_cache(cache, cache_type="data"):
+    joblib.dump(cache, f"stock_{cache_type}_cache.joblib", compress=3)
 
 @retry(max_retries=3, delay=5)
 def fetch_stock_data_batch(symbols, period="5y", interval="1d"):
-    cache = load_cache()
+    cache = load_cache("data")
     data_dict = {}
     symbols_to_fetch = [s for s in symbols if f"{s}_{period}_{interval}" not in cache]
     
     if symbols_to_fetch:
         try:
-            data = yf.download(symbols_to_fetch + ["^VIX"], period=period, interval=interval, group_by='ticker', threads=True)
+            proxy = get_proxy()
+            session = requests.Session()
+            session.proxies = {"http": proxy, "https": proxy}
+            data = yf.download(symbols_to_fetch + ["^VIX"], period=period, interval=interval, group_by='ticker', threads=True, session=session)
             for symbol in symbols_to_fetch:
                 cache_key = f"{symbol}_{period}_{interval}"
                 symbol_data = data[symbol].dropna() if symbol in data.columns.levels[0] else pd.DataFrame()
                 if not symbol_data.empty:
-                    symbol_data['VIX'] = data['^VIX']['Close'].reindex(symbol_data.index, method='ffill')
+                    symbol_data['VIX'] = data['^VIX']['Close'].reindex(symbol_data.index, method='ffill') if '^VIX' in data.columns.levels[0] else np.nan
                     cache[cache_key] = symbol_data
                     data_dict[symbol] = symbol_data
                 else:
                     data_dict[symbol] = pd.DataFrame()
-            save_cache(cache)
+            save_cache(cache, "data")
         except Exception as e:
             st.warning(f"Batch fetch failed: {e}")
     return {s: cache.get(f"{s}_{period}_{interval}", pd.DataFrame()) for s in symbols}
 
+@retry(max_retries=3, delay=5)
 def fetch_fundamentals(symbol):
+    cache = load_cache("fundamentals")
+    cache_key = f"{symbol}_fundamentals"
+    if cache_key in cache:
+        return cache[cache_key]
+    
     try:
-        stock = yf.Ticker(symbol)
+        proxy = get_proxy()
+        session = requests.Session()
+        session.proxies = {"http": proxy, "https": proxy}
+        stock = yf.Ticker(symbol, session=session)
         info = stock.info
-        return {
+        fundamentals = {
             'P/E': info.get('trailingPE', np.inf),
             'EPS': info.get('trailingEps', 0),
             'DividendYield': info.get('dividendYield', 0) * 100
         }
-    except Exception:
+        cache[cache_key] = fundamentals
+        save_cache(cache, "fundamentals")
+        return fundamentals
+    except Exception as e:
         return {'P/E': np.inf, 'EPS': 0, 'DividendYield': 0}
 
 def handle_outliers(df, column):
@@ -115,33 +200,38 @@ def handle_outliers(df, column):
     return df
 
 def apply_pca(df, features, n_components=2):
+    cleaned_data = df[features].dropna()
+    if len(cleaned_data) < 1:
+        return pd.DataFrame(index=df.index, columns=[f'PC{i+1}' for i in range(n_components)])
+    
     scaler = StandardScaler()
-    scaled_data = scaler.fit_transform(df[features].dropna())
+    scaled_data = scaler.fit_transform(cleaned_data)
     pca = PCA(n_components=n_components)
     pca_result = pca.fit_transform(scaled_data)
-    return pd.DataFrame(pca_result, index=df[features].dropna().index, columns=[f'PC{i+1}' for i in range(n_components)])
+    return pd.DataFrame(pca_result, index=cleaned_data.index, columns=[f'PC{i+1}' for i in range(n_components)])
 
 def analyze_stock(data):
     if data.empty or len(data) < 15:
         return data
     
-    # Handle outliers
     data = handle_outliers(data, 'Close')
-    
-    # Core indicators
     data['RSI'] = ta.momentum.RSIIndicator(data['Close'], window=14).rsi()
     data['MACD'] = ta.trend.MACD(data['Close']).macd()
     data['MACD_signal'] = ta.trend.MACD(data['Close']).macd_signal()
     data['ATR'] = ta.volatility.AverageTrueRange(data['High'], data['Low'], data['Close']).average_true_range()
     data['SMA_20'] = data['Close'].rolling(window=20).mean()
     
-    # Correlation analysis and PCA
     features = ['Open', 'High', 'Low', 'Close', 'Volume', 'VIX', 'RSI', 'MACD', 'ATR']
-    corr_matrix = data[features].corr()
-    if corr_matrix['Close'].abs().mean() > 0.8:  # Remove highly correlated features
-        features = ['Close', 'Volume', 'VIX']
-    pca_df = apply_pca(data, features)
-    data = pd.concat([data, pca_df], axis=1)
+    available_features = [f for f in features if f in data.columns and data[f].notna().sum() > 0]
+    if len(available_features) >= 2:
+        corr_matrix = data[available_features].corr()
+        if corr_matrix['Close'].abs().mean() > 0.8:
+            available_features = ['Close', 'Volume', 'VIX'] if 'VIX' in data.columns else ['Close', 'Volume']
+        pca_df = apply_pca(data, available_features)
+        data = pd.concat([data, pca_df], axis=1)
+    else:
+        data['PC1'] = np.nan
+        data['PC2'] = np.nan
     
     return data
 
@@ -222,7 +312,6 @@ def generate_recommendations(data, symbol):
     rec["Target"] = calculate_target(data)
     rec["Score"] = max(0, min(buy_score - sell_score, 7))
     
-    # ARIMA prediction
     rec["Next Price"] = arima_predict(data)
     rec["Price Direction"] = "Up" if rec["Next Price"] > last_close else "Down" if rec["Next Price"] < last_close else "Neutral"
     
@@ -244,15 +333,16 @@ def analyze_batch(stock_batch):
     results = []
     with ThreadPoolExecutor(max_workers=min(20, len(stock_batch))) as executor:
         data_dict = fetch_stock_data_batch(stock_batch)
-        futures = {executor.submit(analyze_stock_parallel, s, data_dict[s]): s 
-                  for s in stock_batch if not data_dict[s].empty}
+        valid_batch = [s for s in stock_batch if not data_dict[s].empty and len(data_dict[s].dropna()) >= 15]
+        futures = {executor.submit(analyze_stock_parallel, s, data_dict[s]): s for s in valid_batch}
         for future in as_completed(futures):
+            symbol = futures[future]
             try:
                 result = future.result()
                 if result:
                     results.append(result)
             except Exception as e:
-                st.warning(f"Error processing {futures[future]}: {e}")
+                st.warning(f"Error processing {symbol}: {str(e)}")
     return results
 
 def analyze_all_stocks(stock_list, batch_size=15, price_range=None, progress_callback=None):
@@ -274,9 +364,8 @@ def analyze_all_stocks(stock_list, batch_size=15, price_range=None, progress_cal
         if progress_callback:
             progress_callback(processed_items / total_items, start_time, total_items, processed_items)
     
-    # Convert to Dask DataFrame for efficiency
     results_df = dd.from_pandas(pd.DataFrame([r for r in results if r is not None]), npartitions=4)
-    if not results_df.empty:
+    if len(results_df.index.compute()) > 0:
         for col in ['Current Price', 'Buy At', 'Stop Loss', 'Target', 'Next Price']:
             results_df[col] = results_df[col].apply(lambda x: round(x, 2) if pd.notnull(x) else x, meta=(col, 'float64'))
         if price_range:
@@ -385,6 +474,8 @@ def display_dashboard(NSE_STOCKS):
                 success = loop.run_until_complete(send_telegram_message(telegram_message))
                 if success:
                     st.success("✅ Sent to Telegram group!")
+        else:
+            st.warning("⚠️ No valid stock picks found.")
 
 def main():
     try:
@@ -395,6 +486,9 @@ def main():
     
     if 'cancel_operation' not in st.session_state:
         st.session_state.cancel_operation = False
+    
+    # Initial proxy fetch
+    fetch_proxies_from_api()
     
     NSE_STOCKS = fetch_nse_stock_list()
     st.sidebar.title("🔍 Stock Search")
