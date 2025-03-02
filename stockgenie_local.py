@@ -42,10 +42,10 @@ TOOLTIPS = {
     "Stop Loss": "Risk management level",
 }
 
-# Proxy API URL with filters (fast speed, HTTP protocol)
-PROXY_API_URL = "https://proxylist.geonode.com/api/proxy-list?limit=500&page=1&sort_by=lastChecked&sort_type=desc&speed=fast&protocols=http"
+# Proxy API URL with HTTPS filter
+PROXY_API_URL = "https://proxylist.geonode.com/api/proxy-list?limit=500&page=1&sort_by=lastChecked&sort_type=desc&speed=fast&protocols=https"
 PROXY_REFRESH_INTERVAL = 3600  # Refresh every hour (in seconds)
-PROXY_TEST_URL = "http://www.google.com"  # Simple URL to test proxy connectivity
+PROXY_TEST_URL = "https://archives.nseindia.com/content/equities/EQUITY_L.csv"  # Test against NSE
 proxy_list = []
 proxy_cycle = None
 proxy_lock = Lock()
@@ -58,15 +58,15 @@ def fetch_proxies_from_api():
         response.raise_for_status()
         proxy_data = response.json()['data']
         proxies = [f"{proxy['protocols'][0]}://{proxy['ip']}:{proxy['port']}" 
-                   for proxy in proxy_data if 'ip' in proxy and 'port' in proxy and 'protocols' in proxy and proxy['protocols']]
+                   for proxy in proxy_data if 'ip' in proxy and 'port' in proxy and 'protocols' in proxy and 'https' in proxy['protocols']]
         if not proxies:
-            st.warning("No proxies returned from API.")
+            st.warning("No HTTPS proxies returned from API.")
             return False
         
         # Validate proxies
         valid_proxies = []
-        with ThreadPoolExecutor(max_workers=10) as executor:
-            futures = {executor.submit(test_proxy, proxy): proxy for proxy in proxies[:50]}  # Test first 50 for speed
+        with ThreadPoolExecutor(max_workers=20) as executor:  # Increased workers for faster validation
+            futures = {executor.submit(test_proxy, proxy): proxy for proxy in proxies[:100]}  # Test first 100
             for future in as_completed(futures):
                 if future.result():
                     valid_proxies.append(futures[future])
@@ -76,10 +76,10 @@ def fetch_proxies_from_api():
                 proxy_list = valid_proxies
                 proxy_cycle = cycle(proxy_list)
                 last_proxy_refresh = time.time()
-            st.info(f"Fetched and validated {len(valid_proxies)} proxies from API.")
+            st.info(f"Fetched and validated {len(valid_proxies)} HTTPS proxies from API.")
             return True
         else:
-            st.warning("No valid proxies found after testing.")
+            st.warning("No valid HTTPS proxies found after testing.")
             return False
     except Exception as e:
         st.warning(f"Failed to fetch proxies from API: {e}")
@@ -100,10 +100,16 @@ def refresh_proxies_if_needed():
             if current_time - last_proxy_refresh > PROXY_REFRESH_INTERVAL or not proxy_list:
                 fetch_proxies_from_api()
 
-def get_proxy():
+def get_proxy(fallback_to_no_proxy=False):
     refresh_proxies_if_needed()
     with proxy_lock:
-        return next(proxy_cycle) if proxy_cycle else "http://localhost:8080"  # Fallback
+        if proxy_cycle and proxy_list:
+            return next(proxy_cycle)
+        elif fallback_to_no_proxy:
+            st.warning("No valid proxies available, proceeding without proxy.")
+            return None
+        else:
+            return "http://localhost:8080"  # Fallback proxy (replace if needed)
 
 def retry(max_retries=3, delay=5, backoff_factor=2):
     def decorator(func):
@@ -113,23 +119,27 @@ def retry(max_retries=3, delay=5, backoff_factor=2):
                 try:
                     return func(*args, **kwargs)
                 except Exception as e:
+                    retries += 1
+                    if retries == max_retries:
+                        # Handle case where args might be empty
+                        target = args[0] if args else "unknown"
+                        st.warning(f"Max retries reached for {target} in {func.__name__}: {str(e)}")
+                        return pd.DataFrame() if "fetch_stock_data" in func.__name__ else {'P/E': np.inf, 'EPS': 0, 'DividendYield': 0}
                     if "Too Many Requests" in str(e) or "401" in str(e):
-                        retries += 1
-                        if retries == max_retries:
-                            st.warning(f"Max retries reached for {args[0]}: {str(e)}")
-                            return pd.DataFrame() if "fetch_stock_data" in func.__name__ else {'P/E': np.inf, 'EPS': 0, 'DividendYield': 0}
                         sleep_time = delay * (backoff_factor ** retries) + random.uniform(0, 1)
                         time.sleep(sleep_time)
                     else:
-                        st.warning(f"Error in {func.__name__} for {args[0]}: {str(e)}")
+                        target = args[0] if args else "unknown"
+                        st.warning(f"Error in {func.__name__} for {target}: {str(e)}")
                         return pd.DataFrame() if "fetch_stock_data" in func.__name__ else {'P/E': np.inf, 'EPS': 0, 'DividendYield': 0}
         return wrapper
     return decorator
 
 @retry(max_retries=3, delay=5)
 def fetch_nse_stock_list():
-    proxy = get_proxy()
-    response = requests.get("https://archives.nseindia.com/content/equities/EQUITY_L.csv", proxies={"http": proxy, "https": proxy}, timeout=10)
+    proxy = get_proxy(fallback_to_no_proxy=True)
+    proxies = {"http": proxy, "https": proxy} if proxy else None
+    response = requests.get("https://archives.nseindia.com/content/equities/EQUITY_L.csv", proxies=proxies, timeout=10)
     response.raise_for_status()
     return [f"{symbol}.NS" for symbol in pd.read_csv(io.StringIO(response.text))['SYMBOL']]
 
@@ -148,9 +158,9 @@ def fetch_stock_data_batch(symbols, period="5y", interval="1d"):
     
     if symbols_to_fetch:
         try:
-            proxy = get_proxy()
+            proxy = get_proxy(fallback_to_no_proxy=True)
             session = requests.Session()
-            session.proxies = {"http": proxy, "https": proxy}
+            session.proxies = {"http": proxy, "https": proxy} if proxy else None
             data = yf.download(symbols_to_fetch + ["^VIX"], period=period, interval=interval, group_by='ticker', threads=True, session=session)
             for symbol in symbols_to_fetch:
                 cache_key = f"{symbol}_{period}_{interval}"
@@ -174,9 +184,9 @@ def fetch_fundamentals(symbol):
         return cache[cache_key]
     
     try:
-        proxy = get_proxy()
+        proxy = get_proxy(fallback_to_no_proxy=True)
         session = requests.Session()
-        session.proxies = {"http": proxy, "https": proxy}
+        session.proxies = {"http": proxy, "https": proxy} if proxy else None
         stock = yf.Ticker(symbol, session=session)
         info = stock.info
         fundamentals = {
