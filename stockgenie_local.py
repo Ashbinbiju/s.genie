@@ -556,7 +556,7 @@ def generate_recommendations(data, symbol=None):
             if data['Volume_Spike'].iloc[-1]:
                 buy_score += 1
 
-        if 'Divergence' in data.columns and pd.notnull(data['Divergence'.iloc[-1]):
+        if 'Divergence' in data.columns and pd.notnull(data['Divergence'].iloc[-1]):
             if data['Divergence'].iloc[-1] == "Bullish Divergence":
                 buy_score += 1
             elif data['Divergence'].iloc[-1] == "Bearish Divergence":
