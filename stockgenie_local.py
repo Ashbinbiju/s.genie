@@ -12,11 +12,19 @@ import random
 from vaderSentiment.vaderSentiment import SentimentIntensityAnalyzer
 import numpy as np
 import os
-import pickle
+import joblib
 import itertools
 import telegram
 import asyncio
 from telegram.error import TelegramError
+from statsmodels.tsa.arima.model import ARIMA
+import dask.dataframe as dd
+from sklearn.decomposition import PCA
+from sklearn.preprocessing import StandardScaler
+from sklearn.metrics import mean_absolute_error, mean_absolute_percentage_error, r2_score
+import warnings
+
+warnings.filterwarnings("ignore")
 
 # API Keys
 NEWSAPI_KEY = "ed58659895e84dfb8162a8bb47d8525e"
@@ -56,34 +64,28 @@ def fetch_nse_stock_list():
     return [f"{symbol}.NS" for symbol in pd.read_csv(io.StringIO(response.text))['SYMBOL']]
 
 def load_cache():
-    cache_file = "stock_data_cache.pkl"
-    if os.path.exists(cache_file):
-        with open(cache_file, 'rb') as f:
-            return pickle.load(f)
-    return {}
+    cache_file = "stock_data_cache.joblib"
+    return joblib.load(cache_file) if os.path.exists(cache_file) else {}
 
 def save_cache(cache):
-    with open("stock_data_cache.pkl", 'wb') as f:
-        pickle.dump(cache, f, protocol=5)
+    joblib.dump(cache, "stock_data_cache.joblib", compress=3)
 
 @retry(max_retries=3, delay=5)
-def fetch_stock_data_batch(symbols, period="10y", interval="1d"):
+def fetch_stock_data_batch(symbols, period="5y", interval="1d"):
     cache = load_cache()
     data_dict = {}
     symbols_to_fetch = [s for s in symbols if f"{s}_{period}_{interval}" not in cache]
     
     if symbols_to_fetch:
         try:
-            data = yf.download(symbols_to_fetch, period=period, interval=interval, group_by='ticker', threads=True)
+            data = yf.download(symbols_to_fetch + ["^VIX"], period=period, interval=interval, group_by='ticker', threads=True)
             for symbol in symbols_to_fetch:
                 cache_key = f"{symbol}_{period}_{interval}"
-                if symbol in data.columns.levels[0]:
-                    symbol_data = data[symbol].dropna()
-                    if not symbol_data.empty:
-                        cache[cache_key] = symbol_data
-                        data_dict[symbol] = symbol_data
-                    else:
-                        data_dict[symbol] = pd.DataFrame()
+                symbol_data = data[symbol].dropna() if symbol in data.columns.levels[0] else pd.DataFrame()
+                if not symbol_data.empty:
+                    symbol_data['VIX'] = data['^VIX']['Close'].reindex(symbol_data.index, method='ffill')
+                    cache[cache_key] = symbol_data
+                    data_dict[symbol] = symbol_data
                 else:
                     data_dict[symbol] = pd.DataFrame()
             save_cache(cache)
@@ -91,50 +93,93 @@ def fetch_stock_data_batch(symbols, period="10y", interval="1d"):
             st.warning(f"Batch fetch failed: {e}")
     return {s: cache.get(f"{s}_{period}_{interval}", pd.DataFrame()) for s in symbols}
 
+def fetch_fundamentals(symbol):
+    try:
+        stock = yf.Ticker(symbol)
+        info = stock.info
+        return {
+            'P/E': info.get('trailingPE', np.inf),
+            'EPS': info.get('trailingEps', 0),
+            'DividendYield': info.get('dividendYield', 0) * 100
+        }
+    except Exception:
+        return {'P/E': np.inf, 'EPS': 0, 'DividendYield': 0}
+
+def handle_outliers(df, column):
+    Q1 = df[column].quantile(0.25)
+    Q3 = df[column].quantile(0.75)
+    IQR = Q3 - Q1
+    lower_bound = Q1 - 1.5 * IQR
+    upper_bound = Q3 + 1.5 * IQR
+    df[column] = df[column].clip(lower_bound, upper_bound)
+    return df
+
+def apply_pca(df, features, n_components=2):
+    scaler = StandardScaler()
+    scaled_data = scaler.fit_transform(df[features].dropna())
+    pca = PCA(n_components=n_components)
+    pca_result = pca.fit_transform(scaled_data)
+    return pd.DataFrame(pca_result, index=df[features].dropna().index, columns=[f'PC{i+1}' for i in range(n_components)])
+
 def analyze_stock(data):
     if data.empty or len(data) < 15:
         return data
     
+    # Handle outliers
+    data = handle_outliers(data, 'Close')
+    
+    # Core indicators
     data['RSI'] = ta.momentum.RSIIndicator(data['Close'], window=14).rsi()
     data['MACD'] = ta.trend.MACD(data['Close']).macd()
     data['MACD_signal'] = ta.trend.MACD(data['Close']).macd_signal()
     data['ATR'] = ta.volatility.AverageTrueRange(data['High'], data['Low'], data['Close']).average_true_range()
     data['SMA_20'] = data['Close'].rolling(window=20).mean()
     
+    # Correlation analysis and PCA
+    features = ['Open', 'High', 'Low', 'Close', 'Volume', 'VIX', 'RSI', 'MACD', 'ATR']
+    corr_matrix = data[features].corr()
+    if corr_matrix['Close'].abs().mean() > 0.8:  # Remove highly correlated features
+        features = ['Close', 'Volume', 'VIX']
+    pca_df = apply_pca(data, features)
+    data = pd.concat([data, pca_df], axis=1)
+    
     return data
+
+def arima_predict(data, days=5):
+    try:
+        model = ARIMA(data['Close'].dropna(), order=(5, 1, 0))
+        model_fit = model.fit()
+        forecast = model_fit.forecast(steps=days)
+        return forecast.iloc[-1]
+    except Exception:
+        return None
 
 def calculate_buy_at(data):
     if 'RSI' not in data.columns or pd.isna(data['RSI'].iloc[-1]):
         return None
     last_close = data['Close'].iloc[-1]
     last_rsi = data['RSI'].iloc[-1]
-    if pd.notnull(last_close) and pd.notnull(last_rsi):
-        return round(last_close * 0.99 if last_rsi < 30 else last_close, 2)
-    return None
+    return round(last_close * 0.99 if last_rsi < 30 else last_close, 2) if pd.notnull(last_close) and pd.notnull(last_rsi) else None
 
 def calculate_stop_loss(data):
     if 'ATR' not in data.columns or pd.isna(data['ATR'].iloc[-1]):
         return None
     last_close = data['Close'].iloc[-1]
     last_atr = data['ATR'].iloc[-1]
-    if pd.notnull(last_close) and pd.notnull(last_atr):
-        return round(last_close - (2.5 * last_atr), 2)
-    return None
+    return round(last_close - (2.5 * last_atr), 2) if pd.notnull(last_close) and pd.notnull(last_atr) else None
 
 def calculate_target(data):
     stop_loss = calculate_stop_loss(data)
     if stop_loss is None:
         return None
     last_close = data['Close'].iloc[-1]
-    if pd.notnull(last_close) and pd.notnull(stop_loss):
-        risk = last_close - stop_loss
-        return round(last_close + (3 * risk), 2)
-    return None
+    return round(last_close + (3 * (last_close - stop_loss)), 2) if pd.notnull(last_close) and pd.notnull(stop_loss) else None
 
 def generate_recommendations(data, symbol):
     rec = {
         "Intraday": "Hold", "Swing": "Hold", "Short-Term": "Hold",
-        "Current Price": None, "Buy At": None, "Stop Loss": None, "Target": None, "Score": 0
+        "Current Price": None, "Buy At": None, "Stop Loss": None, "Target": None, "Score": 0,
+        "Next Price": None, "Price Direction": "Neutral"
     }
     if data.empty or 'Close' not in data.columns:
         return rec
@@ -155,6 +200,10 @@ def generate_recommendations(data, symbol):
         buy_score += 1 if data['MACD'].iloc[-1] > data['MACD_signal'].iloc[-1] else 0
         sell_score += 1 if data['MACD'].iloc[-1] < data['MACD_signal'].iloc[-1] else 0
 
+    fundamentals = fetch_fundamentals(symbol)
+    if fundamentals['P/E'] < 15 and fundamentals['EPS'] > 0:
+        buy_score += 1
+
     if buy_score >= 3:
         rec["Intraday"] = "Strong Buy"
         rec["Swing"] = "Buy"
@@ -172,6 +221,11 @@ def generate_recommendations(data, symbol):
     rec["Stop Loss"] = calculate_stop_loss(data)
     rec["Target"] = calculate_target(data)
     rec["Score"] = max(0, min(buy_score - sell_score, 7))
+    
+    # ARIMA prediction
+    rec["Next Price"] = arima_predict(data)
+    rec["Price Direction"] = "Up" if rec["Next Price"] > last_close else "Down" if rec["Next Price"] < last_close else "Neutral"
+    
     return rec
 
 def analyze_stock_parallel(symbol, data):
@@ -181,13 +235,14 @@ def analyze_stock_parallel(symbol, data):
         return {
             "Symbol": symbol, "Current Price": rec["Current Price"], "Buy At": rec["Buy At"],
             "Stop Loss": rec["Stop Loss"], "Target": rec["Target"], "Intraday": rec["Intraday"],
-            "Swing": rec["Swing"], "Short-Term": rec["Short-Term"], "Score": rec["Score"]
+            "Swing": rec["Swing"], "Short-Term": rec["Short-Term"], "Score": rec["Score"],
+            "Next Price": rec["Next Price"], "Price Direction": rec["Price Direction"]
         }
     return None
 
 def analyze_batch(stock_batch):
     results = []
-    with ThreadPoolExecutor(max_workers=15) as executor:
+    with ThreadPoolExecutor(max_workers=min(20, len(stock_batch))) as executor:
         data_dict = fetch_stock_data_batch(stock_batch)
         futures = {executor.submit(analyze_stock_parallel, s, data_dict[s]): s 
                   for s in stock_batch if not data_dict[s].empty}
@@ -219,14 +274,15 @@ def analyze_all_stocks(stock_list, batch_size=15, price_range=None, progress_cal
         if progress_callback:
             progress_callback(processed_items / total_items, start_time, total_items, processed_items)
     
-    results_df = pd.DataFrame([r for r in results if r is not None])
+    # Convert to Dask DataFrame for efficiency
+    results_df = dd.from_pandas(pd.DataFrame([r for r in results if r is not None]), npartitions=4)
     if not results_df.empty:
-        for col in ['Current Price', 'Buy At', 'Stop Loss', 'Target']:
-            results_df[col] = results_df[col].apply(lambda x: round(x, 2) if pd.notnull(x) else x)
+        for col in ['Current Price', 'Buy At', 'Stop Loss', 'Target', 'Next Price']:
+            results_df[col] = results_df[col].apply(lambda x: round(x, 2) if pd.notnull(x) else x, meta=(col, 'float64'))
         if price_range:
             results_df = results_df[results_df['Current Price'].notnull() & 
                                    (results_df['Current Price'].between(price_range[0], price_range[1]))]
-    return results_df.sort_values(by="Score", ascending=False).head(3)
+    return results_df.compute().sort_values(by="Score", ascending=False).head(3)
 
 def colored_recommendation(rec):
     return f"🟢 {rec}" if "Buy" in rec else f"🔴 {rec}" if "Sell" in rec else f"🟡 {rec}"
@@ -266,6 +322,8 @@ def display_stock_analysis(symbol, data, rec):
         with col:
             st.markdown(f"**{strat}**: {colored_recommendation(rec[strat])}", unsafe_allow_html=True)
     
+    st.write(f"Next Day Prediction: ₹{rec['Next Price']:.2f} ({rec['Price Direction']})")
+    
     if st.button("Plot Price", key=f"plot_{symbol}"):
         fig, ax = plt.subplots()
         ax.plot(data['Close'], label='Close')
@@ -274,7 +332,7 @@ def display_stock_analysis(symbol, data, rec):
         st.pyplot(fig)
 
 def display_dashboard(NSE_STOCKS):
-    st.title("📊 StockGenie Lite - NSE Analysis")
+    st.title("📊 StockGenie Pro - NSE Analysis")
     st.subheader(f"📅 {datetime.now().strftime('%d %b %Y')}")
     
     price_range = st.sidebar.slider("Price Range (₹)", 0, 10000, (100, 1000))
@@ -300,6 +358,8 @@ def display_dashboard(NSE_STOCKS):
         if not results_df.empty:
             st.subheader("🏆 Best 3 Stock Picks")
             telegram_message = f"<b>🏆 Best 3 Picks - {datetime.now().strftime('%d %b %Y')}</b>\n\n"
+            telegram_message += "📊 <b>Stock | Score | Price | Buy | SL | Target | Next Day | Direction</b>\n"
+            telegram_message += "─" * 50 + "\n"
             
             for _, row in results_df.iterrows():
                 with st.expander(f"{row['Symbol']} - Score: {row['Score']}"):
@@ -308,13 +368,16 @@ def display_dashboard(NSE_STOCKS):
                     SL: ₹{row['Stop Loss']:.2f} | Target: ₹{row['Target']:.2f}  
                     Intraday: {colored_recommendation(row['Intraday'])}  
                     Swing: {colored_recommendation(row['Swing'])}  
-                    Short-Term: {colored_recommendation(row['Short-Term'])}
+                    Short-Term: {colored_recommendation(row['Short-Term'])}  
+                    Next Day: ₹{row['Next Price']:.2f} ({row['Price Direction']})
                     """, unsafe_allow_html=True)
                 
-                telegram_message += f"<b>{row['Symbol']}</b> (Score: {row['Score']})\n"
-                telegram_message += f"Price: ₹{row['Current Price']:.2f} | Buy: ₹{row['Buy At']:.2f}\n"
-                telegram_message += f"SL: ₹{row['Stop Loss']:.2f} | Target: ₹{row['Target']:.2f}\n"
-                telegram_message += f"Intraday: {row['Intraday']} | Swing: {row['Swing']}\n\n"
+                telegram_message += (
+                    f"📈 <b>{row['Symbol']}</b> | {row['Score']} | "
+                    f"₹{row['Current Price']:.2f} | ₹{row['Buy At']:.2f} | "
+                    f"₹{row['Stop Loss']:.2f} | ₹{row['Target']:.2f} | "
+                    f"₹{row['Next Price']:.2f} | {row['Price Direction']}\n"
+                )
             
             if send_to_telegram:
                 loop = asyncio.new_event_loop()
