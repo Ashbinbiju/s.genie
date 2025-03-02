@@ -5,6 +5,7 @@ yfinance>=0.2.54 # For fetching stock data
 ta-lib>=0.4.28    # Technical Analysis Library (ensure binary installation if needed)
 dask[complete]>=2024.8.2  # For parallel DataFrame processing
 joblib>=1.4.2     # For efficient caching
+dask
 
 # Time Series Forecasting
 statsmodels>=0.14.2  # For ARIMA
