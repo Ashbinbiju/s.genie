@@ -3,7 +3,7 @@ import pandas as pd
 import ta
 import streamlit as st
 from datetime import datetime, timedelta
-from concurrent.futures import ThreadPoolExecutor, ProcessPoolExecutor, as_completed
+from concurrent.futures import ThreadPoolExecutor, as_completed
 import matplotlib.pyplot as plt
 import time
 import requests
@@ -21,10 +21,10 @@ from telegram.error import TelegramError
 # API Keys
 NEWSAPI_KEY = "ed58659895e84dfb8162a8bb47d8525e"
 ALPHA_VANTAGE_KEY = "TCAUKYUCIDZ6PI57"
-TELEGRAM_BOT_TOKEN = "7902319450:AAFPNcUyk9F6Sesy-h6SQnKHC_Yr6Uqk9ps"  # Your Telegram bot token
-TELEGRAM_CHAT_ID = "-1002411670969"  # Your Telegram supergroup ID
+TELEGRAM_BOT_TOKEN = "7902319450:AAFPNcUyk9F6Sesy-h6SQnKHC_Yr6Uqk9ps"
+TELEGRAM_CHAT_ID = "-1002411670969"
 
-# Tooltip explanations
+# Tooltips
 TOOLTIPS = {
     "RSI": "Relative Strength Index (30=Oversold, 70=Overbought)",
     "ATR": "Average True Range - Volatility",
@@ -67,7 +67,7 @@ def save_cache(cache):
         pickle.dump(cache, f, protocol=5)
 
 @retry(max_retries=3, delay=5)
-def fetch_stock_data_batch(symbols, period="5y", interval="1d"):
+def fetch_stock_data_batch(symbols, period="10y", interval="1d"):
     cache = load_cache()
     data_dict = {}
     symbols_to_fetch = [s for s in symbols if f"{s}_{period}_{interval}" not in cache]
@@ -95,7 +95,6 @@ def analyze_stock(data):
     if data.empty or len(data) < 15:
         return data
     
-    # Core indicators
     data['RSI'] = ta.momentum.RSIIndicator(data['Close'], window=14).rsi()
     data['MACD'] = ta.trend.MACD(data['Close']).macd()
     data['MACD_signal'] = ta.trend.MACD(data['Close']).macd_signal()
@@ -190,16 +189,15 @@ def analyze_batch(stock_batch):
     results = []
     with ThreadPoolExecutor(max_workers=15) as executor:
         data_dict = fetch_stock_data_batch(stock_batch)
-        with ProcessPoolExecutor(max_workers=os.cpu_count()) as cpu_executor:
-            futures = {cpu_executor.submit(analyze_stock_parallel, s, data_dict[s]): s 
-                      for s in stock_batch if not data_dict[s].empty}
-            for future in as_completed(futures):
-                try:
-                    result = future.result()
-                    if result:
-                        results.append(result)
-                except Exception as e:
-                    st.warning(f"Error processing {futures[future]}: {e}")
+        futures = {executor.submit(analyze_stock_parallel, s, data_dict[s]): s 
+                  for s in stock_batch if not data_dict[s].empty}
+        for future in as_completed(futures):
+            try:
+                result = future.result()
+                if result:
+                    results.append(result)
+            except Exception as e:
+                st.warning(f"Error processing {futures[future]}: {e}")
     return results
 
 def analyze_all_stocks(stock_list, batch_size=15, price_range=None, progress_callback=None):
@@ -228,7 +226,7 @@ def analyze_all_stocks(stock_list, batch_size=15, price_range=None, progress_cal
         if price_range:
             results_df = results_df[results_df['Current Price'].notnull() & 
                                    (results_df['Current Price'].between(price_range[0], price_range[1]))]
-    return results_df.sort_values(by="Score", ascending=False).head(3)  # Top 3 only
+    return results_df.sort_values(by="Score", ascending=False).head(3)
 
 def colored_recommendation(rec):
     return f"🟢 {rec}" if "Buy" in rec else f"🔴 {rec}" if "Sell" in rec else f"🟡 {rec}"
@@ -244,7 +242,7 @@ def update_progress(progress_bar, loading_text, progress_value, loading_messages
 async def send_telegram_message(message):
     try:
         bot = telegram.Bot(token="7902319450:AAFPNcUyk9F6Sesy-h6SQnKHC_Yr6Uqk9ps")
-        await bot.send_message(chat_id="TCAUKYUCIDZ6PI57", text=message, parse_mode='HTML')
+        await bot.send_message(chat_id="-1002411670969", text=message, parse_mode='HTML')
         return True
     except TelegramError as e:
         st.error(f"❌ Failed to send Telegram message: {str(e)}")
