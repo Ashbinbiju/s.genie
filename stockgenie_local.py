@@ -20,20 +20,16 @@ import torch
 from transformers import BertTokenizer, BertForSequenceClassification
 import pickle
 import os
-import telegram  # Synchronous Telegram library
-import logging
-
-# Setup logging
-logging.basicConfig(level=logging.INFO, filename='stock_analysis.log', filemode='a',
-                    format='%(asctime)s - %(levelname)s - %(message)s')
-logger = logging.getLogger(__name__)
+import telegram  # Added for Telegram integration
+from telegram.error import TelegramError  # Added for error handling
+import asyncio
 
 # API Keys (Consider moving to environment variables)
 NEWSAPI_KEY = "ed58659895e84dfb8162a8bb47d8525e"
 GNEWS_KEY = "e4f5f1442641400694645433a8f98b94"
 ALPHA_VANTAGE_KEY = "TCAUKYUCIDZ6PI57"
-TELEGRAM_BOT_TOKEN = "7902319450:AAFPNcUyk9F6Sesy-h6SQnKHC_Yr6Uqk9ps"
-TELEGRAM_CHAT_ID = "-1002411670969"
+TELEGRAM_BOT_TOKEN = "7902319450:AAFPNcUyk9F6Sesy-h6SQnKHC_Yr6Uqk9ps"  # Your Telegram bot token
+TELEGRAM_CHAT_ID = "-1002411670969"  # Your Telegram supergroup ID
 
 # Tooltip explanations
 TOOLTIPS = {
@@ -56,31 +52,31 @@ TOOLTIPS = {
 def tooltip(label, explanation):
     return f"{label} 📌 ({explanation})"
 
-def retry(max_retries=5, delay=10, backoff_factor=2, jitter=0.5):
+def retry(max_retries=3, delay=5, backoff_factor=2, jitter=0.5):
     def decorator(func):
         def wrapper(*args, **kwargs):
             retries = 0
             while retries < max_retries:
                 try:
                     result = func(*args, **kwargs)
-                    time.sleep(0.5)  # Base delay
+                    time.sleep(0.5)  # Base delay to respect rate limits
                     return result
                 except Exception as e:
-                    retries += 1
-                    if "rate limit" in str(e).lower():
+                    if "Too Many Requests" in str(e) or "rate limited" in str(e).lower():
+                        retries += 1
+                        if retries == max_retries:
+                            st.warning(f"Max retries reached for {args[0]}: {str(e)}. Skipping.")
+                            return pd.DataFrame()
                         sleep_time = delay * (backoff_factor ** retries) + random.uniform(0, jitter)
-                        logger.warning(f"Rate limited for {args[0]}. Retrying in {sleep_time:.2f}s ({retries}/{max_retries})")
+                        st.warning(f"Rate limited for {args[0]}. Waiting {sleep_time:.2f}s ({retries}/{max_retries})...")
                         time.sleep(sleep_time)
                     else:
-                        logger.error(f"Error for {args[0]}: {str(e)}")
-                        return pd.DataFrame()
-                    if retries == max_retries:
-                        logger.error(f"Max retries reached for {args[0]}: {str(e)}")
+                        st.warning(f"Error for {args[0]}: {str(e)}")
                         return pd.DataFrame()
         return wrapper
     return decorator
 
-@retry()
+@retry(max_retries=3, delay=5)
 def fetch_nse_stock_list():
     url = "https://archives.nseindia.com/content/equities/EQUITY_L.csv"
     try:
@@ -88,11 +84,16 @@ def fetch_nse_stock_list():
         response.raise_for_status()
         nse_data = pd.read_csv(io.StringIO(response.text))
         stock_list = [f"{symbol}.NS" for symbol in nse_data['SYMBOL']]
-        logger.info(f"Fetched NSE stock list: {len(stock_list)} stocks")
         return stock_list
-    except Exception as e:
-        logger.warning(f"Failed to fetch NSE stock list: {str(e)}. Using fallback.")
-        return ["RELIANCE.NS", "TCS.NS", "HDFCBANK.NS", "INFY.NS", "SBIN.NS"]
+    except Exception:
+        st.warning("⚠️ Failed to fetch NSE stock list; using fallback list.")
+        return [
+            "20MICRONS.NS", "21STCENMGM.NS", "360ONE.NS", "3IINFOLTD.NS", "3MINDIA.NS", "5PAISA.NS", "63MOONS.NS",
+            "A2ZINFRA.NS", "AAATECH.NS", "AADHARHFC.NS", "AAKASH.NS", "AAREYDRUGS.NS", "AARON.NS", "AARTECH.NS",
+            "AARTIDRUGS.NS", "AARTIIND.NS", "AARTIPHARM.NS", "AARTISURF.NS", "AARVEEDEN.NS", "AARVI.NS",
+            "AATMAJ.NS", "AAVAS.NS", "ABAN.NS", "ABB.NS", "ABBOTINDIA.NS", "ABCAPITAL.NS", "ABCOTS.NS", "ABDL.NS",
+            "ABFRL.NS",
+        ]
 
 def load_cache():
     cache_file = "stock_data_cache.pkl"
@@ -105,57 +106,26 @@ def save_cache(cache):
     with open("stock_data_cache.pkl", 'wb') as f:
         pickle.dump(cache, f)
 
-@retry()
-def fetch_stock_data_cached(symbol, period="3y", interval="1d"):  # Changed to 3 years
+@retry(max_retries=3, delay=5)
+def fetch_stock_data_cached(symbol, period="3y", interval="1d"):
     cache = load_cache()
     cache_key = f"{symbol}_{period}_{interval}"
     if cache_key in cache:
-        logger.info(f"Cache hit for {symbol}")
         return cache[cache_key]
     
-    logger.info(f"Fetching data for {symbol}")
     if ".NS" not in symbol:
         symbol += ".NS"
     try:
         stock = yf.Ticker(symbol)
         data = stock.history(period=period, interval=interval)
         if data.empty:
-            logger.warning(f"No data returned for {symbol}")
+            st.warning(f"⚠️ No data returned for {symbol} from Yahoo Finance.")
             return pd.DataFrame()
         cache[cache_key] = data
         save_cache(cache)
-        logger.info(f"Data fetched and cached for {symbol}, rows: {len(data)}")
         return data
     except Exception as e:
-        logger.error(f"Failed to fetch data for {symbol}: {str(e)}")
         raise e
-
-def fetch_latest_price(symbol):
-    """Fetch only the latest price to filter by range."""
-    try:
-        data = fetch_stock_data_cached(symbol, period="1d")  # Fetch minimal data for price check
-        if not data.empty and 'Close' in data.columns:
-            return data['Close'].iloc[-1]
-        return None
-    except Exception as e:
-        logger.error(f"Failed to fetch latest price for {symbol}: {str(e)}")
-        return None
-
-def filter_stocks_by_price(stock_list, price_range):
-    """Filter stocks by price range before full analysis."""
-    filtered_stocks = []
-    with ThreadPoolExecutor(max_workers=5) as executor:
-        future_to_symbol = {executor.submit(fetch_latest_price, symbol): symbol for symbol in stock_list}
-        for future in as_completed(future_to_symbol):
-            symbol = future_to_symbol[future]
-            try:
-                price = future.result()
-                if price is not None and price_range[0] <= price <= price_range[1]:
-                    filtered_stocks.append(symbol)
-            except Exception as e:
-                logger.error(f"Error filtering {symbol}: {str(e)}")
-    logger.info(f"Filtered {len(filtered_stocks)} stocks within price range {price_range}")
-    return filtered_stocks
 
 def calculate_advance_decline_ratio(stock_list):
     advances = 0
@@ -701,17 +671,26 @@ def generate_recommendations(data, symbol=None):
 
 def analyze_batch(stock_batch):
     results = []
+    errors = []
     with ThreadPoolExecutor(max_workers=5) as executor:
-        futures = {executor.submit(analyze_stock_parallel, symbol): symbol for symbol in stock_batch}
-        for future in as_completed(futures):
-            symbol = futures[future]
+        valid_futures = {}
+        for symbol in stock_batch:
+            data = fetch_stock_data_cached(symbol)
+            if not data.empty and len(data) >= 15:
+                valid_futures[executor.submit(analyze_stock_parallel, symbol)] = symbol
+            else:
+                errors.append(f"⚠️ Skipping {symbol}: insufficient data ({len(data)} days)")
+        
+        for future in as_completed(valid_futures):
+            symbol = valid_futures[future]
             try:
                 result = future.result()
                 if result:
                     results.append(result)
             except Exception as e:
-                logger.error(f"Error processing {symbol}: {str(e)}")
-    logger.info(f"Batch completed: {len(results)}/{len(stock_batch)} stocks")
+                errors.append(f"⚠️ Error processing stock {symbol}: {str(e)}")
+    for error in errors:
+        st.warning(error)
     return results
 
 def analyze_stock_parallel(symbol):
@@ -736,45 +715,6 @@ def analyze_stock_parallel(symbol):
         }
     return None
 
-def analyze_all_stocks(stock_list, price_range, batch_size=10, progress_callback=None):
-    if st.session_state.cancel_operation:
-        logger.info("Analysis canceled by user")
-        return pd.DataFrame()
-
-    # Filter stocks by price range first
-    filtered_stocks = filter_stocks_by_price(stock_list, price_range)
-    total_items = len(filtered_stocks)
-    if total_items == 0:
-        logger.warning("No stocks found in the selected price range")
-        return pd.DataFrame()
-
-    st.info(f"Analyzing {total_items} stocks in price range ₹{price_range[0]} - ₹{price_range[1]}")
-    logger.info(f"Starting analysis for {total_items} stocks")
-    results = []
-    start_time = time.time()
-
-    for i in range(0, total_items, batch_size):
-        if st.session_state.cancel_operation:
-            logger.info("Analysis canceled during batch processing")
-            break
-        batch = filtered_stocks[i:i + batch_size]
-        try:
-            batch_results = analyze_batch(batch)
-            results.extend(batch_results)
-            processed_items = min(i + len(batch), total_items)
-            if progress_callback:
-                progress_callback(processed_items / total_items, start_time, total_items, processed_items)
-            time.sleep(2)  # Rate limit delay
-        except Exception as e:
-            logger.error(f"Batch {i} failed: {str(e)}")
-    logger.info(f"Analysis completed: {len(results)} stocks processed")
-    df = pd.DataFrame(results)
-    if not df.empty:
-        for col in ['Current Price', 'Buy At', 'Stop Loss', 'Target']:
-            if col in df.columns:
-                df[col] = df[col].apply(lambda x: round(x, 2) if pd.notnull(x) else x)
-    return df.sort_values(by="Score", ascending=False).head(10)
-
 def update_progress(progress_bar, loading_text, progress_value, loading_messages, start_time, total_items, processed_items):
     progress_bar.progress(progress_value)
     loading_message = next(loading_messages)
@@ -782,10 +722,94 @@ def update_progress(progress_bar, loading_text, progress_value, loading_messages
     elapsed_time = time.time() - start_time
     if processed_items > 0:
         time_per_item = elapsed_time / processed_items
-        eta = timedelta(seconds=int(time_per_item * (total_items - processed_items)))
+        remaining_items = total_items - processed_items
+        eta = timedelta(seconds=int(time_per_item * remaining_items))
         loading_text.text(f"{loading_message}{dots} | Processed {processed_items}/{total_items} stocks (ETA: {eta})")
     else:
         loading_text.text(f"{loading_message}{dots} | Processed 0/{total_items} stocks")
+
+def analyze_all_stocks(stock_list, batch_size=20, price_range=None, progress_callback=None):
+    if st.session_state.cancel_operation:
+        st.warning("⚠️ Analysis canceled by user.")
+        return pd.DataFrame()
+
+    total_items = len(stock_list)
+    st.info(f"Analyzing all {total_items} NSE stocks. This may take ~{total_items // 60} minutes due to rate limits.")
+    results = []
+    start_time = time.time()
+    
+    for i in range(0, total_items, batch_size):
+        if st.session_state.cancel_operation:
+            st.warning("⚠️ Analysis canceled by user.")
+            break
+        
+        batch = stock_list[i:i + batch_size]
+        batch_results = analyze_batch(batch)
+        results.extend(batch_results)
+        processed_items = min(i + len(batch), total_items)
+        if progress_callback:
+            progress_callback(processed_items / total_items, start_time, total_items, processed_items)
+        time.sleep(2)
+    
+    if not results:
+        return pd.DataFrame()
+    
+    results_df = pd.DataFrame([r for r in results if r is not None])
+    if results_df.empty:
+        st.warning("⚠️ No valid stock data retrieved.")
+        return pd.DataFrame()
+    for col in ['Current Price', 'Buy At', 'Stop Loss', 'Target']:
+        if col in results_df.columns:
+            results_df[col] = results_df[col].apply(lambda x: round(x, 2) if pd.notnull(x) else x)
+    if "Score" not in results_df.columns:
+        results_df["Score"] = 0
+    if "Current Price" not in results_df.columns:
+        results_df["Current Price"] = None
+    if price_range:
+        results_df = results_df[results_df['Current Price'].notnull() & 
+                                (results_df['Current Price'] >= price_range[0]) & 
+                                (results_df['Current Price'] <= price_range[1])]
+    return results_df.sort_values(by="Score", ascending=False).head(10)
+
+def analyze_strong_buy_stocks(stock_list, batch_size=20, price_range=None, progress_callback=None):
+    if st.session_state.cancel_operation:
+        st.warning("⚠️ Analysis canceled by user.")
+        return pd.DataFrame()
+
+    total_items = len(stock_list)
+    st.info(f"Analyzing all {total_items} NSE stocks for strong buy/buy picks. This may take ~{total_items // 60} minutes.")
+    results = []
+    start_time = time.time()
+    
+    for i in range(0, total_items, batch_size):
+        if st.session_state.cancel_operation:
+            st.warning("⚠️ Analysis canceled by user.")
+            break
+        
+        batch = stock_list[i:i + batch_size]
+        batch_results = analyze_batch(batch)
+        results.extend(batch_results)
+        processed_items = min(i + len(batch), total_items)
+        if progress_callback:
+            progress_callback(processed_items / total_items, start_time, total_items, processed_items)
+        time.sleep(2)
+    
+    results_df = pd.DataFrame([r for r in results if r is not None])
+    if results_df.empty:
+        return pd.DataFrame()
+    for col in ['Current Price', 'Buy At', 'Stop Loss', 'Target']:
+        if col in results_df.columns:
+            results_df[col] = results_df[col].apply(lambda x: round(x, 2) if pd.notnull(x) else x)
+    if "Score" not in results_df.columns:
+        results_df["Score"] = 0
+    if "Current Price" not in results_df.columns:
+        results_df["Current Price"] = None
+    if price_range:
+        results_df = results_df[results_df['Current Price'].notnull() & 
+                              (results_df['Current Price'] >= price_range[0]) & 
+                              (results_df['Current Price'] <= price_range[1])]
+    strong_buy_df = results_df[results_df["Intraday"].isin(["Strong Buy", "Buy"])]
+    return strong_buy_df.sort_values(by="Score", ascending=False).head(5)
 
 def colored_recommendation(recommendation):
     if "Buy" in recommendation:
@@ -794,17 +818,20 @@ def colored_recommendation(recommendation):
         return f"🔴 {recommendation}"
     elif "Hold" in recommendation:
         return f"🟡 {recommendation}"
-    return recommendation
+    else:
+        return recommendation
 
-def send_telegram_message(message):
-    """Synchronous Telegram message sending."""
+async def send_telegram_message(message):
     try:
         bot = telegram.Bot(token="7902319450:AAFPNcUyk9F6Sesy-h6SQnKHC_Yr6Uqk9ps")
-        bot.send_message(chat_id="-1002411670969", text=message, parse_mode='HTML')
-        logger.info("Telegram message sent successfully")
+        await bot.send_message(
+            chat_id="-1002411670969",
+            text=message,
+            parse_mode='HTML'
+        )
         return True
-    except telegram.error.TelegramError as e:
-        logger.error(f"Failed to send Telegram message: {str(e)}")
+    except TelegramError as e:
+        st.error(f"❌ Failed to send Telegram message: {str(e)}")
         return False
 
 def display_stock_analysis(symbol, data, recommendations):
@@ -908,11 +935,10 @@ def display_stock_analysis(symbol, data, recommendations):
 def display_dashboard(NSE_STOCKS):
     st.title("📊 StockGenie Pro - NSE Analysis")
     st.subheader(f"📅 Analysis for {datetime.now().strftime('%d %b %Y')}")
-
-    # Price range selection in sidebar
+    
     price_range = st.sidebar.slider("Select Price Range (₹)", min_value=0, max_value=10000, value=(100, 1000))
     send_to_telegram = st.sidebar.checkbox("Send results to Telegram", value=True)
-
+    
     if st.button("🚀 Generate Daily Top Picks"):
         st.session_state.current_view = "daily_top_picks"
         st.session_state.cancel_operation = False
@@ -923,25 +949,25 @@ def display_dashboard(NSE_STOCKS):
             "Analyzing trends...", "Fetching data...", "Crunching numbers...",
             "Evaluating indicators...", "Finalizing results..."
         ])
-
+        
         if cancel_button:
             st.session_state.cancel_operation = True
-
+        
         results_df = analyze_all_stocks(
             NSE_STOCKS,
+            batch_size=20,
             price_range=price_range,
-            batch_size=10,
             progress_callback=lambda progress, start_time, total, processed: update_progress(
                 progress_bar, loading_text, progress, loading_messages, start_time, total, processed
             )
         )
         progress_bar.empty()
         loading_text.empty()
-
+        
         if not results_df.empty and not st.session_state.cancel_operation:
             st.subheader("🏆 Today's Top 10 Stocks")
             telegram_message = f"<b>🏆 Today's Top 10 Stocks - {datetime.now().strftime('%d %b %Y')}</b>\n\n"
-
+            
             for _, row in results_df.iterrows():
                 with st.expander(f"{row['Symbol']} - Score: {row['Score']}/7"):
                     current_price = f"{row['Current Price']:.2f}" if pd.notnull(row['Current Price']) else "N/A"
@@ -960,23 +986,89 @@ def display_dashboard(NSE_STOCKS):
                     Breakout: {colored_recommendation(row['Breakout'])}  
                     Ichimoku Trend: {colored_recommendation(row['Ichimoku_Trend'])}
                     """, unsafe_allow_html=True)
-
+                
                 telegram_message += f"<b>{row['Symbol']}</b> (Score: {row['Score']}/7)\n"
                 telegram_message += f"Price: ₹{current_price} | Buy: ₹{buy_at}\n"
                 telegram_message += f"SL: ₹{stop_loss} | Target: ₹{target}\n"
                 telegram_message += f"Intraday: {row['Intraday']} | Swing: {row['Swing']}\n\n"
-
+            
             if send_to_telegram:
-                success = send_telegram_message(telegram_message)
+                loop = asyncio.new_event_loop()
+                asyncio.set_event_loop(loop)
+                success = loop.run_until_complete(send_telegram_message(telegram_message))
                 if success:
                     st.success("✅ Results sent to Telegram group!")
-                else:
-                    st.error("❌ Failed to send to Telegram")
-
+        
         elif not st.session_state.cancel_operation:
             st.warning("⚠️ No top picks available due to data issues.")
+    
+    if st.button("🟢 Generate Top Buy Picks"):
+        st.session_state.current_view = "strong_buy_picks"
+        st.session_state.cancel_operation = False
+        progress_bar = st.progress(0)
+        loading_text = st.empty()
+        cancel_button = st.button("❌ Cancel Buy Analysis", key="cancel_strong_buy")
+        loading_messages = itertools.cycle([
+            "Scanning for buy signals...", "Analyzing bullish trends...", "Calculating targets...",
+            "Filtering top buys...", "Finalizing buy picks..."
+        ])
+        
+        if cancel_button:
+            st.session_state.cancel_operation = True
+        
+        strong_buy_results = analyze_strong_buy_stocks(
+            NSE_STOCKS,
+            batch_size=20,
+            price_range=price_range,
+            progress_callback=lambda progress, start_time, total, processed: update_progress(
+                progress_bar, loading_text, progress, loading_messages, start_time, total, processed
+            )
+        )
+        progress_bar.empty()
+        loading_text.empty()
+        
+        if not strong_buy_results.empty and not st.session_state.cancel_operation:
+            st.subheader("🏆 Top 5 Buy Picks (Strong Buy/Buy)")
+            telegram_message = f"<b>🏆 Top 5 Buy Picks - {datetime.now().strftime('%d %b %Y')}</b>\n\n"
+            
+            for _, row in strong_buy_results.iterrows():
+                with st.expander(f"{row['Symbol']} - Score: {row['Score']}/7"):
+                    current_price = f"{row['Current Price']:.2f}" if pd.notnull(row['Current Price']) else "N/A"
+                    buy_at = f"{row['Buy At']:.2f}" if pd.notnull(row['Buy At']) else "N/A"
+                    stop_loss = f"{row['Stop Loss']:.2f}" if pd.notnull(row['Stop Loss']) else "N/A"
+                    target = f"{row['Target']:.2f}" if pd.notnull(row['Target']) else "N/A"
+                    st.markdown(f"""
+                    {tooltip('Current Price', TOOLTIPS['Stop Loss'])}: ₹{current_price}  
+                    Buy At: ₹{buy_at} | Stop Loss: ₹{stop_loss}  
+                    Target: ₹{target}  
+                    Intraday: {colored_recommendation(row['Intraday'])}  
+                    Swing: {colored_recommendation(row['Swing'])}  
+                    Short-Term: {colored_recommendation(row['Short-Term'])}  
+                    Long-Term: {colored_recommendation(row['Long-Term'])}  
+                    """, unsafe_allow_html=True)
+                
+                telegram_message += f"<b>{row['Symbol']}</b> (Score: {row['Score']}/7)\n"
+                telegram_message += f"Price: ₹{current_price} | Buy: ₹{buy_at}\n"
+                telegram_message += f"SL: ₹{stop_loss} | Target: ₹{target}\n"
+                telegram_message += f"Intraday: {row['Intraday']} | Swing: {row['Swing']}\n\n"
+            
+            if send_to_telegram:
+                loop = asyncio.new_event_loop()
+                asyncio.set_event_loop(loop)
+                success = loop.run_until_complete(send_telegram_message(telegram_message))
+                if success:
+                    st.success("✅ Buy picks sent to Telegram group!")
+        
+        elif not st.session_state.cancel_operation:
+            st.warning("⚠️ No buy picks available due to data issues.")
 
 def main():
+    try:
+        import telegram
+    except ImportError:
+        st.error("❌ Please install python-telegram-bot: pip install python-telegram-bot --upgrade")
+        return
+
     if 'cancel_operation' not in st.session_state:
         st.session_state.cancel_operation = False
     if 'current_view' not in st.session_state:
