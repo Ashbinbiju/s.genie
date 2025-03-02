@@ -157,9 +157,9 @@ def fetch_news_sentiment_vader(query, api_key, source="newsapi"):
     analyzer = SentimentIntensityAnalyzer()
     try:
         if source == "newsapi":
-            url = f"https://newsapi.org/v2/everything?q={query}&apiKey={"ed58659895e84dfb8162a8bb47d8525e"}&language=en&sortBy=publishedAt&pageSize=5"
+            url = f"https://newsapi.org/v2/everything?q={query}&apiKey=ed58659895e84dfb8162a8bb47d8525e&language=en&sortBy=publishedAt&pageSize=5"
         elif source == "gnews":
-            url = f"https://gnews.io/api/v4/search?q={query}&token={"e4f5f1442641400694645433a8f98b94"}&lang=en&max=5"
+            url = f"https://gnews.io/api/v4/search?q={query}&token=e4f5f1442641400694645433a8f98b94&lang=en&max=5"
         response = requests.get(url)
         response.raise_for_status()
         articles = response.json().get("articles", [])
@@ -617,14 +617,22 @@ def generate_recommendations(data, symbol=None):
                 buy_score += 0.5
                 recommendations["Long-Term"] = "Buy" if buy_score > sell_score else "Hold"
 
-        if buy_score >= 4:
+        # Modified logic to ensure "Strong Buy" across all main strategies
+        if buy_score >= 6:  # Increased threshold for "Strong Buy" across all
+            recommendations["Intraday"] = "Strong Buy"
+            recommendations["Swing"] = "Strong Buy"
+            recommendations["Short-Term"] = "Strong Buy"
+            recommendations["Long-Term"] = "Strong Buy"
+        elif buy_score >= 4:
             recommendations["Intraday"] = "Strong Buy"
             recommendations["Swing"] = "Buy"
             recommendations["Short-Term"] = "Buy"
+            recommendations["Long-Term"] = "Buy"
         elif sell_score >= 4:
             recommendations["Intraday"] = "Strong Sell"
             recommendations["Swing"] = "Sell"
             recommendations["Short-Term"] = "Sell"
+            recommendations["Long-Term"] = "Sell"
         elif buy_score > sell_score + 1:
             recommendations["Intraday"] = "Buy"
             recommendations["Swing"] = "Buy"
@@ -741,7 +749,7 @@ def analyze_all_stocks(stock_list, batch_size=50, price_range=None, progress_cal
                                 (results_df['Current Price'] <= price_range[1])]
     return results_df.sort_values(by="Score", ascending=False).head(5)
 
-def analyze_intraday_stocks(stock_list, batch_size=50, price_range=None, progress_callback=None):
+def analyze_strong_buy_stocks(stock_list, batch_size=50, price_range=None, progress_callback=None):
     if st.session_state.cancel_operation:
         st.warning("⚠️ Analysis canceled by user.")
         return pd.DataFrame()
@@ -762,6 +770,9 @@ def analyze_intraday_stocks(stock_list, batch_size=50, price_range=None, progres
         if progress_callback:
             progress_callback(processed_items / total_items, start_time, total_items, processed_items)
     
+    if not results:
+        return pd.DataFrame()
+    
     results_df = pd.DataFrame([r for r in results if r is not None])
     if results_df.empty:
         return pd.DataFrame()
@@ -776,8 +787,14 @@ def analyze_intraday_stocks(stock_list, batch_size=50, price_range=None, progres
         results_df = results_df[results_df['Current Price'].notnull() & 
                                 (results_df['Current Price'] >= price_range[0]) & 
                                 (results_df['Current Price'] <= price_range[1])]
-    intraday_df = results_df[results_df["Intraday"].str.contains("Buy", na=False)]
-    return intraday_df.sort_values(by="Score", ascending=False).head(5)
+    # Filter for stocks with "Strong Buy" across all main strategies
+    strong_buy_df = results_df[
+        (results_df["Intraday"] == "Strong Buy") &
+        (results_df["Swing"] == "Strong Buy") &
+        (results_df["Short-Term"] == "Strong Buy") &
+        (results_df["Long-Term"] == "Strong Buy")
+    ]
+    return strong_buy_df.sort_values(by="Score", ascending=False).head(5)
 
 def colored_recommendation(recommendation):
     if "Buy" in recommendation:
@@ -865,20 +882,20 @@ def display_dashboard(symbol=None, data=None, recommendations=None, NSE_STOCKS=N
         elif not st.session_state.cancel_operation:
             st.warning("⚠️ No top picks available due to data issues.")
     
-    if st.button("⚡ Generate Intraday Top 5 Picks"):
+    if st.button("💪 Generate Top Strong Buy Stocks"):
         st.session_state.cancel_operation = False
         progress_bar = st.progress(0)
         loading_text = st.empty()
-        cancel_button = st.button("❌ Cancel Intraday Analysis")
+        cancel_button = st.button("❌ Cancel Strong Buy Analysis")
         loading_messages = itertools.cycle([
-            "Scanning intraday trends...", "Detecting buy signals...", "Calculating stop-loss levels...",
-            "Optimizing targets...", "Finalizing top picks..."
+            "Scanning for strong buys...", "Evaluating signals...", "Calculating metrics...",
+            "Optimizing selections...", "Finalizing top strong buys..."
         ])
         
         if cancel_button:
             st.session_state.cancel_operation = True
         
-        intraday_results = analyze_intraday_stocks(
+        strong_buy_results = analyze_strong_buy_stocks(
             NSE_STOCKS,
             price_range=price_range,
             progress_callback=lambda progress, start_time, total, processed: update_progress(
@@ -887,10 +904,10 @@ def display_dashboard(symbol=None, data=None, recommendations=None, NSE_STOCKS=N
         )
         progress_bar.empty()
         loading_text.empty()
-        if not intraday_results.empty and not st.session_state.cancel_operation:
-            st.subheader("🏆 Top 5 Intraday Stocks")
-            telegram_message = f"*🏆 Top 5 Intraday Stocks ({datetime.now().strftime('%d %b %Y')})*\n\n"
-            for _, row in intraday_results.iterrows():
+        if not strong_buy_results.empty and not st.session_state.cancel_operation:
+            st.subheader("💪 Top 5 Strong Buy Stocks")
+            telegram_message = f"*💪 Top 5 Strong Buy Stocks ({datetime.now().strftime('%d %b %Y')})*\n\n"
+            for _, row in strong_buy_results.iterrows():
                 with st.expander(f"{row['Symbol']} - Score: {row['Score']}/7"):
                     current_price = f"{row['Current Price']:.2f}" if pd.notnull(row['Current Price']) else "N/A"
                     buy_at = f"{row['Buy At']:.2f}" if pd.notnull(row['Buy At']) else "N/A"
@@ -901,16 +918,20 @@ def display_dashboard(symbol=None, data=None, recommendations=None, NSE_STOCKS=N
                     Buy At: ₹{buy_at} | Stop Loss: ₹{stop_loss}  
                     Target: ₹{target}  
                     Intraday: {colored_recommendation(row['Intraday'])}  
+                    Swing: {colored_recommendation(row['Swing'])}  
+                    Short-Term: {colored_recommendation(row['Short-Term'])}  
+                    Long-Term: {colored_recommendation(row['Long-Term'])}  
                     """, unsafe_allow_html=True)
                 telegram_message += (
                     f"*{row['Symbol']}* (Score: {row['Score']}/7)\n"
                     f"Price: ₹{current_price}\n"
                     f"Buy At: ₹{buy_at} | SL: ₹{stop_loss} | Target: ₹{target}\n"
-                    f"Intraday: {row['Intraday']}\n\n"
+                    f"Intraday: {row['Intraday']} | Swing: {row['Swing']}\n"
+                    f"Short-Term: {row['Short-Term']} | Long-Term: {row['Long-Term']}\n\n"
                 )
             send_telegram_message(telegram_message)
         elif not st.session_state.cancel_operation:
-            st.warning("⚠️ No intraday picks available due to data issues.")
+            st.warning("⚠️ No strong buy stocks found due to data issues or strict criteria.")
     
     if symbol and data is not None and recommendations is not None:
         st.header(f"📋 {symbol.split('.')[0]} Analysis")
