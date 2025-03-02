@@ -20,16 +20,16 @@ import torch
 from transformers import BertTokenizer, BertForSequenceClassification
 import pickle
 import os
-import telegram
-from telegram.error import TelegramError
+import telegram  # Added for Telegram integration
+from telegram.error import TelegramError  # Added for error handling
 import asyncio
 
 # API Keys (Consider moving to environment variables)
 NEWSAPI_KEY = "ed58659895e84dfb8162a8bb47d8525e"
 GNEWS_KEY = "e4f5f1442641400694645433a8f98b94"
 ALPHA_VANTAGE_KEY = "TCAUKYUCIDZ6PI57"
-TELEGRAM_BOT_TOKEN = "7902319450:AAFPNcUyk9F6Sesy-h6SQnKHC_Yr6Uqk9ps"
-TELEGRAM_CHAT_ID = "-1002411670969"
+TELEGRAM_BOT_TOKEN = "7902319450:AAFPNcUyk9F6Sesy-h6SQnKHC_Yr6Uqk9ps"  # Your Telegram bot token
+TELEGRAM_CHAT_ID = "-1002411670969"  # Your Telegram supergroup ID
 
 # Tooltip explanations
 TOOLTIPS = {
@@ -186,9 +186,9 @@ def fetch_news_sentiment_vader(query, api_key, source="newsapi"):
     analyzer = SentimentIntensityAnalyzer()
     try:
         if source == "newsapi":
-            url = f"https://newsapi.org/v2/everything?q={query}&apiKey={api_key}&language=en&sortBy=publishedAt&pageSize=5"
+            url = f"https://newsapi.org/v2/everything?q={query}&apiKey=ed58659895e84dfb8162a8bb47d8525e&language=en&sortBy=publishedAt&pageSize=5"
         elif source == "gnews":
-            url = f"https://gnews.io/api/v4/search?q={query}&token={api_key}&lang=en&max=5"
+            url = f"https://gnews.io/api/v4/search?q={query}&token=e4f5f1442641400694645433a8f98b94&lang=en&max=5"
         response = requests.get(url)
         response.raise_for_status()
         articles = response.json().get("articles", [])
@@ -823,9 +823,9 @@ def colored_recommendation(recommendation):
 
 async def send_telegram_message(message):
     try:
-        bot = telegram.Bot(token=TELEGRAM_BOT_TOKEN)
+        bot = telegram.Bot(token="7902319450:AAFPNcUyk9F6Sesy-h6SQnKHC_Yr6Uqk9ps")
         await bot.send_message(
-            chat_id=TELEGRAM_CHAT_ID,
+            chat_id="-1002411670969",
             text=message,
             parse_mode='HTML'
         )
@@ -938,15 +938,6 @@ def display_dashboard(NSE_STOCKS):
     
     price_range = st.sidebar.slider("Select Price Range (₹)", min_value=0, max_value=10000, value=(100, 1000))
     send_to_telegram = st.sidebar.checkbox("Send results to Telegram", value=True)
-
-    # Add Telegram test button
-    if st.button("📲 Test Telegram"):
-        test_message = f"<b>Telegram Test</b>\nThis is a test message sent on {datetime.now().strftime('%d %b %Y %H:%M:%S')}"
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
-        success = loop.run_until_complete(send_telegram_message(test_message))
-        if success:
-            st.success("✅ Test message sent to Telegram group! Check your group to confirm.")
     
     if st.button("🚀 Generate Daily Top Picks"):
         st.session_state.current_view = "daily_top_picks"
