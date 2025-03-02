@@ -10,7 +10,7 @@ pytrends==4.9.2
 numpy==1.26.4
 arch==7.0.0
 diskcache==5.6.3
-transformers
+transformers==4.49.0
 torch==2.3.1
 scikit-learn==1.5.1
 beautifulsoup4>=4.12.3
