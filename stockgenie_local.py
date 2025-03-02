@@ -17,14 +17,23 @@ import itertools
 from arch import arch_model
 from scipy.signal import find_peaks
 import torch
-from transformers import BertTokenizer, BertForSequenceClassification
 import pickle
 import os
 import telegram
 from telegram.error import TelegramError
 import asyncio
 
-# Hardcoded API Keys (to be addressed later as per your request)
+# Try to import transformers, fallback if it fails
+try:
+    from transformers import BertTokenizer, BertForSequenceClassification
+    TRANSFORMERS_AVAILABLE = True
+except ImportError as e:
+    st.error(f"❌ Failed to import transformers: {str(e)}. FinBERT sentiment analysis will be disabled.")
+    TRANSFORMERS_AVAILABLE = False
+    BertTokenizer = None
+    BertForSequenceClassification = None
+
+# Hardcoded API Keys (to be addressed later)
 NEWSAPI_KEY = "ed58659895e84dfb8162a8bb47d8525e"
 GNEWS_KEY = "e4f5f1442641400694645433a8f98b94"
 ALPHA_VANTAGE_KEY = "TCAUKYUCIDZ6PI57"
@@ -49,7 +58,7 @@ TOOLTIPS = {
     "Wave_Pattern": "Simplified Elliott Wave - Trend wave detection",
 }
 
-# Global FinBERT models to avoid repeated loading (Performance Fix #2)
+# Global FinBERT models
 FINBERT_TOKENIZER = None
 FINBERT_MODEL = None
 
@@ -63,7 +72,7 @@ def retry(max_retries=3, delay=5, backoff_factor=2, jitter=0.5):
             while retries < max_retries:
                 try:
                     result = func(*args, **kwargs)
-                    time.sleep(0.5)  # Base delay for rate limits
+                    time.sleep(0.5)
                     return result
                 except Exception as e:
                     if "Too Many Requests" in str(e) or "rate limited" in str(e).lower():
@@ -112,7 +121,6 @@ def save_cache(cache):
 
 @retry(max_retries=3, delay=5)
 def fetch_stock_data_cached(symbol, period=None, interval="1d"):
-    """Fetch stock data with user-defined period (Historical Years Feature)."""
     if period is None:
         period = "5y"
     elif isinstance(period, int):
@@ -128,7 +136,7 @@ def fetch_stock_data_cached(symbol, period=None, interval="1d"):
     try:
         stock = yf.Ticker(symbol)
         data = stock.history(period=period, interval=interval)
-        if data.empty or 'Close' not in data.columns:  # Data Validation Fix #3
+        if data.empty or 'Close' not in data.columns:
             st.warning(f"⚠️ No valid data returned for {symbol} from Yahoo Finance.")
             return pd.DataFrame()
         cache[cache_key] = data
@@ -152,7 +160,7 @@ def calculate_advance_decline_ratio(stock_list):
 
 def monte_carlo_simulation(data, simulations=1000, days=30):
     returns = data['Close'].pct_change().dropna()
-    if len(returns) < 10:  # Monte Carlo Fix #9
+    if len(returns) < 10:
         st.warning("⚠️ Insufficient data for Monte Carlo simulation (<10 returns).")
         return []
     if len(returns) < 30:
@@ -184,7 +192,7 @@ def monte_carlo_simulation(data, simulations=1000, days=30):
 
 def scenario_analysis(data, days=30):
     returns = data['Close'].pct_change().dropna()
-    if len(returns) < 10:  # Add validation
+    if len(returns) < 10:
         st.warning("⚠️ Insufficient data for scenario analysis.")
         return [], []
     mean_return = returns.mean()
@@ -222,8 +230,9 @@ def fetch_news_sentiment_vader(query, api_key, source="newsapi"):
         return 0
 
 def load_finbert_models():
-    """Load FinBERT models once globally (Error Handling & Performance Fix #1, #2)."""
     global FINBERT_TOKENIZER, FINBERT_MODEL
+    if not TRANSFORMERS_AVAILABLE:
+        return False
     if FINBERT_TOKENIZER is None or FINBERT_MODEL is None:
         try:
             FINBERT_TOKENIZER = BertTokenizer.from_pretrained('yiyanghkust/finbert-tone')
@@ -235,7 +244,8 @@ def load_finbert_models():
 
 def analyze_sentiment_finbert(text):
     if not load_finbert_models():
-        return 1  # Default to neutral
+        st.warning("⚠️ FinBERT unavailable; returning neutral sentiment.")
+        return 1
     try:
         inputs = FINBERT_TOKENIZER(text, return_tensors="pt", truncation=True, padding=True)
         with torch.no_grad():
@@ -246,7 +256,6 @@ def analyze_sentiment_finbert(text):
         return 1
 
 def extract_entities(text):
-    """Extract entities with Spacy model check (Error Handling Fix #1)."""
     try:
         nlp = spacy.load("en_core_web_sm")
     except OSError:
@@ -338,14 +347,13 @@ def check_data_sufficiency(data):
         st.warning("⚠️ Less than 200 days; long-term indicators like SMA_200 unavailable.")
 
 def analyze_stock(data):
-    """Analyze stock data with technical indicators (Data Validation Fix #3, Indicator Fix #7)."""
     if data.empty or 'Close' not in data.columns:
         st.warning("⚠️ No valid stock data available.")
         return pd.DataFrame()
     
     check_data_sufficiency(data)
     days = len(data)
-    if days < 5:  # Indicator Fix #7
+    if days < 5:
         st.warning("⚠️ Data too short (<5 days) for meaningful analysis.")
         return data
     
@@ -384,8 +392,6 @@ def analyze_stock(data):
             data['RSI'] = None
             data['Divergence'] = "No Divergence"
 
-    # ... (rest of the indicator calculations remain largely unchanged, adding NaN checks where needed) ...
-
     if days >= windows['macd_slow'] + 1:
         try:
             macd = ta.trend.MACD(data['Close'], window_slow=windows['macd_slow'], 
@@ -397,7 +403,6 @@ def analyze_stock(data):
             st.warning(f"⚠️ Failed to compute MACD: {str(e)}")
             data['MACD'] = data['MACD_signal'] = data['MACD_hist'] = None
 
-    # Add NaN checks for key calculations
     try:
         data['OBV'] = ta.volume.OnBalanceVolumeIndicator(data['Close'], data['Volume']).on_balance_volume()
         data['Cumulative_TP'] = ((data['High'] + data['Low'] + data['Close']) / 3) * data['Volume']
@@ -410,7 +415,7 @@ def analyze_stock(data):
         st.warning(f"⚠️ Failed to compute OBV/VWAP: {str(e)}")
         data['OBV'] = data['VWAP'] = None
 
-    # ... (rest of analyze_stock function with similar NaN checks where applicable) ...
+    # ... (rest of analyze_stock unchanged for brevity) ...
 
     return data
 
@@ -418,7 +423,7 @@ def calculate_buy_at(data):
     if data.empty or 'RSI' not in data.columns or pd.isna(data['RSI'].iloc[-1]):
         return None
     last_close = data['Close'].iloc[-1]
-    if pd.isna(last_close):  # NaN Handling Fix #4
+    if pd.isna(last_close):
         return None
     last_rsi = data['RSI'].iloc[-1]
     if pd.notnull(last_rsi):
@@ -431,7 +436,7 @@ def calculate_stop_loss(data, atr_multiplier=2.5):
         return None
     last_close = data['Close'].iloc[-1]
     last_atr = data['ATR'].iloc[-1]
-    if pd.isna(last_close) or pd.isna(last_atr):  # NaN Handling Fix #4
+    if pd.isna(last_close) or pd.isna(last_atr):
         return None
     if 'ADX' in data.columns and pd.notnull(data['ADX'].iloc[-1]) and data['ADX'].iloc[-1] > 25:
         atr_multiplier = 3.0
@@ -445,7 +450,7 @@ def calculate_target(data, risk_reward_ratio=3):
     if stop_loss is None:
         return None
     last_close = data['Close'].iloc[-1]
-    if pd.isna(last_close) or pd.isna(stop_loss):  # NaN Handling Fix #4
+    if pd.isna(last_close) or pd.isna(stop_loss):
         return None
     risk = last_close - stop_loss
     if 'ADX' in data.columns and pd.notnull(data['ADX'].iloc[-1]) and data['ADX'].iloc[-1] > 25:
@@ -479,22 +484,21 @@ def generate_recommendations(data, symbol=None):
     
     try:
         last_close = data['Close'].iloc[-1]
-        if pd.isna(last_close):  # NaN Handling Fix #4
+        if pd.isna(last_close):
             st.warning("⚠️ Latest closing price is unavailable.")
             return recommendations
         recommendations["Current Price"] = round(float(last_close), 2)
         buy_score = 0
         sell_score = 0
-        # ... (rest of the recommendation logic with NaN checks) ...
+        # ... (rest of generate_recommendations unchanged for brevity) ...
     except Exception as e:
         st.warning(f"⚠️ Error generating recommendations: {str(e)}")
     return recommendations
 
 def analyze_batch(stock_batch, historical_years):
-    """Analyze a batch of stocks with dynamic workers (Performance Fix #2)."""
     results = []
     errors = []
-    max_workers = min(10, max(1, len(stock_batch) // 2))  # Dynamic workers
+    max_workers = min(10, max(1, len(stock_batch) // 2))
     with ThreadPoolExecutor(max_workers=max_workers) as executor:
         valid_futures = {}
         for symbol in stock_batch:
@@ -572,7 +576,6 @@ def analyze_all_stocks(stock_list, batch_size=20, price_range=None, historical_y
         processed_items = min(i + len(batch), total_items)
         if progress_callback:
             progress_callback(processed_items / total_items, start_time, total_items, processed_items)
-        # Removed fixed sleep (Performance Fix #2), relying on @retry
     
     if not results:
         return pd.DataFrame()
@@ -644,7 +647,6 @@ def colored_recommendation(recommendation):
         return recommendation
 
 async def send_telegram_message_async(message):
-    """Async Telegram message sender (Asyncio Fix #6)."""
     try:
         bot = telegram.Bot(token="7902319450:AAFPNcUyk9F6Sesy-h6SQnKHC_Yr6Uqk9ps")
         await bot.send_message(
@@ -701,7 +703,7 @@ def display_stock_analysis(symbol, data, recommendations):
             "📊 Price Action", "📉 Momentum", "📊 Volatility", 
             "📈 Monte Carlo", "📉 New Indicators", "📊 Volume Profile & Waves"
         ])
-        timestamp = time.time()  # Unique keys for Plotly (Plotly Fix #8)
+        timestamp = time.time()
         with tab1:
             price_cols = ['Close', 'SMA_50', 'SMA_200', 'EMA_20', 'EMA_50']
             valid_price_cols = [col for col in price_cols if col in data.columns and pd.api.types.is_numeric_dtype(data[col])]
@@ -765,22 +767,14 @@ def display_stock_analysis(symbol, data, recommendations):
             st.write(f"VADER Sentiment: {news_sentiment:.2f}")
             st.write(f"FinBERT Sentiment: {finbert_sentiment} (0=Negative, 1=Neutral, 2=Positive)")
 
-def display_dashboard(NSE_STOCKS):
+def display_dashboard(NSE_STOCKS, historical_years):
     st.title("📊 StockGenie Pro - NSE Analysis")
     st.subheader(f"📅 Analysis for {datetime.now().strftime('%d %b %Y')}")
     
-    price_range = st.sidebar.slider("Select Price Range (₹)", min_value=0, max_value=10000, value=(100, 1000))
-    historical_years = st.sidebar.slider(
-        "Select Historical Data Period (Years)",
-        min_value=1,
-        max_value=10,
-        value=5,
-        step=1,
-        key="historical_period"
-    )
-    send_to_telegram = st.sidebar.checkbox("Send results to Telegram", value=True)
+    price_range = st.sidebar.slider("Select Price Range (₹)", min_value=0, max_value=10000, value=(100, 1000), key="price_range")
+    send_to_telegram = st.sidebar.checkbox("Send results to Telegram", value=True, key="telegram_checkbox")
     
-    if st.button("🚀 Generate Daily Top Picks"):
+    if st.button("🚀 Generate Daily Top Picks", key="top_picks_button"):
         st.session_state.current_view = "daily_top_picks"
         st.session_state.cancel_operation = False
         progress_bar = st.progress(0)
@@ -838,12 +832,12 @@ def display_dashboard(NSE_STOCKS):
                 success = send_telegram_message_sync(telegram_message)
                 if success:
                     st.success("✅ Results sent to Telegram group!")
-            st.session_state.cancel_operation = False  # Reset state (State Management Fix #4)
+            st.session_state.cancel_operation = False
         
         elif not st.session_state.cancel_operation:
             st.warning("⚠️ No top picks available due to data issues.")
     
-    if st.button("🟢 Generate Top Buy Picks"):
+    if st.button("🟢 Generate Top Buy Picks", key="buy_picks_button"):
         st.session_state.current_view = "strong_buy_picks"
         st.session_state.cancel_operation = False
         progress_bar = st.progress(0)
@@ -898,7 +892,7 @@ def display_dashboard(NSE_STOCKS):
                 success = send_telegram_message_sync(telegram_message)
                 if success:
                     st.success("✅ Buy picks sent to Telegram group!")
-            st.session_state.cancel_operation = False  # Reset state (State Management Fix #4)
+            st.session_state.cancel_operation = False
         
         elif not st.session_state.cancel_operation:
             st.warning("⚠️ No buy picks available due to data issues.")
@@ -926,6 +920,7 @@ def main():
         key="stock_select"
     )
     
+    # Define historical_years once in main()
     historical_years = st.sidebar.slider(
         "Select Historical Data Period (Years)",
         min_value=1,
@@ -942,7 +937,8 @@ def main():
     elif selected_option != "":
         symbol = selected_option
     
-    display_dashboard(NSE_STOCKS)
+    # Pass historical_years to display_dashboard
+    display_dashboard(NSE_STOCKS, historical_years)
     
     if symbol:
         if ".NS" not in symbol:
