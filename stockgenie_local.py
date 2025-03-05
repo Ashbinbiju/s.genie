@@ -400,7 +400,7 @@ def generate_recommendations(data, mtf_indicators, price_action, symbol=None):
 def analyze_batch(stock_batch):
     results = []
     try:
-        with ThreadPoolExecutor(max_workers=5) as executor:  # Reduced workers to avoid overload
+        with ThreadPoolExecutor(max_workers=5) as executor:
             valid_futures = {}
             for symbol in stock_batch:
                 try:
@@ -500,6 +500,12 @@ def analyze_all_stocks(stock_list, batch_size=50, price_range=None, progress_cal
                                 (results_df['Current Price'] <= price_range[1])]
     return results_df.sort_values(by="Score", ascending=False).head(5)
 
+def filter_strong_buy_stocks(results_df):
+    if results_df.empty:
+        return pd.DataFrame()
+    strong_buy_df = results_df[results_df['Intraday'] == "Strong Buy"]
+    return strong_buy_df.sort_values(by="Score", ascending=False).head(5)
+
 def colored_recommendation(recommendation):
     if "Buy" in recommendation:
         return f"🟢 {recommendation}"
@@ -527,57 +533,113 @@ def display_dashboard(symbol=None, data=None, recommendations=None, NSE_STOCKS=N
     
     price_range = st.sidebar.slider("Select Price Range (₹)", min_value=0, max_value=10000, value=(100, 1000))
     
-    if st.button("🚀 Generate Top Intraday Picks"):
-        st.session_state.cancel_operation = False
-        progress_bar = st.progress(0)
-        loading_text = st.empty()
-        cancel_button = st.button("❌ Cancel Analysis")
-        loading_messages = itertools.cycle(["Analyzing trends...", "Fetching data...", "Crunching numbers..."])
-        
-        if cancel_button:
-            st.session_state.cancel_operation = True
-        
-        try:
-            results_df = analyze_all_stocks(
-                NSE_STOCKS,
-                price_range=price_range,
-                progress_callback=lambda progress, start_time, total, processed: update_progress(
-                    progress_bar, loading_text, progress, loading_messages, start_time, total, processed
-                )
-            )
-            progress_bar.empty()
-            loading_text.empty()
-            if not results_df.empty and not st.session_state.cancel_operation:
-                st.subheader("🏆 Top 5 Intraday Stocks")
-                telegram_message = f"*🏆 Top 5 Intraday Stocks ({datetime.now().strftime('%d %b %Y')})*\n\n"
-                for _, row in results_df.iterrows():
-                    with st.expander(f"{row['Symbol']} - Score: {row['Score']}/7"):
-                        current_price = f"{row['Current Price']:.2f}" if pd.notnull(row['Current Price']) else "N/A"
-                        buy_at = f"{row['Buy At']:.2f}" if pd.notnull(row['Buy At']) else "N/A"
-                        stop_loss = f"{row['Stop Loss']:.2f}" if pd.notnull(row['Stop Loss']) else "N/A"
-                        target = f"{row['Target']:.2f}" if pd.notnull(row['Target']) else "N/A"
-                        st.markdown(f"""
-                        {tooltip('Current Price', TOOLTIPS['Stop Loss'])}: ₹{current_price}  
-                        Buy At: ₹{buy_at} | Stop Loss: ₹{stop_loss}  
-                        Target: ₹{target}  
-                        Intraday: {colored_recommendation(row['Intraday'])}  
-                        Breakdown: {colored_recommendation(row['Breakdown'])}  
-                        MA Crossover: {colored_recommendation(row['MACrossover'])}  
-                        VWAP Rejection: {colored_recommendation(row['VWAPRejection'])}  
-                        RSI Reversal: {colored_recommendation(row['RSIReversal'])}  
-                        Bearish Flag: {colored_recommendation(row['BearishFlag'])}  
-                        """)
-                    telegram_message += (
-                        f"*{row['Symbol']}* (Score: {row['Score']}/7)\n"
-                        f"Price: ₹{current_price}\n"
-                        f"Buy At: ₹{buy_at} | SL: ₹{stop_loss} | Target: ₹{target}\n"
-                        f"Intraday: {row['Intraday']}\n\n"
+    col1, col2 = st.columns(2)
+    with col1:
+        if st.button("🚀 Generate Top Intraday Picks"):
+            st.session_state.cancel_operation = False
+            progress_bar = st.progress(0)
+            loading_text = st.empty()
+            cancel_button = st.button("❌ Cancel Intraday Analysis")
+            loading_messages = itertools.cycle(["Analyzing trends...", "Fetching data...", "Crunching numbers..."])
+            
+            if cancel_button:
+                st.session_state.cancel_operation = True
+            
+            try:
+                results_df = analyze_all_stocks(
+                    NSE_STOCKS,
+                    price_range=price_range,
+                    progress_callback=lambda progress, start_time, total, processed: update_progress(
+                        progress_bar, loading_text, progress, loading_messages, start_time, total, processed
                     )
-                send_telegram_message(telegram_message)
-            elif not st.session_state.cancel_operation:
-                st.warning("⚠️ No top picks available due to data issues.")
-        except Exception as e:
-            st.error(f"⚠️ Error during batch analysis: {str(e)}")
+                )
+                progress_bar.empty()
+                loading_text.empty()
+                if not results_df.empty and not st.session_state.cancel_operation:
+                    st.subheader("🏆 Top 5 Intraday Stocks")
+                    telegram_message = f"*🏆 Top 5 Intraday Stocks ({datetime.now().strftime('%d %b %Y')})*\n\n"
+                    for _, row in results_df.iterrows():
+                        with st.expander(f"{row['Symbol']} - Score: {row['Score']}/7"):
+                            current_price = f"{row['Current Price']:.2f}" if pd.notnull(row['Current Price']) else "N/A"
+                            buy_at = f"{row['Buy At']:.2f}" if pd.notnull(row['Buy At']) else "N/A"
+                            stop_loss = f"{row['Stop Loss']:.2f}" if pd.notnull(row['Stop Loss']) else "N/A"
+                            target = f"{row['Target']:.2f}" if pd.notnull(row['Target']) else "N/A"
+                            st.markdown(f"""
+                            {tooltip('Current Price', TOOLTIPS['Stop Loss'])}: ₹{current_price}  
+                            Buy At: ₹{buy_at} | Stop Loss: ₹{stop_loss}  
+                            Target: ₹{target}  
+                            Intraday: {colored_recommendation(row['Intraday'])}  
+                            Breakdown: {colored_recommendation(row['Breakdown'])}  
+                            MA Crossover: {colored_recommendation(row['MACrossover'])}  
+                            VWAP Rejection: {colored_recommendation(row['VWAPRejection'])}  
+                            RSI Reversal: {colored_recommendation(row['RSIReversal'])}  
+                            Bearish Flag: {colored_recommendation(row['BearishFlag'])}  
+                            """)
+                        telegram_message += (
+                            f"*{row['Symbol']}* (Score: {row['Score']}/7)\n"
+                            f"Price: ₹{current_price}\n"
+                            f"Buy At: ₹{buy_at} | SL: ₹{stop_loss} | Target: ₹{target}\n"
+                            f"Intraday: {row['Intraday']}\n\n"
+                        )
+                    send_telegram_message(telegram_message)
+                elif not st.session_state.cancel_operation:
+                    st.warning("⚠️ No top picks available due to data issues.")
+            except Exception as e:
+                st.error(f"⚠️ Error during batch analysis: {str(e)}")
+
+    with col2:
+        if st.button("💪 Generate Top Strong Buy Picks"):
+            st.session_state.cancel_operation = False
+            progress_bar = st.progress(0)
+            loading_text = st.empty()
+            cancel_button = st.button("❌ Cancel Strong Buy Analysis")
+            loading_messages = itertools.cycle(["Scanning strong buys...", "Evaluating signals...", "Finalizing results..."])
+            
+            if cancel_button:
+                st.session_state.cancel_operation = True
+            
+            try:
+                results_df = analyze_all_stocks(
+                    NSE_STOCKS,
+                    price_range=price_range,
+                    progress_callback=lambda progress, start_time, total, processed: update_progress(
+                        progress_bar, loading_text, progress, loading_messages, start_time, total, processed
+                    )
+                )
+                strong_buy_df = filter_strong_buy_stocks(results_df)
+                progress_bar.empty()
+                loading_text.empty()
+                if not strong_buy_df.empty and not st.session_state.cancel_operation:
+                    st.subheader("💪 Top Strong Buy Stocks")
+                    telegram_message = f"*💪 Top Strong Buy Stocks ({datetime.now().strftime('%d %b %Y')})*\n\n"
+                    for _, row in strong_buy_df.iterrows():
+                        with st.expander(f"{row['Symbol']} - Score: {row['Score']}/7"):
+                            current_price = f"{row['Current Price']:.2f}" if pd.notnull(row['Current Price']) else "N/A"
+                            buy_at = f"{row['Buy At']:.2f}" if pd.notnull(row['Buy At']) else "N/A"
+                            stop_loss = f"{row['Stop Loss']:.2f}" if pd.notnull(row['Stop Loss']) else "N/A"
+                            target = f"{row['Target']:.2f}" if pd.notnull(row['Target']) else "N/A"
+                            st.markdown(f"""
+                            {tooltip('Current Price', TOOLTIPS['Stop Loss'])}: ₹{current_price}  
+                            Buy At: ₹{buy_at} | Stop Loss: ₹{stop_loss}  
+                            Target: ₹{target}  
+                            Intraday: {colored_recommendation(row['Intraday'])}  
+                            Breakdown: {colored_recommendation(row['Breakdown'])}  
+                            MA Crossover: {colored_recommendation(row['MACrossover'])}  
+                            VWAP Rejection: {colored_recommendation(row['VWAPRejection'])}  
+                            RSI Reversal: {colored_recommendation(row['RSIReversal'])}  
+                            Bearish Flag: {colored_recommendation(row['BearishFlag'])}  
+                            """)
+                        telegram_message += (
+                            f"*{row['Symbol']}* (Score: {row['Score']}/7)\n"
+                            f"Price: ₹{current_price}\n"
+                            f"Buy At: ₹{buy_at} | SL: ₹{stop_loss} | Target: ₹{target}\n"
+                            f"Intraday: {row['Intraday']}\n\n"
+                        )
+                    send_telegram_message(telegram_message)
+                elif not st.session_state.cancel_operation:
+                    st.warning("⚠️ No strong buy stocks found.")
+            except Exception as e:
+                st.error(f"⚠️ Error during strong buy analysis: {str(e)}")
     
     if symbol and data is not None and recommendations is not None:
         st.header(f"📋 {symbol.split('.')[0]} Intraday Analysis")
