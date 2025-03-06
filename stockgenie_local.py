@@ -36,6 +36,7 @@ TOOLTIPS = {
     "VWAPRejection": "Price rejects VWAP level",
     "RSIReversal": "RSI overbought with trend reversal",
     "BearishFlag": "Bearish flag pattern breakdown",
+    "Sentiment": "GDELT news sentiment (positive > 0, negative < 0, based on financial news)"
 }
 
 def tooltip(label, explanation):
@@ -60,16 +61,26 @@ def retry(max_retries=3, delay=1, backoff_factor=2, jitter=0.5):
 
 @retry(max_retries=3, delay=2)
 def fetch_nse_stock_list():
+    """Fetch NSE stock list with company names."""
     url = "https://archives.nseindia.com/content/equities/EQUITY_L.csv"
     try:
         response = requests.get(url, timeout=10)
         response.raise_for_status()
         nse_data = pd.read_csv(io.StringIO(response.text))
-        stock_list = [f"{symbol}.NS" for symbol in nse_data['SYMBOL']]
-        return stock_list
+        symbol_to_name = {f"{row['SYMBOL']}.NS": row['NAME OF COMPANY'] for _, row in nse_data.iterrows()}
+        stock_list = list(symbol_to_name.keys())
+        return stock_list, symbol_to_name
     except Exception as e:
         st.warning(f"⚠️ Failed to fetch NSE stock list: {str(e)}. Using fallback list.")
-        return ["RELIANCE.NS", "TCS.NS", "HDFCBANK.NS", "INFY.NS", "SBIN.NS"]
+        fallback_list = ["RELIANCE.NS", "TCS.NS", "HDFCBANK.NS", "INFY.NS", "SBIN.NS"]
+        fallback_mapping = {
+            "RELIANCE.NS": "Reliance Industries Limited",
+            "TCS.NS": "Tata Consultancy Services Limited",
+            "HDFCBANK.NS": "HDFC Bank Limited",
+            "INFY.NS": "Infosys Limited",
+            "SBIN.NS": "State Bank of India"
+        }
+        return fallback_list, fallback_mapping
 
 @lru_cache(maxsize=100)
 def fetch_stock_data_cached(symbol, interval="5m", period="1d"):
@@ -85,6 +96,37 @@ def fetch_stock_data_cached(symbol, interval="5m", period="1d"):
     except Exception as e:
         logger.error(f"Error fetching data for {symbol} ({interval}): {str(e)}")
         return pd.DataFrame()
+
+@retry(max_retries=3, delay=2)
+def fetch_gdelt_sentiment(symbol, symbol_to_name):
+    """Fetch sentiment from GDELT with financial news filters."""
+    try:
+        company_name = symbol_to_name.get(symbol, symbol.split('.')[0].title())
+        # Financial domains for India-focused news
+        domains = "domainis:moneycontrol.com domainis:economictimes.indiatimes.com domainis:livemint.com"
+        # Last 24 hours (1440 minutes) for intraday relevance
+        query = f"\"{company_name}\" sourcecountry:IN sourcelang:english {domains} timelimit:1440"
+        url = f"https://api.gdeltproject.org/api/v2/doc/doc?query={query}&mode=tonechart&format=json"
+        response = requests.get(url, timeout=10)
+        response.raise_for_status()
+        data = response.json()
+        
+        if 'timeline' in data and data['timeline']:
+            tones = [entry.get('tone', 0) for entry in data['timeline'][0]['data']]
+            article_count = len(tones)
+            if article_count == 0:
+                return 0.0, 0
+            avg_tone = sum(tones) / article_count
+            # Normalize tone to [-1, 1] range for consistency
+            normalized_tone = max(min(avg_tone / 10, 1), -1)  # GDELT tone typically -10 to +10
+            # Weight by article count (more articles = higher confidence)
+            confidence = min(article_count / 5, 1)  # Cap at 5 articles
+            weighted_sentiment = normalized_tone * confidence
+            return weighted_sentiment, article_count
+        return 0.0, 0
+    except Exception as e:
+        st.warning(f"⚠️ Error fetching GDELT sentiment for {symbol}: {str(e)}")
+        return 0.0, 0
 
 def optimize_rsi_window(data, windows=range(5, 10)):
     try:
@@ -141,9 +183,9 @@ def detect_bearish_flag(data):
     try:
         recent_data = data.tail(10)
         pole_drop = (recent_data['Close'].iloc[0] - recent_data['Close'].iloc[4]) / recent_data['Close'].iloc[0]
-        if pole_drop < -0.02:  # 2%+ drop
-            flag_range = recent_data['High'].iloc[5:].max() - recent_data['Low'].iloc[5:].min()
-            if flag_range < (recent_data['Close'].iloc[0] * 0.01):  # Tight consolidation
+        if pole_drop < -0.02:
+            flagVflag_range = recent_data['High'].iloc[5:].max() - recent_data['Low'].iloc[5:].min()
+            if flag_range < (recent_data['Close'].iloc[0] * 0.01):
                 breakdown = recent_data['Close'].iloc[-1] < recent_data['Low'].iloc[5:].min()
                 return breakdown
         return False
@@ -284,7 +326,7 @@ def calculate_target(data, risk_reward_ratio=2):
         logger.error(f"Error calculating target: {str(e)}")
         return None
 
-def generate_recommendations(data, mtf_indicators, price_action, symbol=None):
+def generate_recommendations(data, mtf_indicators, price_action, symbol=None, symbol_to_name=None):
     recommendations = {
         "Intraday": "Hold",
         "Breakdown": "Hold",
@@ -292,7 +334,9 @@ def generate_recommendations(data, mtf_indicators, price_action, symbol=None):
         "VWAPRejection": "Hold",
         "RSIReversal": "Hold",
         "BearishFlag": "Hold",
-        "Current Price": None, "Buy At": None, "Stop Loss": None, "Target": None, "Score": 0
+        "Current Price": None, "Buy At": None, "Stop Loss": None, "Target": None, "Score": 0,
+        "Sentiment": None,
+        "Article_Count": 0
     }
     if data.empty or 'Close' not in data.columns or pd.isna(data['Close'].iloc[-1]):
         return recommendations
@@ -378,6 +422,17 @@ def generate_recommendations(data, mtf_indicators, price_action, symbol=None):
                     elif last_close < tf['VWAP']:
                         sell_score += 0.5
 
+        # GDELT Sentiment Integration
+        sentiment_score, article_count = fetch_gdelt_sentiment(symbol, symbol_to_name)
+        recommendations["Sentiment"] = round(sentiment_score, 2)
+        recommendations["Article_Count"] = article_count
+        if sentiment_score > 0.3:  # Positive threshold (normalized)
+            buy_score += 1.5 * (article_count / 5 if article_count <= 5 else 1)
+            st.info(f"📈 Positive GDELT sentiment for {symbol}: {sentiment_score} ({article_count} articles)")
+        elif sentiment_score < -0.3:  # Negative threshold (normalized)
+            sell_score += 1.5 * (article_count / 5 if article_count <= 5 else 1)
+            st.info(f"📉 Negative GDELT sentiment for {symbol}: {sentiment_score} ({article_count} articles)")
+
         # Decision Logic
         if buy_score >= 5:
             recommendations["Intraday"] = "Strong Buy"
@@ -397,7 +452,7 @@ def generate_recommendations(data, mtf_indicators, price_action, symbol=None):
 
     return recommendations
 
-def analyze_batch(stock_batch):
+def analyze_batch(stock_batch, symbol_to_name):
     results = []
     try:
         with ThreadPoolExecutor(max_workers=5) as executor:
@@ -406,7 +461,7 @@ def analyze_batch(stock_batch):
                 try:
                     data_5m, mtf_indicators, price_action = analyze_stock(symbol)
                     if not data_5m.empty and len(data_5m) >= 5:
-                        valid_futures[executor.submit(analyze_stock_parallel, symbol, data_5m, mtf_indicators, price_action)] = symbol
+                        valid_futures[executor.submit(analyze_stock_parallel, symbol, data_5m, mtf_indicators, price_action, symbol_to_name)] = symbol
                     else:
                         st.warning(f"⚠️ Skipping {symbol}: insufficient or invalid data")
                 except Exception as e:
@@ -424,9 +479,9 @@ def analyze_batch(stock_batch):
         st.error(f"⚠️ Fatal error in analyze_batch: {str(e)}")
     return results
 
-def analyze_stock_parallel(symbol, data_5m, mtf_indicators, price_action):
+def analyze_stock_parallel(symbol, data_5m, mtf_indicators, price_action, symbol_to_name):
     try:
-        recommendations = generate_recommendations(data_5m, mtf_indicators, price_action, symbol)
+        recommendations = generate_recommendations(data_5m, mtf_indicators, price_action, symbol, symbol_to_name)
         return {
             "Symbol": symbol,
             "Current Price": recommendations["Current Price"],
@@ -439,6 +494,8 @@ def analyze_stock_parallel(symbol, data_5m, mtf_indicators, price_action):
             "VWAPRejection": recommendations["VWAPRejection"],
             "RSIReversal": recommendations["RSIReversal"],
             "BearishFlag": recommendations["BearishFlag"],
+            "Sentiment": recommendations["Sentiment"],
+            "Article_Count": recommendations["Article_Count"],
             "Score": recommendations.get("Score", 0),
         }
     except Exception as e:
@@ -458,7 +515,7 @@ def update_progress(progress_bar, loading_text, progress_value, loading_messages
     else:
         loading_text.text(f"{loading_message}{dots} | Processed 0/{total_items}")
 
-def analyze_all_stocks(stock_list, batch_size=50, price_range=None, progress_callback=None):
+def analyze_all_stocks(stock_list, symbol_to_name, batch_size=50, price_range=None, progress_callback=None):
     if st.session_state.cancel_operation:
         st.warning("⚠️ Analysis canceled by user.")
         return pd.DataFrame()
@@ -473,7 +530,7 @@ def analyze_all_stocks(stock_list, batch_size=50, price_range=None, progress_cal
             break
         
         batch = stock_list[i:i + batch_size]
-        batch_results = analyze_batch(batch)
+        batch_results = analyze_batch(batch, symbol_to_name)
         results.extend(batch_results)
         processed_items = min(i + len(batch), total_items)
         if progress_callback:
@@ -487,7 +544,7 @@ def analyze_all_stocks(stock_list, batch_size=50, price_range=None, progress_cal
     if results_df.empty:
         st.warning("⚠️ No valid stock data retrieved.")
         return pd.DataFrame()
-    for col in ['Current Price', 'Buy At', 'Stop Loss', 'Target']:
+    for col in ['Current Price', 'Buy At', 'Stop Loss', 'Target', 'Sentiment']:
         if col in results_df.columns:
             results_df[col] = results_df[col].apply(lambda x: round(x, 2) if pd.notnull(x) else x)
     if "Score" not in results_df.columns:
@@ -527,8 +584,8 @@ def send_telegram_message(message):
         st.warning(f"⚠️ Failed to send Telegram message: {str(e)}")
         return False
 
-def display_dashboard(symbol=None, data=None, recommendations=None, NSE_STOCKS=None):
-    st.title("📊 StockGenie Pro - Intraday Analysis (MTFA)")
+def display_dashboard(symbol=None, data=None, recommendations=None, NSE_STOCKS=None, symbol_to_name=None):
+    st.title("📊 StockGenie Pro - Intraday Analysis (MTFA with GDELT Sentiment)")
     st.subheader(f"📅 Analysis for {datetime.now().strftime('%d %b %Y')}")
     
     price_range = st.sidebar.slider("Select Price Range (₹)", min_value=0, max_value=10000, value=(100, 1000))
@@ -548,6 +605,7 @@ def display_dashboard(symbol=None, data=None, recommendations=None, NSE_STOCKS=N
             try:
                 results_df = analyze_all_stocks(
                     NSE_STOCKS,
+                    symbol_to_name,
                     price_range=price_range,
                     progress_callback=lambda progress, start_time, total, processed: update_progress(
                         progress_bar, loading_text, progress, loading_messages, start_time, total, processed
@@ -564,10 +622,13 @@ def display_dashboard(symbol=None, data=None, recommendations=None, NSE_STOCKS=N
                             buy_at = f"{row['Buy At']:.2f}" if pd.notnull(row['Buy At']) else "N/A"
                             stop_loss = f"{row['Stop Loss']:.2f}" if pd.notnull(row['Stop Loss']) else "N/A"
                             target = f"{row['Target']:.2f}" if pd.notnull(row['Target']) else "N/A"
+                            sentiment = f"{row['Sentiment']:.2f}" if pd.notnull(row['Sentiment']) else "N/A"
+                            article_count = row['Article_Count']
                             st.markdown(f"""
                             {tooltip('Current Price', TOOLTIPS['Stop Loss'])}: ₹{current_price}  
                             Buy At: ₹{buy_at} | Stop Loss: ₹{stop_loss}  
                             Target: ₹{target}  
+                            {tooltip('Sentiment', TOOLTIPS['Sentiment'])}: {sentiment} ({article_count} articles)  
                             Intraday: {colored_recommendation(row['Intraday'])}  
                             Breakdown: {colored_recommendation(row['Breakdown'])}  
                             MA Crossover: {colored_recommendation(row['MACrossover'])}  
@@ -579,6 +640,7 @@ def display_dashboard(symbol=None, data=None, recommendations=None, NSE_STOCKS=N
                             f"*{row['Symbol']}* (Score: {row['Score']}/7)\n"
                             f"Price: ₹{current_price}\n"
                             f"Buy At: ₹{buy_at} | SL: ₹{stop_loss} | Target: ₹{target}\n"
+                            f"Sentiment: {sentiment} ({article_count} articles)\n"
                             f"Intraday: {row['Intraday']}\n\n"
                         )
                     send_telegram_message(telegram_message)
@@ -601,6 +663,7 @@ def display_dashboard(symbol=None, data=None, recommendations=None, NSE_STOCKS=N
             try:
                 results_df = analyze_all_stocks(
                     NSE_STOCKS,
+                    symbol_to_name,
                     price_range=price_range,
                     progress_callback=lambda progress, start_time, total, processed: update_progress(
                         progress_bar, loading_text, progress, loading_messages, start_time, total, processed
@@ -618,10 +681,13 @@ def display_dashboard(symbol=None, data=None, recommendations=None, NSE_STOCKS=N
                             buy_at = f"{row['Buy At']:.2f}" if pd.notnull(row['Buy At']) else "N/A"
                             stop_loss = f"{row['Stop Loss']:.2f}" if pd.notnull(row['Stop Loss']) else "N/A"
                             target = f"{row['Target']:.2f}" if pd.notnull(row['Target']) else "N/A"
+                            sentiment = f"{row['Sentiment']:.2f}" if pd.notnull(row['Sentiment']) else "N/A"
+                            article_count = row['Article_Count']
                             st.markdown(f"""
                             {tooltip('Current Price', TOOLTIPS['Stop Loss'])}: ₹{current_price}  
                             Buy At: ₹{buy_at} | Stop Loss: ₹{stop_loss}  
                             Target: ₹{target}  
+                            {tooltip('Sentiment', TOOLTIPS['Sentiment'])}: {sentiment} ({article_count} articles)  
                             Intraday: {colored_recommendation(row['Intraday'])}  
                             Breakdown: {colored_recommendation(row['Breakdown'])}  
                             MA Crossover: {colored_recommendation(row['MACrossover'])}  
@@ -633,6 +699,7 @@ def display_dashboard(symbol=None, data=None, recommendations=None, NSE_STOCKS=N
                             f"*{row['Symbol']}* (Score: {row['Score']}/7)\n"
                             f"Price: ₹{current_price}\n"
                             f"Buy At: ₹{buy_at} | SL: ₹{stop_loss} | Target: ₹{target}\n"
+                            f"Sentiment: {sentiment} ({article_count} articles)\n"
                             f"Intraday: {row['Intraday']}\n\n"
                         )
                     send_telegram_message(telegram_message)
@@ -643,7 +710,7 @@ def display_dashboard(symbol=None, data=None, recommendations=None, NSE_STOCKS=N
     
     if symbol and data is not None and recommendations is not None:
         st.header(f"📋 {symbol.split('.')[0]} Intraday Analysis")
-        col1, col2, col3, col4 = st.columns(4)
+        col1, col2, col3, col4, col5 = st.columns(5)
         with col1:
             current_price = f"{recommendations['Current Price']:.2f}" if recommendations['Current Price'] is not None else "N/A"
             st.metric(tooltip("Current Price", TOOLTIPS['Stop Loss']), f"₹{current_price}")
@@ -656,6 +723,10 @@ def display_dashboard(symbol=None, data=None, recommendations=None, NSE_STOCKS=N
         with col4:
             target = f"{recommendations['Target']:.2f}" if recommendations['Target'] is not None else "N/A"
             st.metric("Target", f"₹{target}")
+        with col5:
+            sentiment = f"{recommendations['Sentiment']:.2f}" if recommendations['Sentiment'] is not None else "N/A"
+            article_count = recommendations['Article_Count']
+            st.metric(tooltip("GDELT Sentiment", TOOLTIPS['Sentiment']), f"{sentiment} ({article_count})")
         st.subheader("📈 Intraday Recommendations")
         cols = st.columns(3)
         strategies = ["Intraday", "Breakdown", "MACrossover", "VWAPRejection", "RSIReversal", "BearishFlag"]
@@ -681,9 +752,12 @@ def display_dashboard(symbol=None, data=None, recommendations=None, NSE_STOCKS=N
 def main():
     if 'cancel_operation' not in st.session_state:
         st.session_state.cancel_operation = False
+    if 'symbol_to_name' not in st.session_state:
+        NSE_STOCKS, st.session_state.symbol_to_name = fetch_nse_stock_list()
+    else:
+        NSE_STOCKS = fetch_nse_stock_list()[0]  # Only fetch stock list if mapping already exists
 
     st.sidebar.title("🔍 Stock Search")
-    NSE_STOCKS = fetch_nse_stock_list()
     
     symbol = None
     selected_option = st.sidebar.selectbox(
@@ -696,25 +770,32 @@ def main():
         custom_symbol = st.sidebar.text_input("Enter NSE Symbol (e.g., RELIANCE):")
         if custom_symbol:
             symbol = f"{custom_symbol}.NS"
+            if symbol not in NSE_STOCKS:
+                custom_name = st.sidebar.text_input("Enter full company name (e.g., Reliance Industries Limited):")
+                if custom_name:
+                    st.session_state.symbol_to_name[symbol] = custom_name
+                    st.sidebar.success(f"Added {symbol} as {custom_name} to mapping")
+                else:
+                    st.sidebar.warning("⚠️ Please provide the full company name for accurate sentiment analysis")
     elif selected_option != "":
         symbol = selected_option
     
     if symbol:
         if ".NS" not in symbol:
             symbol += ".NS"
-        if symbol not in NSE_STOCKS:
-            st.sidebar.warning("⚠️ Unverified symbol - data may be unreliable")
+        if symbol not in NSE_STOCKS and symbol not in st.session_state.symbol_to_name:
+            st.sidebar.warning("⚠️ Unverified symbol - sentiment may be inaccurate without full company name")
         try:
             data_5m, mtf_indicators, price_action = analyze_stock(symbol)
             if not data_5m.empty:
-                recommendations = generate_recommendations(data_5m, mtf_indicators, price_action, symbol)
-                display_dashboard(symbol, data_5m, recommendations, NSE_STOCKS)
+                recommendations = generate_recommendations(data_5m, mtf_indicators, price_action, symbol, st.session_state.symbol_to_name)
+                display_dashboard(symbol, data_5m, recommendations, NSE_STOCKS, st.session_state.symbol_to_name)
             else:
                 st.error(f"❌ Failed to load data for {symbol}")
         except Exception as e:
             st.error(f"❌ Error analyzing {symbol}: {str(e)}")
     else:
-        display_dashboard(None, None, None, NSE_STOCKS)
+        display_dashboard(None, None, None, NSE_STOCKS, st.session_state.symbol_to_name)
 
 if __name__ == "__main__":
     main()
