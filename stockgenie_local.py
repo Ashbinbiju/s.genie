@@ -17,16 +17,16 @@ from urllib.parse import quote
 
 # Setup logging with detailed configuration
 logging.basicConfig(
-    level=logging.DEBUG,  # Set to DEBUG for detailed logs
+    level=logging.DEBUG,
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
     handlers=[
-        logging.StreamHandler(),  # Log to console
-        logging.FileHandler('stockgenie.log')  # Log to file for persistence
+        logging.StreamHandler(),
+        logging.FileHandler('stockgenie.log')
     ]
 )
 logger = logging.getLogger(__name__)
 
-# API Keys (Hardcoded as per your older setup)
+# API Keys
 TELEGRAM_BOT_TOKEN = "7902319450:AAFPNcUyk9F6Sesy-h6SQnKHC_Yr6Uqk9ps"
 TELEGRAM_CHAT_ID = "-1002411670969"
 
@@ -70,7 +70,6 @@ def retry(max_retries=3, delay=1, backoff_factor=2, jitter=0.5):
 
 @retry(max_retries=3, delay=2)
 def fetch_nse_stock_list():
-    """Fetch NSE stock list with company names."""
     logger.info("Fetching NSE stock list from URL...")
     url = "https://archives.nseindia.com/content/equities/EQUITY_L.csv"
     try:
@@ -111,10 +110,9 @@ def fetch_stock_data_cached(symbol, interval="5m", period="1d"):
         logger.error(f"Error fetching data for {symbol} ({interval}): {str(e)}")
         return pd.DataFrame()
 
-@lru_cache(maxsize=100)  # Added caching for GDELT sentiment
+@lru_cache(maxsize=100)
 @retry(max_retries=3, delay=2)
 def fetch_gdelt_sentiment(symbol, symbol_to_name):
-    """Fetch sentiment from GDELT with financial news filters."""
     logger.debug(f"Fetching GDELT sentiment for {symbol}")
     try:
         company_name = symbol_to_name.get(symbol, symbol.split('.')[0].title())
@@ -158,8 +156,8 @@ def fetch_gdelt_sentiment(symbol, symbol_to_name):
             return 0.0, 0
         
         avg_tone = sum(tones) / article_count
-        normalized_tone = max(min(avg_tone / 10, 1), -1)  # GDELT tone typically -10 to +10
-        confidence = min(article_count / 5, 1)  # Cap at 5 articles
+        normalized_tone = max(min(avg_tone / 10, 1), -1)
+        confidence = min(article_count / 5, 1)
         weighted_sentiment = normalized_tone * confidence
         logger.debug(f"GDELT sentiment for {symbol}: {weighted_sentiment} (articles: {article_count})")
         return weighted_sentiment, article_count
@@ -246,7 +244,6 @@ def detect_bearish_flag(data):
 
 def check_data_sufficiency(data, timeframe="5m"):
     intervals = len(data)
-    st.info(f"📅 {timeframe} Data: {intervals} intervals")
     logger.debug(f"{timeframe} data sufficiency check: {intervals} intervals")
     if intervals < 5:
         st.warning(f"⚠️ Less than 5 intervals for {timeframe}; some indicators unavailable.")
@@ -729,10 +726,9 @@ def display_dashboard(symbol=None, data=None, recommendations=None, NSE_STOCKS=N
                     send_telegram_message(telegram_message)
                 elif not st.session_state.cancel_operation:
                     logger.warning("No top picks available due to data issues")
-                    st.warning("⚠️ No top picks available due to data issues.")
             except Exception as e:
                 logger.error(f"Error during batch analysis: {str(e)}")
-                st.error(f"⚠️ Error during batch analysis: {str(e)}")
+                st.warning(f"⚠️ Error during batch analysis: {str(e)}")
 
     with col2:
         if st.button("💪 Generate Top Strong Buy Picks"):
@@ -756,13 +752,12 @@ def display_dashboard(symbol=None, data=None, recommendations=None, NSE_STOCKS=N
                         progress_bar, loading_text, progress, loading_messages, start_time, total, processed
                     )
                 )
-                strong_buy_df = filter_strong_buy_stocks(results_df)
                 progress_bar.empty()
                 loading_text.empty()
-                if not strong_buy_df.empty and not st.session_state.cancel_operation:
+                if not results_df.empty and not st.session_state.cancel_operation:
                     st.subheader("💪 Top Strong Buy Stocks")
                     telegram_message = f"*💪 Top Strong Buy Stocks ({datetime.now().strftime('%d %b %Y')})*\n\n"
-                    for _, row in strong_buy_df.iterrows():
+                    for _, row in results_df.iterrows():
                         with st.expander(f"{row['Symbol']} - Score: {row['Score']}/7"):
                             current_price = f"{row['Current Price']:.2f}" if pd.notnull(row['Current Price']) else "N/A"
                             buy_at = f"{row['Buy At']:.2f}" if pd.notnull(row['Buy At']) else "N/A"
@@ -792,11 +787,11 @@ def display_dashboard(symbol=None, data=None, recommendations=None, NSE_STOCKS=N
                     send_telegram_message(telegram_message)
                 elif not st.session_state.cancel_operation:
                     logger.warning("No strong buy stocks found.")
-                    st.warning("⚠️ No strong buy stocks found.")
             except Exception as e:
                 logger.error(f"Error during strong buy analysis: {str(e)}")
-                st.error(f"⚠️ Error during strong buy analysis: {str(e)}")
-    
+                st.warning(f"⚠️ Error during strong buy analysis: {str(e)}")
+
+    # Display errors or warnings first, then results
     if symbol and data is not None and recommendations is not None:
         logger.info(f"Displaying dashboard for {symbol}")
         st.header(f"📋 {symbol.split('.')[0]} Intraday Analysis")
