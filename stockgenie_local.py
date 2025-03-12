@@ -13,6 +13,7 @@ import io
 import logging
 import os
 import multiprocessing
+import retrying
 
 # Setup logging
 logging.basicConfig(level=logging.WARNING)
@@ -48,20 +49,22 @@ def tooltip(label, explanation):
 def fetch_nse_stock_list():
     url = "https://archives.nseindia.com/content/equities/EQUITY_L.csv"
     try:
-        response = requests.get(url, timeout=10)
+        response = requests.get(url, timeout=30)  # Increased timeout
         nse_data = pd.read_csv(io.StringIO(response.text))
         return [f"{symbol}.NS" for symbol in nse_data['SYMBOL']]
     except Exception as e:
         st.warning(f"⚠️ Failed to fetch NSE stock list: {str(e)}. Using fallback list.")
         return ["RELIANCE.NS", "TCS.NS", "HDFCBANK.NS", "INFY.NS", "SBIN.NS"]
 
+@retrying.retry(wait_exponential_multiplier=1000, wait_exponential_max=10000, stop_max_attempt_number=3)
 @st.cache_data
 def fetch_stock_data_batch(symbols, interval="5m", period="1d"):
     try:
-        data = yf.download(symbols, period=period, interval=interval, group_by='ticker', threads=True, prepost=False)
+        data = yf.download(symbols, period=period, interval=interval, group_by='ticker', threads=False, prepost=False)
         if data.empty:
             return {}
-        # Optimize data types
+        # Handle non-finite values before type conversion
+        data = data.replace([np.inf, -np.inf], np.nan).fillna(0)
         for col in data.columns:
             if 'Volume' in col:
                 data[col] = data[col].astype(np.int32)
@@ -78,11 +81,11 @@ def optimize_rsi_window(close_data):
     best_window, best_sharpe = 14, -float('inf')
     if len(close) < 15:
         return best_window
-    returns = np.diff(close) / close[:-1]  # Length: len(close) - 1
+    returns = np.diff(close) / close[:-1]
     for window in range(10, 15):
         rsi = ta.momentum.RSIIndicator(pd.Series(close), window=window).rsi().values
         signals = np.where(rsi < 30, 1, np.where(rsi > 70, -1, 0))
-        strategy_returns = signals[:-1] * returns  # Aligns: both len(close) - 1
+        strategy_returns = signals[:-1] * returns
         sharpe = np.mean(strategy_returns) / np.std(strategy_returns) if np.std(strategy_returns) != 0 else 0
         if sharpe > best_sharpe:
             best_sharpe, best_window = sharpe, window
@@ -94,11 +97,11 @@ def optimize_macd_params(close_data):
     best_params, best_sharpe = (12, 26, 9), -float('inf')
     if len(close) < 26:
         return best_params
-    returns = np.diff(close) / close[:-1]  # Length: len(close) - 1
+    returns = np.diff(close) / close[:-1]
     for fast, slow, signal in [(12, 26, 9), (10, 20, 5), (14, 24, 7)]:
         macd = ta.trend.MACD(pd.Series(close), window_fast=fast, window_slow=slow, window_sign=signal)
         signals = np.where(macd.macd() > macd.macd_signal(), 1, -1)
-        strategy_returns = signals[:-1] * returns  # Aligns: both len(close) - 1
+        strategy_returns = signals[:-1] * returns
         sharpe = np.mean(strategy_returns) / np.std(strategy_returns) if np.std(strategy_returns) != 0 else 0
         if sharpe > best_sharpe:
             best_sharpe, best_params = sharpe, (fast, slow, signal)
@@ -112,7 +115,7 @@ def calculate_indicators(data):
         macd_fast, macd_slow, macd_sign = optimize_macd_params(tuple(data['Close'].values))
     except Exception as e:
         logger.error(f"Error optimizing indicators: {str(e)}")
-        return data  # Fallback to unprocessed data
+        return data
     
     windows = {
         'rsi': min(rsi_window, len(data) - 1),
@@ -127,7 +130,6 @@ def calculate_indicators(data):
         'ema_slow': min(21, len(data) - 1),
     }
 
-    # Vectorized calculations
     data['RSI'] = ta.momentum.RSIIndicator(data['Close'], window=windows['rsi']).rsi()
     macd = ta.trend.MACD(data['Close'], window_slow=windows['macd_slow'], window_fast=windows['macd_fast'], window_sign=windows['macd_sign'])
     data[['MACD', 'MACD_signal']] = pd.DataFrame({'MACD': macd.macd(), 'MACD_signal': macd.macd_signal()}, index=data.index)
@@ -268,7 +270,7 @@ def generate_recommendations(data, sharpe, sortino, price_action):
 
 def analyze_batch(stock_batch, data_batch):
     results = []
-    max_workers = min(multiprocessing.cpu_count() * 2, 20)
+    max_workers = min(multiprocessing.cpu_count(), 10)  # Reduced to avoid overloading
     with ThreadPoolExecutor(max_workers=max_workers) as executor:
         futures = {executor.submit(analyze_stock, symbol, data_batch): symbol for symbol in stock_batch}
         for future in as_completed(futures):
@@ -278,7 +280,7 @@ def analyze_batch(stock_batch, data_batch):
     return results
 
 @st.cache_data
-def analyze_all_stocks(stock_list, batch_size=50, price_range=None):
+def analyze_all_stocks(stock_list, batch_size=25, price_range=None):  # Reduced batch size
     if st.session_state.get('cancel_operation', False):
         return pd.DataFrame()
     
@@ -313,8 +315,8 @@ def analyze_all_stocks(stock_list, batch_size=50, price_range=None):
     return results_df.sort_values(by="Score", ascending=False).head(5)
 
 def send_telegram_message(message):
-    url = f"https://api.telegram.org/bot{"7902319450:AAFPNcUyk9F6Sesy-h6SQnKHC_Yr6Uqk9ps"}/sendMessage"
-    payload = {"chat_id": "-1002411670969", "text": message, "parse_mode": "Markdown"}
+    url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
+    payload = {"chat_id": TELEGRAM_CHAT_ID, "text": message, "parse_mode": "Markdown"}
     try:
         requests.post(url, json=payload, timeout=5).raise_for_status()
     except Exception as e:
