@@ -78,11 +78,11 @@ def optimize_rsi_window(close_data):
     best_window, best_sharpe = 14, -float('inf')
     if len(close) < 15:
         return best_window
-    returns = np.diff(close) / close[:-1]
+    returns = np.diff(close) / close[:-1]  # Length: len(close) - 1
     for window in range(10, 15):
         rsi = ta.momentum.RSIIndicator(pd.Series(close), window=window).rsi().values
         signals = np.where(rsi < 30, 1, np.where(rsi > 70, -1, 0))
-        strategy_returns = signals[:-1] * returns[1:]
+        strategy_returns = signals[:-1] * returns  # Aligns: both len(close) - 1
         sharpe = np.mean(strategy_returns) / np.std(strategy_returns) if np.std(strategy_returns) != 0 else 0
         if sharpe > best_sharpe:
             best_sharpe, best_window = sharpe, window
@@ -94,11 +94,11 @@ def optimize_macd_params(close_data):
     best_params, best_sharpe = (12, 26, 9), -float('inf')
     if len(close) < 26:
         return best_params
-    returns = np.diff(close) / close[:-1]
-    for fast, slow, signal in [(12, 26, 9), (10, 20, 5), (14, 24, 7)]:  # Reduced range for speed
+    returns = np.diff(close) / close[:-1]  # Length: len(close) - 1
+    for fast, slow, signal in [(12, 26, 9), (10, 20, 5), (14, 24, 7)]:
         macd = ta.trend.MACD(pd.Series(close), window_fast=fast, window_slow=slow, window_sign=signal)
         signals = np.where(macd.macd() > macd.macd_signal(), 1, -1)
-        strategy_returns = signals[:-1] * returns[1:]
+        strategy_returns = signals[:-1] * returns  # Aligns: both len(close) - 1
         sharpe = np.mean(strategy_returns) / np.std(strategy_returns) if np.std(strategy_returns) != 0 else 0
         if sharpe > best_sharpe:
             best_sharpe, best_params = sharpe, (fast, slow, signal)
@@ -107,8 +107,13 @@ def optimize_macd_params(close_data):
 def calculate_indicators(data):
     if len(data) < 5:
         return data
-    rsi_window = optimize_rsi_window(tuple(data['Close'].values))
-    macd_fast, macd_slow, macd_sign = optimize_macd_params(tuple(data['Close'].values))
+    try:
+        rsi_window = optimize_rsi_window(tuple(data['Close'].values))
+        macd_fast, macd_slow, macd_sign = optimize_macd_params(tuple(data['Close'].values))
+    except Exception as e:
+        logger.error(f"Error optimizing indicators: {str(e)}")
+        return data  # Fallback to unprocessed data
+    
     windows = {
         'rsi': min(rsi_window, len(data) - 1),
         'macd_slow': min(macd_slow, len(data) - 1),
