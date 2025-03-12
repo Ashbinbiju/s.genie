@@ -324,7 +324,7 @@ def analyze_all_stocks(stock_list, batch_size=25, price_range=None):
     return results_df.sort_values(by="Score", ascending=False).head(5)
 
 def send_telegram_message(message):
-    url = f"https://api.telegram.org/"7902319450:AAFPNcUyk9F6Sesy-h6SQnKHC_Yr6Uqk9ps"}/sendMessage"
+    url = f"https://api.telegram.org/{"7902319450:AAFPNcUyk9F6Sesy-h6SQnKHC_Yr6Uqk9ps"}/sendMessage"
     payload = {"chat_id": "-1002411670969", "text": message, "parse_mode": "Markdown"}
     try:
         requests.post(url, json=payload, timeout=5).raise_for_status()
