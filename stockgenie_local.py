@@ -80,10 +80,8 @@ def optimize_rsi_window(close_data):
     best_window, best_sharpe = 14, -float('inf')
     if len(close) < 15:
         return best_window
-    # Replace zeros with a small value to avoid division by zero
     close = np.where(close == 0, 1e-10, close)
     returns = np.diff(close) / close[:-1]
-    # Filter out NaN/inf from returns
     returns = np.nan_to_num(returns, nan=0.0, posinf=0.0, neginf=0.0)
     for window in range(10, 15):
         rsi = ta.momentum.RSIIndicator(pd.Series(close), window=window).rsi().values
@@ -101,7 +99,6 @@ def optimize_macd_params(close_data):
     best_params, best_sharpe = (12, 26, 9), -float('inf')
     if len(close) < 26:
         return best_params
-    # Replace zeros with a small value to avoid division by zero
     close = np.where(close == 0, 1e-10, close)
     returns = np.diff(close) / close[:-1]
     returns = np.nan_to_num(returns, nan=0.0, posinf=0.0, neginf=0.0)
@@ -167,7 +164,8 @@ def calculate_risk_metrics(data):
         return 0, 0
     returns = np.nan_to_num(returns, nan=0.0, posinf=0.0, neginf=0.0)
     sharpe = returns.mean() / returns.std() if returns.std() != 0 else 0
-    downside_std = returns[returns < 0].std() if not returns[returns < 0].empty else 0
+    downside_returns = returns[returns < 0]
+    downside_std = downside_returns.std() if len(downside_returns) > 0 else 0
     sortino = returns.mean() / downside_std if downside_std != 0 else 0
     return sharpe, sortino
 
@@ -324,7 +322,7 @@ def analyze_all_stocks(stock_list, batch_size=25, price_range=None):
     return results_df.sort_values(by="Score", ascending=False).head(5)
 
 def send_telegram_message(message):
-    url = f"https://api.telegram.org/{"7902319450:AAFPNcUyk9F6Sesy-h6SQnKHC_Yr6Uqk9ps"}/sendMessage"
+    url = f"https://api.telegram.org/bot{"7902319450:AAFPNcUyk9F6Sesy-h6SQnKHC_Yr6Uqk9ps"}/sendMessage"
     payload = {"chat_id": "-1002411670969", "text": message, "parse_mode": "Markdown"}
     try:
         requests.post(url, json=payload, timeout=5).raise_for_status()
@@ -345,18 +343,18 @@ def display_dashboard(symbol=None, data=None, recommendations=None, NSE_STOCKS=N
             results_df = analyze_all_stocks(NSE_STOCKS, price_range=price_range)
             if not results_df.empty:
                 st.subheader("🏆 Top 5 Intraday Stocks")
-                telegram_msg = f"*Top 5 Intraday Stocks ({datetime.now().strftime('%d %b %Y')})*\n\n"
+                telegram_msg = f"*Top 5 Intraday Stocks ({datetime.now().strftime('%d %b %Y')})*\nChat ID: {TELEGRAM_CHAT_ID}\n\n"
                 for _, row in results_df.iterrows():
                     with st.expander(f"{row['Symbol']} - Score: {row['Score']}"):
                         st.write(f"Price: ₹{row['Current Price']:.2f}, Buy At: ₹{row['Buy At']:.2f}, "
                                  f"Stop Loss: ₹{row['Stop Loss']:.2f}, Target: ₹{row['Target']:.2f}, "
-                                 f"Intraday: {row['Intraday']}")
+                                 f"Intraday: {row['Intraday']}, Telegram Chat ID: {TELEGRAM_CHAT_ID}")
                     telegram_msg += f"*{row['Symbol']}*: ₹{row['Current Price']:.2f} - {row['Intraday']}\n"
                 send_telegram_message(telegram_msg)
 
     if symbol and data is not None and recommendations is not None:
         st.header(f"📋 {symbol.split('.')[0]} Analysis")
-        st.write(f"Price: ₹{recommendations['Current Price']:.2f}, Intraday: {recommendations['Intraday']}")
+        st.write(f"Price: ₹{recommendations['Current Price']:.2f}, Intraday: {recommendations['Intraday']}, Telegram Chat ID: {TELEGRAM_CHAT_ID}")
         fig = px.line(data, y=['Close', 'VWAP'], title="Price & VWAP (5m)")
         st.plotly_chart(fig)
 
