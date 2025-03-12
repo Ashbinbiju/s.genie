@@ -45,11 +45,11 @@ TOOLTIPS = {
 def tooltip(label, explanation):
     return f"{label} 📌 ({explanation})"
 
-@st.cache_data(ttl=86400)  # Cache for 24 hours
+@st.cache_data(ttl=86400)
 def fetch_nse_stock_list():
     url = "https://archives.nseindia.com/content/equities/EQUITY_L.csv"
     try:
-        response = requests.get(url, timeout=30)  # Increased timeout
+        response = requests.get(url, timeout=30)
         nse_data = pd.read_csv(io.StringIO(response.text))
         return [f"{symbol}.NS" for symbol in nse_data['SYMBOL']]
     except Exception as e:
@@ -63,7 +63,6 @@ def fetch_stock_data_batch(symbols, interval="5m", period="1d"):
         data = yf.download(symbols, period=period, interval=interval, group_by='ticker', threads=False, prepost=False)
         if data.empty:
             return {}
-        # Handle non-finite values before type conversion
         data = data.replace([np.inf, -np.inf], np.nan).fillna(0)
         for col in data.columns:
             if 'Volume' in col:
@@ -81,11 +80,16 @@ def optimize_rsi_window(close_data):
     best_window, best_sharpe = 14, -float('inf')
     if len(close) < 15:
         return best_window
+    # Replace zeros with a small value to avoid division by zero
+    close = np.where(close == 0, 1e-10, close)
     returns = np.diff(close) / close[:-1]
+    # Filter out NaN/inf from returns
+    returns = np.nan_to_num(returns, nan=0.0, posinf=0.0, neginf=0.0)
     for window in range(10, 15):
         rsi = ta.momentum.RSIIndicator(pd.Series(close), window=window).rsi().values
         signals = np.where(rsi < 30, 1, np.where(rsi > 70, -1, 0))
         strategy_returns = signals[:-1] * returns
+        strategy_returns = np.nan_to_num(strategy_returns, nan=0.0, posinf=0.0, neginf=0.0)
         sharpe = np.mean(strategy_returns) / np.std(strategy_returns) if np.std(strategy_returns) != 0 else 0
         if sharpe > best_sharpe:
             best_sharpe, best_window = sharpe, window
@@ -97,11 +101,15 @@ def optimize_macd_params(close_data):
     best_params, best_sharpe = (12, 26, 9), -float('inf')
     if len(close) < 26:
         return best_params
+    # Replace zeros with a small value to avoid division by zero
+    close = np.where(close == 0, 1e-10, close)
     returns = np.diff(close) / close[:-1]
+    returns = np.nan_to_num(returns, nan=0.0, posinf=0.0, neginf=0.0)
     for fast, slow, signal in [(12, 26, 9), (10, 20, 5), (14, 24, 7)]:
         macd = ta.trend.MACD(pd.Series(close), window_fast=fast, window_slow=slow, window_sign=signal)
         signals = np.where(macd.macd() > macd.macd_signal(), 1, -1)
         strategy_returns = signals[:-1] * returns
+        strategy_returns = np.nan_to_num(strategy_returns, nan=0.0, posinf=0.0, neginf=0.0)
         sharpe = np.mean(strategy_returns) / np.std(strategy_returns) if np.std(strategy_returns) != 0 else 0
         if sharpe > best_sharpe:
             best_sharpe, best_params = sharpe, (fast, slow, signal)
@@ -157,6 +165,7 @@ def calculate_risk_metrics(data):
     returns = data['Close'].pct_change().dropna()
     if len(returns) < 5:
         return 0, 0
+    returns = np.nan_to_num(returns, nan=0.0, posinf=0.0, neginf=0.0)
     sharpe = returns.mean() / returns.std() if returns.std() != 0 else 0
     downside_std = returns[returns < 0].std() if not returns[returns < 0].empty else 0
     sortino = returns.mean() / downside_std if downside_std != 0 else 0
@@ -173,7 +182,7 @@ def detect_patterns(data):
     
     if len(data) >= 10:
         recent = data.tail(10)
-        pole_drop = (recent['Close'].iloc[0] - recent['Close'].iloc[4]) / recent['Close'].iloc[0]
+        pole_drop = (recent['Close'].iloc[0] - recent['Close'].iloc[4]) / recent['Close'].iloc[0] if recent['Close'].iloc[0] != 0 else 0
         patterns['Bearish_Flag'] = pole_drop < -0.02 and (recent['High'].iloc[5:].max() - recent['Low'].iloc[5:].min()) < (recent['Close'].iloc[0] * 0.01) and recent['Close'].iloc[-1] < recent['Low'].iloc[5:].min()
     
     if len(data) >= 20:
@@ -183,10 +192,10 @@ def detect_patterns(data):
         head = highs[mid-2:mid+3].max()
         left_shoulder, right_shoulder = highs[:mid-2].max(), highs[mid+3:].max()
         neckline = max(lows[mid-2:mid+2].min(), lows[:mid-2].min(), lows[mid+3:].min())
-        patterns['Head_and_Shoulders'] = "Bearish" if (head > left_shoulder and head > right_shoulder and highs[-1] < neckline) else None
+        patterns['Head_and_Shoulders'] = "Bearish" if (head > left_shoulder and head > right_shoulder and highs.iloc[-1] < neckline) else None
         
         peaks = highs[highs > highs.shift(1)].nlargest(2)
-        if len(peaks) == 2 and abs(peaks.iloc[0] - peaks.iloc[1]) < peaks.mean() * 0.05 and highs[-1] < lows[lows.index > peaks.index.min()].min():
+        if len(peaks) == 2 and abs(peaks.iloc[0] - peaks.iloc[1]) < peaks.mean() * 0.05 and highs.iloc[-1] < lows[lows.index > peaks.index.min()].min():
             patterns['Double_Top_Bottom'] = "Bearish Double Top"
     return patterns
 
@@ -270,7 +279,7 @@ def generate_recommendations(data, sharpe, sortino, price_action):
 
 def analyze_batch(stock_batch, data_batch):
     results = []
-    max_workers = min(multiprocessing.cpu_count(), 10)  # Reduced to avoid overloading
+    max_workers = min(multiprocessing.cpu_count(), 10)
     with ThreadPoolExecutor(max_workers=max_workers) as executor:
         futures = {executor.submit(analyze_stock, symbol, data_batch): symbol for symbol in stock_batch}
         for future in as_completed(futures):
@@ -280,7 +289,7 @@ def analyze_batch(stock_batch, data_batch):
     return results
 
 @st.cache_data
-def analyze_all_stocks(stock_list, batch_size=25, price_range=None):  # Reduced batch size
+def analyze_all_stocks(stock_list, batch_size=25, price_range=None):
     if st.session_state.get('cancel_operation', False):
         return pd.DataFrame()
     
@@ -315,8 +324,8 @@ def analyze_all_stocks(stock_list, batch_size=25, price_range=None):  # Reduced 
     return results_df.sort_values(by="Score", ascending=False).head(5)
 
 def send_telegram_message(message):
-    url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
-    payload = {"chat_id": TELEGRAM_CHAT_ID, "text": message, "parse_mode": "Markdown"}
+    url = f"https://api.telegram.org/"7902319450:AAFPNcUyk9F6Sesy-h6SQnKHC_Yr6Uqk9ps"}/sendMessage"
+    payload = {"chat_id": "-1002411670969", "text": message, "parse_mode": "Markdown"}
     try:
         requests.post(url, json=payload, timeout=5).raise_for_status()
     except Exception as e:
