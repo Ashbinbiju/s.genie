@@ -62,7 +62,8 @@ def fetch_nse_stock_list():
 @st.cache_data
 def fetch_stock_data_batch(symbols, interval="5m", period="1d"):
     try:
-        data = yf.download(symbols, period=period, interval=interval, group_by='ticker', threads=False, prepost=False)
+        data = yf.download(symbols, period=period, interval=interval, group_by='ticker', 
+                          threads=False, prepost=False, auto_adjust=False)
         if data.empty:
             return {}
         data = data.replace([np.inf, -np.inf], np.nan).fillna(0)
@@ -203,8 +204,12 @@ def save_performance(symbol, recommendation, date_str):
     """Save recommendation performance data"""
     performance_data = {}
     if os.path.exists(PERFORMANCE_FILE):
-        with open(PERFORMANCE_FILE, 'r') as f:
-            performance_data = json.load(f)
+        try:
+            with open(PERFORMANCE_FILE, 'r') as f:
+                performance_data = json.load(f)
+        except (json.JSONDecodeError, IOError) as e:
+            logger.error(f"Error loading performance file: {str(e)}. Starting with empty data.")
+            performance_data = {}
     
     if date_str not in performance_data:
         performance_data[date_str] = {}
@@ -219,14 +224,21 @@ def save_performance(symbol, recommendation, date_str):
         'timestamp': datetime.now().isoformat()
     }
     
-    with open(PERFORMANCE_FILE, 'w') as f:
-        json.dump(performance_data, f, indent=2)
+    try:
+        with open(PERFORMANCE_FILE, 'w') as f:
+            json.dump(performance_data, f, indent=2)
+    except IOError as e:
+        logger.error(f"Error saving performance data: {str(e)}")
 
 def load_performance_data():
     """Load historical performance data"""
     if os.path.exists(PERFORMANCE_FILE):
-        with open(PERFORMANCE_FILE, 'r') as f:
-            return json.load(f)
+        try:
+            with open(PERFORMANCE_FILE, 'r') as f:
+                return json.load(f)
+        except (json.JSONDecodeError, IOError) as e:
+            logger.error(f"Error loading performance data: {str(e)}. Returning empty dict.")
+            return {}
     return {}
 
 def calculate_performance(symbol, recommendation, current_price):
@@ -490,6 +502,8 @@ def display_dashboard(symbol=None, data=None, recommendations=None, NSE_STOCKS=N
                         st.write(f"Target Hit: {stock['target_hit']}")
                         st.write(f"Stop Loss Hit: {stock['stop_hit']}")
                         st.write(f"Profit/Loss: {stock['profit_loss']:.2f}%")
+        else:
+            st.warning("No performance data available for the selected period.")
 
     if symbol and data is not None and recommendations is not None:
         st.header(f"📋 {symbol.split('.')[0]} Analysis")
