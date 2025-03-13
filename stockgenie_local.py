@@ -15,6 +15,8 @@ import os
 import multiprocessing
 import retrying
 import json
+import tempfile
+import shutil
 
 # Setup logging
 logging.basicConfig(level=logging.WARNING)
@@ -200,8 +202,22 @@ def detect_patterns(data):
             patterns['Double_Top_Bottom'] = "Bearish Double Top"
     return patterns
 
+def convert_to_serializable(data):
+    """Convert NumPy types to JSON-serializable Python types"""
+    if isinstance(data, dict):
+        return {k: convert_to_serializable(v) for k, v in data.items()}
+    elif isinstance(data, list):
+        return [convert_to_serializable(item) for item in data]
+    elif isinstance(data, np.float32) or isinstance(data, np.float64):
+        return float(data)
+    elif isinstance(data, np.int32) or isinstance(data, np.int64):
+        return int(data)
+    elif data is None:
+        return None
+    return data
+
 def save_performance(symbol, recommendation, date_str):
-    """Save recommendation performance data"""
+    """Save recommendation performance data with atomic file writing"""
     performance_data = {}
     if os.path.exists(PERFORMANCE_FILE):
         try:
@@ -214,19 +230,23 @@ def save_performance(symbol, recommendation, date_str):
     if date_str not in performance_data:
         performance_data[date_str] = {}
     
+    # Convert recommendation data to JSON-serializable format
+    serializable_recommendation = convert_to_serializable(recommendation)
     performance_data[date_str][symbol] = {
         'date': date_str,
-        'current_price': recommendation['Current Price'],
-        'buy_at': recommendation['Buy At'],
-        'stop_loss': recommendation['Stop Loss'],
-        'target': recommendation['Target'],
-        'recommendation': recommendation['Intraday'],
+        'current_price': serializable_recommendation['Current Price'],
+        'buy_at': serializable_recommendation['Buy At'],
+        'stop_loss': serializable_recommendation['Stop Loss'],
+        'target': serializable_recommendation['Target'],
+        'recommendation': serializable_recommendation['Intraday'],
         'timestamp': datetime.now().isoformat()
     }
     
+    # Atomic file writing
     try:
-        with open(PERFORMANCE_FILE, 'w') as f:
-            json.dump(performance_data, f, indent=2)
+        with tempfile.NamedTemporaryFile(mode='w', delete=False) as temp_file:
+            json.dump(performance_data, temp_file, indent=2)
+        shutil.move(temp_file.name, PERFORMANCE_FILE)
     except IOError as e:
         logger.error(f"Error saving performance data: {str(e)}")
 
@@ -446,8 +466,8 @@ def analyze_all_stocks(stock_list, batch_size=25, price_range=None):
     return results_df.sort_values(by="Score", ascending=False).head(5)
 
 def send_telegram_message(message):
-    url = f"https://api.telegram.org/bot{"7902319450:AAFPNcUyk9F6Sesy-h6SQnKHC_Yr6Uqk9ps"}/sendMessage"
-    payload = {"chat_id": "-1002411670969", "text": message, "parse_mode": "Markdown"}
+    url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
+    payload = {"chat_id": TELEGRAM_CHAT_ID, "text": message, "parse_mode": "Markdown"}
     try:
         requests.post(url, json=payload, timeout=5).raise_for_status()
     except Exception as e:
