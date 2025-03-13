@@ -3,7 +3,7 @@ import pandas as pd
 import numpy as np
 import ta
 import streamlit as st
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, date
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from functools import lru_cache
 import plotly.express as px
@@ -14,14 +14,16 @@ import logging
 import os
 import multiprocessing
 import retrying
+import json
 
 # Setup logging
 logging.basicConfig(level=logging.WARNING)
 logger = logging.getLogger(__name__)
 
-# API Keys
+# API Keys and Constants
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "your_default_token")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "your_default_chat_id")
+PERFORMANCE_FILE = "stock_performance.json"
 
 # Tooltips
 TOOLTIPS = {
@@ -197,6 +199,110 @@ def detect_patterns(data):
             patterns['Double_Top_Bottom'] = "Bearish Double Top"
     return patterns
 
+def save_performance(symbol, recommendation, date_str):
+    """Save recommendation performance data"""
+    performance_data = {}
+    if os.path.exists(PERFORMANCE_FILE):
+        with open(PERFORMANCE_FILE, 'r') as f:
+            performance_data = json.load(f)
+    
+    if date_str not in performance_data:
+        performance_data[date_str] = {}
+    
+    performance_data[date_str][symbol] = {
+        'date': date_str,
+        'current_price': recommendation['Current Price'],
+        'buy_at': recommendation['Buy At'],
+        'stop_loss': recommendation['Stop Loss'],
+        'target': recommendation['Target'],
+        'recommendation': recommendation['Intraday'],
+        'timestamp': datetime.now().isoformat()
+    }
+    
+    with open(PERFORMANCE_FILE, 'w') as f:
+        json.dump(performance_data, f, indent=2)
+
+def load_performance_data():
+    """Load historical performance data"""
+    if os.path.exists(PERFORMANCE_FILE):
+        with open(PERFORMANCE_FILE, 'r') as f:
+            return json.load(f)
+    return {}
+
+def calculate_performance(symbol, recommendation, current_price):
+    """Calculate performance metrics for a recommendation"""
+    performance = {
+        'symbol': symbol,
+        'initial_price': recommendation['current_price'],
+        'current_price': current_price,
+        'recommendation': recommendation['recommendation'],
+        'target': recommendation['target'],
+        'stop_loss': recommendation['stop_loss']
+    }
+    
+    if current_price and recommendation['current_price']:
+        performance['price_change'] = ((current_price - recommendation['current_price']) / 
+                                     recommendation['current_price'] * 100)
+        
+        if recommendation['recommendation'] == 'Buy':
+            performance['target_hit'] = current_price >= recommendation['target']
+            performance['stop_hit'] = current_price <= recommendation['stop_loss']
+            performance['profit_loss'] = (current_price - recommendation['current_price']) / recommendation['current_price'] * 100
+        elif recommendation['recommendation'] == 'Sell':
+            performance['target_hit'] = current_price <= recommendation['target']
+            performance['stop_hit'] = current_price >= recommendation['stop_loss']
+            performance['profit_loss'] = (recommendation['current_price'] - current_price) / recommendation['current_price'] * 100
+        else:
+            performance['profit_loss'] = 0
+            performance['target_hit'] = False
+            performance['stop_hit'] = False
+    
+    return performance
+
+def generate_summary(period='daily'):
+    """Generate performance summary for specified period"""
+    performance_data = load_performance_data()
+    if not performance_data:
+        return None
+        
+    today = date.today()
+    summary = {
+        'total_recommendations': 0,
+        'successful_trades': 0,
+        'average_profit_loss': 0,
+        'win_rate': 0,
+        'stocks': []
+    }
+    
+    for date_str, stocks in performance_data.items():
+        date_obj = datetime.strptime(date_str, '%Y-%m-%d').date()
+        
+        if period == 'daily' and date_obj != today:
+            continue
+        elif period == 'weekly' and (today - date_obj).days > 7:
+            continue
+            
+        for symbol, rec in stocks.items():
+            # Fetch current price
+            data_batch = fetch_stock_data_batch([symbol])
+            current_data = data_batch.get(symbol)
+            current_price = current_data['Close'].iloc[-1] if current_data is not None and not current_data.empty else None
+            
+            if current_price:
+                perf = calculate_performance(symbol, rec, current_price)
+                summary['stocks'].append(perf)
+                summary['total_recommendations'] += 1
+                summary['average_profit_loss'] += perf['profit_loss']
+                
+                if perf['target_hit']:
+                    summary['successful_trades'] += 1
+    
+    if summary['total_recommendations'] > 0:
+        summary['average_profit_loss'] /= summary['total_recommendations']
+        summary['win_rate'] = (summary['successful_trades'] / summary['total_recommendations']) * 100
+    
+    return summary
+
 def analyze_stock(symbol, data_batch):
     data = data_batch.get(symbol, pd.DataFrame())
     if len(data) < 5:
@@ -207,7 +313,7 @@ def analyze_stock(symbol, data_batch):
     price_action = detect_patterns(data)
     
     rec = generate_recommendations(data, sharpe, sortino, price_action)
-    return {
+    result = {
         "Symbol": symbol, "Current Price": rec["Current Price"], "Buy At": rec["Buy At"],
         "Stop Loss": rec["Stop Loss"], "Target": rec["Target"], "Intraday": rec["Intraday"],
         "Breakdown": rec["Breakdown"], "MACrossover": rec["MACrossover"], "VWAPRejection": rec["VWAPRejection"],
@@ -215,6 +321,12 @@ def analyze_stock(symbol, data_batch):
         "HeadAndShoulders": rec["HeadAndShoulders"], "DoubleTopBottom": rec["DoubleTopBottom"],
         "Score": rec["Score"], "Sharpe": sharpe, "Sortino": sortino
     }
+    
+    # Save performance data
+    date_str = date.today().strftime('%Y-%m-%d')
+    save_performance(symbol, result, date_str)
+    
+    return result
 
 def generate_recommendations(data, sharpe, sortino, price_action):
     rec = {k: "Hold" for k in ["Intraday", "Breakdown", "MACrossover", "VWAPRejection", "RSIReversal", "BearishFlag", "HeadAndShoulders", "DoubleTopBottom"]}
@@ -333,6 +445,9 @@ def display_dashboard(symbol=None, data=None, recommendations=None, NSE_STOCKS=N
     st.title("📊 StockGenie Pro - Intraday Analysis")
     price_range = st.sidebar.slider("Price Range (₹)", 0, 10000, (100, 1000))
 
+    # Add summary selection
+    summary_type = st.sidebar.selectbox("View Performance Summary", ["None", "Daily", "Weekly"])
+    
     col1, col2 = st.columns(2)
     with col1:
         if st.button("🚀 Top Intraday Picks"):
@@ -351,6 +466,30 @@ def display_dashboard(symbol=None, data=None, recommendations=None, NSE_STOCKS=N
                                  f"Intraday: {row['Intraday']}, Telegram Chat ID: {TELEGRAM_CHAT_ID}")
                     telegram_msg += f"*{row['Symbol']}*: ₹{row['Current Price']:.2f} - {row['Intraday']}\n"
                 send_telegram_message(telegram_msg)
+
+    # Display performance summary
+    if summary_type != "None":
+        period = summary_type.lower()
+        summary = generate_summary(period)
+        if summary:
+            st.subheader(f"{summary_type} Performance Summary")
+            st.write(f"Total Recommendations: {summary['total_recommendations']}")
+            st.write(f"Successful Trades: {summary['successful_trades']}")
+            st.write(f"Average Profit/Loss: {summary['average_profit_loss']:.2f}%")
+            st.write(f"Win Rate: {summary['win_rate']:.2f}%")
+            
+            # Display detailed performance for each stock
+            if summary['stocks']:
+                st.subheader("Detailed Performance")
+                for stock in summary['stocks']:
+                    with st.expander(f"{stock['symbol']}"):
+                        st.write(f"Initial Price: ₹{stock['initial_price']:.2f}")
+                        st.write(f"Current Price: ₹{stock['current_price']:.2f}")
+                        st.write(f"Recommendation: {stock['recommendation']}")
+                        st.write(f"Price Change: {stock['price_change']:.2f}%")
+                        st.write(f"Target Hit: {stock['target_hit']}")
+                        st.write(f"Stop Loss Hit: {stock['stop_hit']}")
+                        st.write(f"Profit/Loss: {stock['profit_loss']:.2f}%")
 
     if symbol and data is not None and recommendations is not None:
         st.header(f"📋 {symbol.split('.')[0]} Analysis")
