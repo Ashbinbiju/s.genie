@@ -46,6 +46,17 @@ TOOLTIPS = {
     "VPT": "Volume-Price Trend - Confirms price trends",
 }
 
+# Define weights for indicators
+WEIGHTS = {
+    "RSI": 0.2,
+    "MACD": 0.3,
+    "VWAP": 0.25,
+    "Volume_Spike": 0.15,
+    "ATR": 0.1,
+    "VWMACD": 0.25,
+    "VWRSI": 0.2
+}
+
 def tooltip(label, explanation):
     return f"{label} 📌 ({explanation})"
 
@@ -60,6 +71,23 @@ def fetch_nse_stock_list():
         st.warning(f"⚠️ Failed to fetch NSE stock list: {str(e)}. Using fallback list.")
         return ["RELIANCE.NS", "TCS.NS", "HDFCBANK.NS", "INFY.NS", "SBIN.NS"]
 
+def preprocess_data(data):
+    # Forward fill missing values
+    data = data.fillna(method='ffill').fillna(method='bfill')
+    
+    # Remove outliers using IQR method
+    for col in ['Open', 'High', 'Low', 'Close', 'Volume']:
+        Q1 = data[col].quantile(0.25)
+        Q3 = data[col].quantile(0.75)
+        IQR = Q3 - Q1
+        lower_bound = Q1 - 1.5 * IQR
+        upper_bound = Q3 + 1.5 * IQR
+        data[col] = data[col].clip(lower_bound, upper_bound)
+    
+    # Ensure consistent timestamps (5-minute intervals)
+    data = data.asfreq('5min', method='ffill')
+    return data
+
 @retrying.retry(wait_exponential_multiplier=1000, wait_exponential_max=10000, stop_max_attempt_number=3)
 @st.cache_data
 def fetch_stock_data_batch(symbols, interval="5m", period="1d"):
@@ -68,13 +96,8 @@ def fetch_stock_data_batch(symbols, interval="5m", period="1d"):
                           threads=False, prepost=False, auto_adjust=False)
         if data.empty:
             return {}
-        data = data.replace([np.inf, -np.inf], np.nan).fillna(0)
-        for col in data.columns:
-            if 'Volume' in col:
-                data[col] = data[col].astype(np.int32)
-            else:
-                data[col] = data[col].astype(np.float32)
-        return {symbol: data[symbol].dropna() for symbol in symbols if symbol in data.columns and not data[symbol].empty}
+        data = data.replace([np.inf, -np.inf], np.nan)
+        return {symbol: preprocess_data(data[symbol].dropna()) for symbol in symbols if symbol in data.columns and not data[symbol].empty}
     except Exception as e:
         logger.error(f"Error fetching batch data: {str(e)}")
         return {}
@@ -117,6 +140,24 @@ def optimize_macd_params(close_data):
             best_sharpe, best_params = sharpe, (fast, slow, signal)
     return best_params
 
+def calculate_advanced_indicators(data):
+    # Volume-Weighted MACD
+    close_vol = data['Close'] * data['Volume']
+    vmacd_fast = close_vol.ewm(span=12, adjust=False).mean() / data['Volume'].ewm(span=12, adjust=False).mean()
+    vmacd_slow = close_vol.ewm(span=26, adjust=False).mean() / data['Volume'].ewm(span=26, adjust=False).mean()
+    data['VWMACD'] = vmacd_fast - vmacd_slow
+    data['VWMACD_signal'] = data['VWMACD'].ewm(span=9, adjust=False).mean()
+
+    # Volume-Weighted RSI
+    gains = data['Close'].diff().where(data['Close'].diff() > 0, 0) * data['Volume']
+    losses = -data['Close'].diff().where(data['Close'].diff() < 0, 0) * data['Volume']
+    avg_gain = gains.rolling(window=14, min_periods=1).mean()
+    avg_loss = losses.rolling(window=14, min_periods=1).mean()
+    rs = avg_gain / avg_loss.replace(0, np.nan)
+    data['VWRSI'] = 100 - (100 / (1 + rs))
+    
+    return data
+
 def calculate_indicators(data):
     if len(data) < 5:
         return data
@@ -140,6 +181,7 @@ def calculate_indicators(data):
         'ema_slow': min(21, len(data) - 1),
     }
 
+    data = calculate_advanced_indicators(data)
     data['RSI'] = ta.momentum.RSIIndicator(data['Close'], window=windows['rsi']).rsi()
     macd = ta.trend.MACD(data['Close'], window_slow=windows['macd_slow'], window_fast=windows['macd_fast'], window_sign=windows['macd_sign'])
     data[['MACD', 'MACD_signal']] = pd.DataFrame({'MACD': macd.macd(), 'MACD_signal': macd.macd_signal()}, index=data.index)
@@ -203,7 +245,6 @@ def detect_patterns(data):
     return patterns
 
 def convert_to_serializable(data):
-    """Convert NumPy types to JSON-serializable Python types"""
     if isinstance(data, dict):
         return {k: convert_to_serializable(v) for k, v in data.items()}
     elif isinstance(data, list):
@@ -217,7 +258,6 @@ def convert_to_serializable(data):
     return data
 
 def save_performance(symbol, recommendation, date_str):
-    """Save recommendation performance data with atomic file writing"""
     performance_data = {}
     if os.path.exists(PERFORMANCE_FILE):
         try:
@@ -230,7 +270,6 @@ def save_performance(symbol, recommendation, date_str):
     if date_str not in performance_data:
         performance_data[date_str] = {}
     
-    # Convert recommendation data to JSON-serializable format
     serializable_recommendation = convert_to_serializable(recommendation)
     performance_data[date_str][symbol] = {
         'date': date_str,
@@ -242,7 +281,6 @@ def save_performance(symbol, recommendation, date_str):
         'timestamp': datetime.now().isoformat()
     }
     
-    # Atomic file writing
     try:
         with tempfile.NamedTemporaryFile(mode='w', delete=False) as temp_file:
             json.dump(performance_data, temp_file, indent=2)
@@ -251,7 +289,6 @@ def save_performance(symbol, recommendation, date_str):
         logger.error(f"Error saving performance data: {str(e)}")
 
 def load_performance_data():
-    """Load historical performance data"""
     if os.path.exists(PERFORMANCE_FILE):
         try:
             with open(PERFORMANCE_FILE, 'r') as f:
@@ -262,7 +299,6 @@ def load_performance_data():
     return {}
 
 def calculate_performance(symbol, recommendation, current_price):
-    """Calculate performance metrics for a recommendation"""
     performance = {
         'symbol': symbol,
         'initial_price': recommendation['current_price'],
@@ -292,7 +328,6 @@ def calculate_performance(symbol, recommendation, current_price):
     return performance
 
 def generate_summary(period='daily'):
-    """Generate performance summary for specified period"""
     performance_data = load_performance_data()
     if not performance_data:
         return None
@@ -315,7 +350,6 @@ def generate_summary(period='daily'):
             continue
             
         for symbol, rec in stocks.items():
-            # Fetch current price
             data_batch = fetch_stock_data_batch([symbol])
             current_data = data_batch.get(symbol)
             current_price = current_data['Close'].iloc[-1] if current_data is not None and not current_data.empty else None
@@ -334,6 +368,25 @@ def generate_summary(period='daily'):
         summary['win_rate'] = (summary['successful_trades'] / summary['total_recommendations']) * 100
     
     return summary
+
+def get_dynamic_thresholds(data):
+    volatility = data['Close'].pct_change().std() * 100  # Daily volatility
+    if volatility > 2:  # High volatility
+        return {"RSI_low": 20, "RSI_high": 80}
+    elif volatility < 0.5:  # Low volatility
+        return {"RSI_low": 40, "RSI_high": 60}
+    else:  # Normal volatility
+        return {"RSI_low": 30, "RSI_high": 70}
+
+def detect_market_regime(data):
+    sma_short = data['Close'].rolling(window=10).mean()
+    sma_long = data['Close'].rolling(window=50).mean()
+    if sma_short.iloc[-1] > sma_long.iloc[-1] and sma_short.iloc[-1] > sma_short.iloc[-2]:
+        return "Bull"
+    elif sma_short.iloc[-1] < sma_long.iloc[-1] and sma_short.iloc[-1] < sma_short.iloc[-2]:
+        return "Bear"
+    else:
+        return "Sideways"
 
 def analyze_stock(symbol, data_batch):
     data = data_batch.get(symbol, pd.DataFrame())
@@ -354,7 +407,6 @@ def analyze_stock(symbol, data_batch):
         "Score": rec["Score"], "Sharpe": sharpe, "Sortino": sortino
     }
     
-    # Save performance data
     date_str = date.today().strftime('%Y-%m-%d')
     save_performance(symbol, result, date_str)
     
@@ -368,38 +420,62 @@ def generate_recommendations(data, sharpe, sortino, price_action):
     
     buy_score, sell_score = 0, 0
     last_close = data['Close'].iloc[-1]
-    
-    if 'Donchian_Lower' in data and data['Volume_Spike'].iloc[-1]:
-        rec["Breakdown"] = "Sell" if last_close < data['Donchian_Lower'].iloc[-1] else "Buy"
-        sell_score += 2 if rec["Breakdown"] == "Sell" else 0
-        buy_score += 1 if rec["Breakdown"] == "Buy" else 0
+    thresholds = get_dynamic_thresholds(data)
+    regime = detect_market_regime(data)
 
-    if 'EMA_Fast' in data and len(data) >= 2:
-        rec["MACrossover"] = "Buy" if data['EMA_Fast'].iloc[-1] > data['EMA_Slow'].iloc[-1] and data['EMA_Fast'].iloc[-2] <= data['EMA_Slow'].iloc[-2] else \
-                            "Sell" if data['EMA_Fast'].iloc[-1] < data['EMA_Slow'].iloc[-1] and data['EMA_Fast'].iloc[-2] >= data['EMA_Slow'].iloc[-2] else "Hold"
-        buy_score += 2 if rec["MACrossover"] == "Buy" else 0
-        sell_score += 2 if rec["MACrossover"] == "Sell" else 0
+    # Market regime adjustment
+    if regime == "Bull":
+        buy_score += 1
+    elif regime == "Bear":
+        sell_score += 1
 
+    # RSI Reversal with VWRSI
+    if 'RSI' in data and 'VWRSI' in data and 'MACD' in data:
+        rsi_sell = data['RSI'].iloc[-1] > thresholds["RSI_high"] and data['VWRSI'].iloc[-1] > thresholds["RSI_high"] and data['MACD'].iloc[-1] < data['MACD_signal'].iloc[-1]
+        rsi_buy = data['RSI'].iloc[-1] < thresholds["RSI_low"] and data['VWRSI'].iloc[-1] < thresholds["RSI_low"] and data['MACD'].iloc[-1] > data['MACD_signal'].iloc[-1]
+        rec["RSIReversal"] = "Sell" if rsi_sell else "Buy" if rsi_buy else "Hold"
+        buy_score += WEIGHTS["RSI"] * 2 if rec["RSIReversal"] == "Buy" else 0
+        sell_score += WEIGHTS["RSI"] * 2 if rec["RSIReversal"] == "Sell" else 0
+
+    # MACD with VWMACD confirmation
+    if 'MACD' in data and 'VWMACD' in data:
+        macd_buy = (data['MACD'].iloc[-1] > data['MACD_signal'].iloc[-1] and 
+                    data['VWMACD'].iloc[-1] > data['VWMACD_signal'].iloc[-1])
+        macd_sell = (data['MACD'].iloc[-1] < data['MACD_signal'].iloc[-1] and 
+                     data['VWMACD'].iloc[-1] < data['VWMACD_signal'].iloc[-1])
+        rec["MACrossover"] = "Buy" if macd_buy else "Sell" if macd_sell else "Hold"
+        buy_score += WEIGHTS["MACD"] * 2 if rec["MACrossover"] == "Buy" else 0
+        sell_score += WEIGHTS["MACD"] * 2 if rec["MACrossover"] == "Sell" else 0
+
+    # VWAP Rejection with Volume Spike
     if 'VWAP' in data and len(data) >= 3:
         vwap = data['VWAP'].iloc[-1]
-        rec["VWAPRejection"] = "Sell" if data['Close'].iloc[-2] > vwap and data['Close'].iloc[-1] < vwap and data['Volume'].iloc[-1] > data['Avg_Volume'].iloc[-1] else \
-                              "Buy" if data['Close'].iloc[-2] < vwap and data['Close'].iloc[-1] > vwap and data['Volume'].iloc[-1] > data['Avg_Volume'].iloc[-1] else "Hold"
-        sell_score += 2 if rec["VWAPRejection"] == "Sell" else 0
-        buy_score += 2 if rec["VWAPRejection"] == "Buy" else 0
+        vwap_sell = (data['Close'].iloc[-2] > vwap and data['Close'].iloc[-1] < vwap and 
+                     data['Volume'].iloc[-1] > data['Avg_Volume'].iloc[-1])
+        vwap_buy = (data['Close'].iloc[-2] < vwap and data['Close'].iloc[-1] > vwap and 
+                    data['Volume'].iloc[-1] > data['Avg_Volume'].iloc[-1])
+        rec["VWAPRejection"] = "Sell" if vwap_sell else "Buy" if vwap_buy else "Hold"
+        buy_score += WEIGHTS["VWAP"] * 2 if rec["VWAPRejection"] == "Buy" else 0
+        sell_score += WEIGHTS["VWAP"] * 2 if rec["VWAPRejection"] == "Sell" else 0
 
-    if 'RSI' in data and 'MACD' in data:
-        rec["RSIReversal"] = "Sell" if data['RSI'].iloc[-1] > 70 and data['MACD'].iloc[-1] < data['MACD_signal'].iloc[-1] else \
-                            "Buy" if data['RSI'].iloc[-1] < 30 and data['MACD'].iloc[-1] > data['MACD_signal'].iloc[-1] else "Hold"
-        sell_score += 2 if rec["RSIReversal"] == "Sell" else 0
-        buy_score += 2 if rec["RSIReversal"] == "Buy" else 0
+    # Volume Spike
+    if 'Volume_Spike' in data:
+        if data['Volume_Spike'].iloc[-1]:
+            buy_score += WEIGHTS["Volume_Spike"] if last_close > data['Close'].iloc[-2] else 0
+            sell_score += WEIGHTS["Volume_Spike"] if last_close < data['Close'].iloc[-2] else 0
 
+    # ATR-based risk management
+    if 'ATR' in data:
+        atr_factor = WEIGHTS["ATR"] * data['ATR'].iloc[-1]
+        buy_score += atr_factor if last_close > data['Close'].mean() else 0
+        sell_score += atr_factor if last_close < data['Close'].mean() else 0
+
+    # Pattern-based scoring
     rec["BearishFlag"] = "Sell" if price_action.get('Bearish_Flag') else "Hold"
-    sell_score += 2 if rec["BearishFlag"] == "Sell" else 0
-
     rec["HeadAndShoulders"] = "Sell" if price_action.get('Head_and_Shoulders') == "Bearish" else "Hold"
-    sell_score += 2 if rec["HeadAndShoulders"] == "Sell" else 0
-
     rec["DoubleTopBottom"] = "Sell" if price_action.get('Double_Top_Bottom') == "Bearish Double Top" else "Hold"
+    sell_score += 2 if rec["BearishFlag"] == "Sell" else 0
+    sell_score += 2 if rec["HeadAndShoulders"] == "Sell" else 0
     sell_score += 2 if rec["DoubleTopBottom"] == "Sell" else 0
 
     if price_action.get('Engulfing') == "Bullish":
@@ -407,16 +483,26 @@ def generate_recommendations(data, sharpe, sortino, price_action):
     elif price_action.get('Engulfing') == "Bearish":
         sell_score += 1
 
-    if sharpe > 1 and sortino > 1:
-        buy_score += 1
-    elif sharpe < 0 or sortino < 0:
-        sell_score += 1
+    # Confirmation signals
+    confirmation_count = sum([
+        1 if rec["RSIReversal"] == "Buy" else -1 if rec["RSIReversal"] == "Sell" else 0,
+        1 if rec["MACrossover"] == "Buy" else -1 if rec["MACrossover"] == "Sell" else 0,
+        1 if rec["VWAPRejection"] == "Buy" else -1 if rec["VWAPRejection"] == "Sell" else 0
+    ])
 
-    rec["Intraday"] = "Buy" if buy_score > sell_score + 2 else "Sell" if sell_score > buy_score + 2 else "Hold"
-    rec["Buy At"] = round(last_close * 0.99, 2) if 'RSI' in data and data['RSI'].iloc[-1] < 30 else rec["Current Price"]
+    # Final recommendation with confirmation
+    if confirmation_count >= 2 and buy_score > sell_score + 0.5:
+        rec["Intraday"] = "Buy"
+    elif confirmation_count <= -2 and sell_score > buy_score + 0.5:
+        rec["Intraday"] = "Sell"
+    else:
+        rec["Intraday"] = "Hold"
+
+    # Set Buy At, Stop Loss, and Target
+    rec["Buy At"] = round(last_close * 0.99, 2) if rec["Intraday"] == "Buy" else rec["Current Price"]
     rec["Stop Loss"] = round(last_close - (1.5 * data['ATR'].iloc[-1]), 2) if 'ATR' in data else None
-    rec["Target"] = round(last_close + 2 * (last_close - rec["Stop Loss"]), 2) if rec["Stop Loss"] else None
-    rec["Score"] = max(0, min(buy_score - sell_score, 7))
+    rec["Target"] = round(last_close + 2 * (last_close - rec["Stop Loss"]), 2) if rec["Stop Loss"] and rec["Intraday"] == "Buy" else None
+    rec["Score"] = buy_score - sell_score
     return rec
 
 def analyze_batch(stock_batch, data_batch):
@@ -466,8 +552,8 @@ def analyze_all_stocks(stock_list, batch_size=25, price_range=None):
     return results_df.sort_values(by="Score", ascending=False).head(5)
 
 def send_telegram_message(message):
-    url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
-    payload = {"chat_id": TELEGRAM_CHAT_ID, "text": message, "parse_mode": "Markdown"}
+    url = f"https://api.telegram.org/bot{"7902319450:AAFPNcUyk9F6Sesy-h6SQnKHC_Yr6Uqk9ps"}/sendMessage"
+    payload = {"chat_id": "-1002411670969", "text": message, "parse_mode": "Markdown"}
     try:
         requests.post(url, json=payload, timeout=5).raise_for_status()
     except Exception as e:
@@ -477,7 +563,6 @@ def display_dashboard(symbol=None, data=None, recommendations=None, NSE_STOCKS=N
     st.title("📊 StockGenie Pro - Intraday Analysis")
     price_range = st.sidebar.slider("Price Range (₹)", 0, 10000, (100, 1000))
 
-    # Add summary selection
     summary_type = st.sidebar.selectbox("View Performance Summary", ["None", "Daily", "Weekly"])
     
     col1, col2 = st.columns(2)
@@ -499,7 +584,6 @@ def display_dashboard(symbol=None, data=None, recommendations=None, NSE_STOCKS=N
                     telegram_msg += f"*{row['Symbol']}*: ₹{row['Current Price']:.2f} - {row['Intraday']}\n"
                 send_telegram_message(telegram_msg)
 
-    # Display performance summary
     if summary_type != "None":
         period = summary_type.lower()
         summary = generate_summary(period)
@@ -510,7 +594,6 @@ def display_dashboard(symbol=None, data=None, recommendations=None, NSE_STOCKS=N
             st.write(f"Average Profit/Loss: {summary['average_profit_loss']:.2f}%")
             st.write(f"Win Rate: {summary['win_rate']:.2f}%")
             
-            # Display detailed performance for each stock
             if summary['stocks']:
                 st.subheader("Detailed Performance")
                 for stock in summary['stocks']:
