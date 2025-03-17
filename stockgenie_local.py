@@ -81,7 +81,7 @@ def preprocess_data(data):
         return pd.DataFrame()
     # Linear interpolation for missing values
     data = data.interpolate(method='linear').fillna(method='bfill')
-    # Z-score outlier detection (fixed using np.where)
+    # Z-score outlier detection
     for col in ['Open', 'High', 'Low', 'Close', 'Volume']:
         z_scores = (data[col] - data[col].mean()) / data[col].std()
         data[col] = np.where(np.abs(z_scores) < 3, data[col], data[col].median())
@@ -226,7 +226,7 @@ def calculate_indicators(data, symbol):
     if not market_data.empty:
         data['Nifty_Corr'] = data['Close'].pct_change().rolling(window=10).corr(market_data['Close'].pct_change())
     else:
-        data['Nifty_Corr'] = 0  # Default to 0 if market data fetch fails
+        data['Nifty_Corr'] = 0
     return data
 
 def calculate_risk_metrics(data):
@@ -260,9 +260,12 @@ def detect_patterns(data):
 def train_ml_model(data):
     features = ['RSI', 'MACD', 'VWMACD', 'VWAP', 'Volume_Spike', 'ATR', 'Stoch_K', 'OBV', 'PSAR', 'Nifty_Corr']
     X = data[features].dropna()
-    y = (data['Close'].shift(-1) > data['Close']).astype(int)  # 1 for increase, 0 for decrease
-    X, y = X[:-1], y[1:]
     if len(X) < 10:
+        return None, None
+    y = (data['Close'].loc[X.index].shift(-1) > data['Close'].loc[X.index]).astype(int)
+    X = X.iloc[:-1]
+    y = y.iloc[1:].dropna()
+    if len(X) != len(y) or len(X) < 10:
         return None, None
     X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, shuffle=False)
     scaler = StandardScaler()
@@ -287,9 +290,7 @@ def get_dynamic_thresholds(data):
     if volatility > 2:
         thresholds.update({"RSI_low": 20, "RSI_high": 80, "MACD_threshold": 0.5, "VWAP_factor": 1.5})
     elif volatility < 0.5:
-        thresholds.update({"RSI_low": 40, "RSI_high": 60, "MACD_threshold": 0.1, "VWAP_factor": 
-
-0.8})
+        thresholds.update({"RSI_low": 40, "RSI_high": 60, "MACD_threshold": 0.1, "VWAP_factor": 0.8})
     return thresholds
 
 def generate_recommendations(data, sharpe, sortino, price_action, model, scaler, sentiment=0):
@@ -493,7 +494,6 @@ def display_dashboard(symbol=None, data=None, recommendations=None, NSE_STOCKS=N
                         sharpe, sortino = calculate_risk_metrics(data)
                         price_action = detect_patterns(data)
                         model, scaler = train_ml_model(data)
-                        # Fetch and average sentiment from NewsAPI and GNews
                         newsapi_sentiment = fetch_newsapi_sentiment(symbol)
                         gnews_sentiment = fetch_gnews_sentiment(symbol)
                         combined_sentiment = (newsapi_sentiment + gnews_sentiment) / 2
