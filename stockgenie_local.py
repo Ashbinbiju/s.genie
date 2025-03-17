@@ -43,7 +43,7 @@ TOOLTIPS = {
     "Stoch": "Stochastic Oscillator - Momentum indicator",
     "OBV": "On-Balance Volume - Buying/selling pressure",
     "PSAR": "Parabolic SAR - Trend reversal indicator",
-    "Sentiment": "Sentiment from X posts or news",
+    "Sentiment": "Sentiment from news sources",
 }
 
 # Define weights for indicators
@@ -81,10 +81,10 @@ def preprocess_data(data):
         return pd.DataFrame()
     # Linear interpolation for missing values
     data = data.interpolate(method='linear').fillna(method='bfill')
-    # Z-score outlier detection
+    # Z-score outlier detection (fixed using np.where)
     for col in ['Open', 'High', 'Low', 'Close', 'Volume']:
         z_scores = (data[col] - data[col].mean()) / data[col].std()
-        data[col] = data[col].where(abs(z_scores) < 3, data[col].median())
+        data[col] = np.where(np.abs(z_scores) < 3, data[col], data[col].median())
     # Ensure 5-minute intervals
     data = data.asfreq('5min', method='ffill')
     return data
@@ -104,8 +104,12 @@ def fetch_stock_data_batch(symbols, interval="5m", period="1d"):
 
 @st.cache_data(ttl=300)
 def fetch_market_data():
-    nifty_data = yf.download("^NSEI", period="1d", interval="5m", auto_adjust=True)
-    return preprocess_data(nifty_data)
+    try:
+        nifty_data = yf.download("^NSEI", period="1d", interval="5m", auto_adjust=True)
+        return preprocess_data(nifty_data)
+    except Exception as e:
+        logger.error(f"Error fetching market data: {str(e)}")
+        return pd.DataFrame()
 
 def fetch_economic_data():
     start = datetime.now() - timedelta(days=7)
@@ -117,33 +121,31 @@ def fetch_economic_data():
         logger.error(f"Error fetching economic data: {str(e)}")
         return None
 
-def fetch_x_sentiment(symbol):
-    # Using your system's built-in X analysis tools
-    try:
-        posts = search_x_posts(symbol.split('.')[0])  # Hypothetical function from your tools
-        sentiment = sum(1 if "buy" in post.lower() else -1 if "sell" in post.lower() else 0 for post in posts) / len(posts) if posts else 0
-        return sentiment
-    except Exception as e:
-        logger.error(f"Error fetching X sentiment: {str(e)}")
-        return 0
-
 def fetch_newsapi_sentiment(symbol):
-    url = f"https://newsapi.org/v2/everything?q={symbol.split('.')[0]}&apiKey={"ed58659895e84dfb81 62a8bb47d8525e"}"
+    url = f"https://newsapi.org/v2/everything?q={symbol.split('.')[0]}&apiKey={"ed58659895e84dfb81 62a8bb47d8525e"}&language=en&sortBy=publishedAt&pageSize=10"
     try:
         response = requests.get(url, timeout=10)
         articles = response.json().get('articles', [])
-        sentiment = sum(1 if "positive" in article['title'].lower() else -1 if "negative" in article['title'].lower() else 0 for article in articles) / len(articles) if articles else 0
+        if not articles:
+            return 0
+        sentiment = sum(1 if "positive" in article['title'].lower() or "up" in article['title'].lower() else 
+                       -1 if "negative" in article['title'].lower() or "down" in article['title'].lower() else 0 
+                       for article in articles) / len(articles)
         return sentiment
     except Exception as e:
         logger.error(f"Error fetching NewsAPI sentiment: {str(e)}")
         return 0
 
 def fetch_gnews_sentiment(symbol):
-    url = f"https://gnews.io/api/v4/search?q={symbol.split('.')[0]}&token={"e4f5f1442641400694645433a8f98b94"}"
+    url = f"https://gnews.io/api/v4/search?q={symbol.split('.')[0]}&token={"e4f5f1442641400694645433a8f98b94"}&lang=en&max=10"
     try:
         response = requests.get(url, timeout=10)
         articles = response.json().get('articles', [])
-        sentiment = sum(1 if "positive" in article['title'].lower() else -1 if "negative" in article['title'].lower() else 0 for article in articles) / len(articles) if articles else 0
+        if not articles:
+            return 0
+        sentiment = sum(1 if "positive" in article['title'].lower() or "up" in article['title'].lower() else 
+                       -1 if "negative" in article['title'].lower() or "down" in article['title'].lower() else 0 
+                       for article in articles) / len(articles)
         return sentiment
     except Exception as e:
         logger.error(f"Error fetching GNews sentiment: {str(e)}")
@@ -220,12 +222,11 @@ def calculate_indicators(data, symbol):
     data['Stoch_D'] = stoch.stoch_signal()
     data['OBV'] = ta.volume.OnBalanceVolumeIndicator(data['Close'], data['Volume']).on_balance_volume()
     data['PSAR'] = ta.trend.PSARIndicator(data['High'], data['Low'], data['Close']).psar()
-    data['Sentiment'] = fetch_x_sentiment(symbol)  # Primary sentiment from X
-    # Optional: Use NewsAPI or GNews instead
-    # data['Sentiment'] = fetch_newsapi_sentiment(symbol)
-    # data['Sentiment'] = fetch_gnews_sentiment(symbol)
     market_data = fetch_market_data()
-    data['Nifty_Corr'] = data['Close'].pct_change().rolling(window=10).corr(market_data['Close'].pct_change())
+    if not market_data.empty:
+        data['Nifty_Corr'] = data['Close'].pct_change().rolling(window=10).corr(market_data['Close'].pct_change())
+    else:
+        data['Nifty_Corr'] = 0  # Default to 0 if market data fetch fails
     return data
 
 def calculate_risk_metrics(data):
@@ -257,7 +258,7 @@ def detect_patterns(data):
     return patterns
 
 def train_ml_model(data):
-    features = ['RSI', 'MACD', 'VWMACD', 'VWAP', 'Volume_Spike', 'ATR', 'Stoch_K', 'OBV', 'PSAR', 'Sentiment', 'Nifty_Corr']
+    features = ['RSI', 'MACD', 'VWMACD', 'VWAP', 'Volume_Spike', 'ATR', 'Stoch_K', 'OBV', 'PSAR', 'Nifty_Corr']
     X = data[features].dropna()
     y = (data['Close'].shift(-1) > data['Close']).astype(int)  # 1 for increase, 0 for decrease
     X, y = X[:-1], y[1:]
@@ -275,7 +276,7 @@ def train_ml_model(data):
 def predict_with_ml(data, model, scaler):
     if model is None or scaler is None:
         return "Hold"
-    features = ['RSI', 'MACD', 'VWMACD', 'VWAP', 'Volume_Spike', 'ATR', 'Stoch_K', 'OBV', 'PSAR', 'Sentiment', 'Nifty_Corr']
+    features = ['RSI', 'MACD', 'VWMACD', 'VWAP', 'Volume_Spike', 'ATR', 'Stoch_K', 'OBV', 'PSAR', 'Nifty_Corr']
     X = scaler.transform(data[features].iloc[-1:].values)
     prediction = model.predict(X)[0]
     return "Buy" if prediction == 1 else "Sell"
@@ -286,12 +287,15 @@ def get_dynamic_thresholds(data):
     if volatility > 2:
         thresholds.update({"RSI_low": 20, "RSI_high": 80, "MACD_threshold": 0.5, "VWAP_factor": 1.5})
     elif volatility < 0.5:
-        thresholds.update({"RSI_low": 40, "RSI_high": 60, "MACD_threshold": 0.1, "VWAP_factor": 0.8})
+        thresholds.update({"RSI_low": 40, "RSI_high": 60, "MACD_threshold": 0.1, "VWAP_factor": 
+
+0.8})
     return thresholds
 
-def generate_recommendations(data, sharpe, sortino, price_action, model, scaler):
+def generate_recommendations(data, sharpe, sortino, price_action, model, scaler, sentiment=0):
     rec = {k: "Hold" for k in ["Intraday", "RSIReversal", "MACrossover", "VWAPRejection"]}
-    rec.update({"Current Price": round(data['Close'].iloc[-1], 2) if not data.empty else None, "Buy At": None, "Stop Loss": None, "Target": None, "Score": 0})
+    rec.update({"Current Price": round(data['Close'].iloc[-1], 2) if not data.empty else None, 
+                "Buy At": None, "Stop Loss": None, "Target": None, "Score": 0})
     if data.empty:
         return rec
     
@@ -347,13 +351,13 @@ def generate_recommendations(data, sharpe, sortino, price_action, model, scaler)
         buy_score += WEIGHTS["PSAR"] if psar_buy else 0
         sell_score += WEIGHTS["PSAR"] if psar_sell else 0
 
-    if 'Sentiment' in data:
-        buy_score += WEIGHTS["Sentiment"] if data['Sentiment'].iloc[-1] > 0 else 0
-        sell_score += WEIGHTS["Sentiment"] if data['Sentiment'].iloc[-1] < 0 else 0
-
     if 'Nifty_Corr' in data:
         buy_score += WEIGHTS["Nifty_Corr"] if data['Nifty_Corr'].iloc[-1] > 0.5 else 0
         sell_score += WEIGHTS["Nifty_Corr"] if data['Nifty_Corr'].iloc[-1] < -0.5 else 0
+
+    # Sentiment adjustment
+    buy_score += WEIGHTS["Sentiment"] if sentiment > 0 else 0
+    sell_score += WEIGHTS["Sentiment"] if sentiment < 0 else 0
 
     # Pattern-based scoring
     if price_action.get('Triangle') == "Bullish":
@@ -476,19 +480,43 @@ def display_dashboard(symbol=None, data=None, recommendations=None, NSE_STOCKS=N
                 st.session_state.cancel_operation = True
             results_df = analyze_all_stocks(NSE_STOCKS, price_range=price_range)
             if not results_df.empty:
-                st.subheader("🏆 Top 5 Intraday Stocks")
+                st.subheader("🏆 Top 5 Intraday Stocks (Refined with Sentiment)")
                 telegram_msg = f"*Top 5 Intraday Stocks ({datetime.now().strftime('%d %b %Y')})*\nChat ID: {TELEGRAM_CHAT_ID}\n\n"
-                for _, row in results_df.iterrows():
-                    with st.expander(f"{row['Symbol']} - Score: {row['Score']}"):
-                        st.write(f"Price: ₹{row['Current Price']:.2f}, Buy At: ₹{row['Buy At']:.2f}, "
-                                 f"Stop Loss: ₹{row['Stop Loss']:.2f}, Target: ₹{row['Target']:.2f}, "
-                                 f"Intraday: {row['Intraday']}")
-                    telegram_msg += f"*{row['Symbol']}*: ₹{row['Current Price']:.2f} - {row['Intraday']}\n"
+                
+                # Refine top 5 with sentiment
+                for idx, row in results_df.iterrows():
+                    symbol = row['Symbol']
+                    data_batch = fetch_stock_data_batch([symbol])
+                    data = data_batch.get(symbol)
+                    if data is not None and not data.empty:
+                        data = calculate_indicators(data, symbol)
+                        sharpe, sortino = calculate_risk_metrics(data)
+                        price_action = detect_patterns(data)
+                        model, scaler = train_ml_model(data)
+                        # Fetch and average sentiment from NewsAPI and GNews
+                        newsapi_sentiment = fetch_newsapi_sentiment(symbol)
+                        gnews_sentiment = fetch_gnews_sentiment(symbol)
+                        combined_sentiment = (newsapi_sentiment + gnews_sentiment) / 2
+                        rec = generate_recommendations(data, sharpe, sortino, price_action, model, scaler, combined_sentiment)
+                        results_df.at[idx, 'Intraday'] = rec['Intraday']
+                        results_df.at[idx, 'Score'] = rec['Score']
+                        results_df.at[idx, 'Buy At'] = rec['Buy At']
+                        results_df.at[idx, 'Stop Loss'] = rec['Stop Loss']
+                        results_df.at[idx, 'Target'] = rec['Target']
+                        results_df.at[idx, 'Sentiment'] = combined_sentiment
+
+                    with st.expander(f"{row['Symbol']} - Score: {rec['Score']:.2f} (Sentiment: {combined_sentiment:.2f})"):
+                        st.write(f"Price: ₹{row['Current Price']:.2f}, Buy At: ₹{rec['Buy At']:.2f}, "
+                                 f"Stop Loss: ₹{rec['Stop Loss']:.2f}, Target: ₹{rec['Target']:.2f}, "
+                                 f"Intraday: {rec['Intraday']}")
+                    telegram_msg += f"*{row['Symbol']}*: ₹{row['Current Price']:.2f} - {rec['Intraday']} (Sentiment: {combined_sentiment:.2f})\n"
                 send_telegram_message(telegram_msg)
 
     if symbol and data is not None and recommendations is not None:
         st.header(f"📋 {symbol.split('.')[0]} Analysis")
-        st.write(f"Price: ₹{recommendations['Current Price']:.2f}, Intraday: {recommendations['Intraday']}")
+        sentiment = (fetch_newsapi_sentiment(symbol) + fetch_gnews_sentiment(symbol)) / 2
+        refined_rec = generate_recommendations(data, *calculate_risk_metrics(data), detect_patterns(data), *train_ml_model(data), sentiment)
+        st.write(f"Price: ₹{refined_rec['Current Price']:.2f}, Intraday: {refined_rec['Intraday']}, Sentiment: {sentiment:.2f}")
         fig = px.line(data, y=['Close', 'VWAP', 'PSAR'], title="Price, VWAP & PSAR (5m)")
         st.plotly_chart(fig)
 
