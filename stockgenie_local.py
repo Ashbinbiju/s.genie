@@ -4,7 +4,6 @@ import numpy as np
 import ta
 import streamlit as st
 from datetime import datetime, timedelta, date
-from concurrent.futures import ProcessPoolExecutor, as_completed
 from functools import lru_cache
 import plotly.express as px
 import time
@@ -12,7 +11,6 @@ import requests
 import io
 import logging
 import os
-import multiprocessing
 import json
 import tempfile
 import shutil
@@ -79,8 +77,8 @@ def fetch_nse_stock_list():
 def preprocess_data(data):
     if len(data) < 10:  # Minimum data points
         return pd.DataFrame()
-    # Linear interpolation for missing values
-    data = data.interpolate(method='linear').fillna(method='bfill')
+    # Linear interpolation for missing values, fixed FutureWarning
+    data = data.interpolate(method='linear').bfill()
     # Z-score outlier detection
     for col in ['Open', 'High', 'Low', 'Close', 'Volume']:
         z_scores = (data[col] - data[col].mean()) / data[col].std()
@@ -377,7 +375,6 @@ def generate_recommendations(data, sharpe, sortino, price_action, model, scaler,
         1 if rec["MACrossover"] == "Buy" else -1 if rec["MACrossover"] == "Sell" else 0,
         1 if rec["VWAPRejection"] == "Buy" else -1 if rec["VWAPRejection"] == "Sell" else 0
     ])
-
     # Final recommendation
     if confirmation_count >= 2 and buy_score > sell_score + 0.5:
         rec["Intraday"] = "Buy"
@@ -418,12 +415,11 @@ def analyze_stock(symbol, data_batch):
 
 def analyze_batch(stock_batch, data_batch):
     results = []
-    with ProcessPoolExecutor(max_workers=multiprocessing.cpu_count()) as executor:
-        futures = {executor.submit(analyze_stock, symbol, data_batch): symbol for symbol in stock_batch}
-        for future in as_completed(futures):
-            result = future.result()
-            if result:
-                results.append(result)
+    # Sequential processing instead of ProcessPoolExecutor
+    for symbol in stock_batch:
+        result = analyze_stock(symbol, data_batch)
+        if result:
+            results.append(result)
     return results
 
 @st.cache_data
