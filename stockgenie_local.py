@@ -30,7 +30,7 @@ PERFORMANCE_FILE = "stock_performance.json"
 NEWS_API_KEY = "ed58659895e84dfb8162a8bb47d8525e"  # NewsAPI key
 GNEWS_API_KEY = "e4f5f1442641400694645433a8f98b94"  # GNews API key
 
-# Tooltips and Weights (unchanged, included for completeness)
+# Tooltips and Weights (corrected)
 TOOLTIPS = {
     "RSI": "Relative Strength Index (30=Oversold, 70=Overbought)",
     "ATR": "Average True Range - Measures volatility",
@@ -55,11 +55,10 @@ WEIGHTS = {
     "Stoch": 0.15,
     "OBV": 0.1,
     "PSAR": 0.1,
-    "Sentiment": 0GREEN1,
+    "Sentiment": 0.1,  # Corrected from 0GREEN1 to 0.1
     "Nifty_Corr": 0.1,
 }
 
-# Existing functions (unchanged, included for context)
 def tooltip(label, explanation):
     return f"{label} 📌 ({explanation})"
 
@@ -107,7 +106,7 @@ def fetch_market_data():
         return pd.DataFrame()
 
 def fetch_newsapi_sentiment(symbol):
-    url = f"https://newsapi.org/v2/everything?q={symbol.split('.')[0]}&apiKey={"ed58659895e84dfb81 62a8bb47d8525e"759903}&language=en&sortBy=publishedAt&pageSize=10"
+    url = f"https://newsapi.org/v2/everything?q={symbol.split('.')[0]}&apiKey={"ed58659895e84dfb81 62a8bb47d8525e"}&language=en&sortBy=publishedAt&pageSize=10"
     try:
         response = requests.get(url, timeout=10)
         articles = response.json().get('articles', [])
@@ -278,15 +277,14 @@ def get_dynamic_thresholds(data):
         thresholds.update({"RSI_low": 40, "RSI_high": 60, "MACD_threshold": 0.1, "VWAP_factor": 0.8})
     return thresholds
 
-# Updated generate_recommendations to ensure all numeric fields are set
 def generate_recommendations(data, sharpe, sortino, price_action, model, scaler, sentiment=0):
     rec = {k: "Hold" for k in ["Intraday", "RSIReversal", "MACrossover", "VWAPRejection"]}
     last_close = data['Close'].iloc[-1] if not data.empty else 0
     rec.update({
         "Current Price": round(last_close, 2) if not data.empty else 0,
-        "Buy At": round(last_close, 2),  # Default to current price
-        "Stop Loss": round(last_close, 2),  # Default to current price
-        "Target": round(last_close, 2),  # Default to current price
+        "Buy At": round(last_close, 2),
+        "Stop Loss": round(last_close, 2),
+        "Target": round(last_close, 2),
         "Score": 0
     })
     if data.empty:
@@ -295,7 +293,6 @@ def generate_recommendations(data, sharpe, sortino, price_action, model, scaler,
     buy_score, sell_score = 0, 0
     thresholds = get_dynamic_thresholds(data)
 
-    # RSI Reversal
     if 'RSI' in data:
         rsi_sell = data['RSI'].iloc[-1] > thresholds["RSI_high"]
         rsi_buy = data['RSI'].iloc[-1] < thresholds["RSI_low"]
@@ -303,7 +300,6 @@ def generate_recommendations(data, sharpe, sortino, price_action, model, scaler,
         buy_score += WEIGHTS["RSI"] * 2 if rec["RSIReversal"] == "Buy" else 0
         sell_score += WEIGHTS["RSI"] * 2 if rec["RSIReversal"] == "Sell" else 0
 
-    # MACD Crossover
     if 'MACD' in data:
         macd_buy = data['MACD'].iloc[-1] > data['MACD_signal'].iloc[-1]
         macd_sell = data['MACD'].iloc[-1] < data['MACD_signal'].iloc[-1]
@@ -311,7 +307,6 @@ def generate_recommendations(data, sharpe, sortino, price_action, model, scaler,
         buy_score += WEIGHTS["MACD"] * 2 if rec["MACrossover"] == "Buy" else 0
         sell_score += WEIGHTS["MACD"] * 2 if rec["MACrossover"] == "Sell" else 0
 
-    # VWAP Rejection
     if 'VWAP' in data and len(data) >= 3:
         vwap = data['VWAP'].iloc[-1]
         vwap_sell = data['Close'].iloc[-2] > vwap and data['Close'].iloc[-1] < vwap
@@ -320,7 +315,6 @@ def generate_recommendations(data, sharpe, sortino, price_action, model, scaler,
         buy_score += WEIGHTS["VWAP"] * 2 if rec["VWAPRejection"] == "Buy" else 0
         sell_score += WEIGHTS["VWAP"] * 2 if rec["VWAPRejection"] == "Sell" else 0
 
-    # Additional Indicators
     if 'Volume_Spike' in data:
         if data['Volume_Spike'].iloc[-1]:
             buy_score += WEIGHTS["Volume_Spike"] if last_close > data['Close'].iloc[-2] else 0
@@ -347,29 +341,24 @@ def generate_recommendations(data, sharpe, sortino, price_action, model, scaler,
         buy_score += WEIGHTS["Nifty_Corr"] if data['Nifty_Corr'].iloc[-1] > 0.5 else 0
         sell_score += WEIGHTS["Nifty_Corr"] if data['Nifty_Corr'].iloc[-1] < -0.5 else 0
 
-    # Sentiment adjustment
     buy_score += WEIGHTS["Sentiment"] if sentiment > 0 else 0
     sell_score += WEIGHTS["Sentiment"] if sentiment < 0 else 0
 
-    # Pattern-based scoring
     if price_action.get('Triangle') == "Bullish":
         buy_score += 1
     elif price_action.get('Triangle') == "Bearish":
         sell_score += 1
 
-    # ML Prediction
     ml_rec = predict_with_ml(data, model, scaler)
     buy_score += 2 if ml_rec == "Buy" else 0
     sell_score += 2 if ml_rec == "Sell" else 0
 
-    # Confirmation signals
     confirmation_count = sum([
         1 if rec["RSIReversal"] == "Buy" else -1 if rec["RSIReversal"] == "Sell" else 0,
         1 if rec["MACrossover"] == "Buy" else -1 if rec["MACrossover"] == "Sell" else 0,
         1 if rec["VWAPRejection"] == "Buy" else -1 if rec["VWAPRejection"] == "Sell" else 0
     ])
 
-    # Final recommendation
     if confirmation_count >= 2 and buy_score > sell_score + 0.5:
         rec["Intraday"] = "Buy"
     elif confirmation_count <= -2 and sell_score > buy_score + 0.5:
@@ -377,21 +366,19 @@ def generate_recommendations(data, sharpe, sortino, price_action, model, scaler,
     else:
         rec["Intraday"] = "Hold"
 
-    # Dynamic Stop Loss and Target, ensuring no None values
     atr = data['ATR'].iloc[-1] if 'ATR' in data and not pd.isna(data['ATR'].iloc[-1]) else 0
     volatility_factor = data['Close'].pct_change().std() * 100 if not data.empty else 1
     stop_loss_factor = 1.5 if volatility_factor < 2 else 2 if volatility_factor < 4 else 3
 
-    # Always set Buy At, Stop Loss, and Target based on recommendation
     if rec["Intraday"] == "Buy":
         rec["Buy At"] = round(last_close * 0.99, 2)
         rec["Stop Loss"] = round(last_close - (stop_loss_factor * atr), 2)
         rec["Target"] = round(last_close + 2 * (last_close - rec["Stop Loss"]), 2)
     elif rec["Intraday"] == "Sell":
-        rec["Buy At"] = round(last_close * 1.01, 2)  # Slightly above for sell signal
+        rec["Buy At"] = round(last_close * 1.01, 2)
         rec["Stop Loss"] = round(last_close + (stop_loss_factor * atr), 2)
         rec["Target"] = round(last_close - 2 * (rec["Stop Loss"] - last_close), 2)
-    else:  # Hold
+    else:
         rec["Buy At"] = round(last_close, 2)
         rec["Stop Loss"] = round(last_close, 2)
         rec["Target"] = round(last_close, 2)
@@ -469,7 +456,6 @@ def send_telegram_message(message):
     except Exception as e:
         logger.error(f"Failed to send Telegram message: {str(e)}")
 
-# Updated display_dashboard with safe formatting as a precaution
 def display_dashboard(symbol=None, data=None, recommendations=None, NSE_STOCKS=None):
     st.title("📊 StockGenie Pro - Intraday Analysis")
     price_range = st.sidebar.slider("Price Range (₹)", 0, 10000, (100, 1000))
@@ -507,7 +493,6 @@ def display_dashboard(symbol=None, data=None, recommendations=None, NSE_STOCKS=N
                         results_df.at[idx, 'Sentiment'] = combined_sentiment
 
                     with st.expander(f"{row['Symbol']} - Score: {rec['Score']:.2f} (Sentiment: {combined_sentiment:.2f})"):
-                        # Safe formatting with defaults
                         buy_at = rec['Buy At'] if rec['Buy At'] is not None else row['Current Price']
                         stop_loss = rec['Stop Loss'] if rec['Stop Loss'] is not None else row['Current Price']
                         target = rec['Target'] if rec['Target'] is not None else row['Current Price']
