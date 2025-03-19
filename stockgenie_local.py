@@ -711,7 +711,7 @@ def display_dashboard(symbol=None, data=None, recommendations=None, NSE_STOCKS=N
             fig = px.line(data, y=['ATR', 'Upper_Band', 'Lower_Band'], title="Volatility Analysis")
             st.plotly_chart(fig)
         with tab4:
-            mc_results = monte_carlo Simulation(data)
+            mc_results = monte_carlo_simulation(data)
             mc_df = pd.DataFrame(mc_results).T
             fig = px.line(mc_df.mean(axis=1), title="Monte Carlo Mean Path")
             st.plotly_chart(fig)
