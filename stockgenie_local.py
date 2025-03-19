@@ -2,7 +2,7 @@ import yfinance as yf
 import pandas as pd
 import ta
 import streamlit as st
-from datetime import datetime, timedelta
+from datetime import datetime
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from functools import lru_cache
 import plotly.express as px
@@ -15,6 +15,10 @@ from scipy.signal import find_peaks
 import os
 import logging
 from typing import List, Dict, Optional
+import warnings
+
+# Suppress FutureWarnings from ta library
+warnings.filterwarnings("ignore", category=FutureWarning, module="ta")
 
 # Setup logging
 logging.basicConfig(level=logging.WARNING)
@@ -65,9 +69,6 @@ def fetch_nse_stock_list() -> List[str]:
 
 @lru_cache(maxsize=100)
 def fetch_stock_data_cached(symbol: str, period: str = "1y", interval: str = "1d", _timestamp: int = None) -> pd.DataFrame:
-    """
-    Fetch stock data with validation and cache invalidation based on freshness.
-    """
     try:
         if ".NS" not in symbol:
             symbol += ".NS"
@@ -77,21 +78,18 @@ def fetch_stock_data_cached(symbol: str, period: str = "1y", interval: str = "1d
             logger.warning(f"No data returned for {symbol} from Yahoo Finance.")
             return pd.DataFrame()
         
-        # Validate required columns
         missing_cols = [col for col in REQUIRED_COLUMNS if col not in data.columns]
         if missing_cols:
             logger.warning(f"Missing columns for {symbol}: {missing_cols}")
             return pd.DataFrame()
         
-        # Handle missing values by interpolating, then dropping any remaining NaNs
-        data = data[REQUIRED_COLUMNS].astype(np.float32)  # Optimize memory with float32
+        data = data[REQUIRED_COLUMNS].astype(np.float32)
         data = data.interpolate(method='linear').dropna()
         
         if len(data) < 15:
             logger.warning(f"Insufficient data for {symbol}: only {len(data)} days.")
             return pd.DataFrame()
         
-        # Add timestamp for cache freshness
         data.attrs['fetch_time'] = time.time()
         return data
     except Exception as e:
@@ -99,12 +97,10 @@ def fetch_stock_data_cached(symbol: str, period: str = "1y", interval: str = "1d
         return pd.DataFrame()
 
 def invalidate_cache_if_stale(data: pd.DataFrame) -> bool:
-    """Check if cached data is stale based on TTL."""
     fetch_time = data.attrs.get('fetch_time', 0)
     return (time.time() - fetch_time) > CACHE_TTL
 
 def geometric_brownian_motion(data: pd.DataFrame, simulations: int = 1000, days: int = 30) -> List[List[float]]:
-    """Monte Carlo simulation using Geometric Brownian Motion."""
     if len(data) < 15:
         logger.warning("Insufficient data for GBM simulation.")
         return []
@@ -113,10 +109,10 @@ def geometric_brownian_motion(data: pd.DataFrame, simulations: int = 1000, days:
     if len(returns) < 2:
         return []
     
-    mu = returns.mean()  # Drift
-    sigma = returns.std() or 0.01  # Volatility
+    mu = returns.mean()
+    sigma = returns.std() or 0.01
     last_price = data['Close'].iloc[-1]
-    dt = 1 / 252  # Daily time step (assuming 252 trading days per year)
+    dt = 1 / 252
     
     simulation_results = []
     for _ in range(simulations):
@@ -130,9 +126,8 @@ def geometric_brownian_motion(data: pd.DataFrame, simulations: int = 1000, days:
     return simulation_results
 
 def rolling_rsi_optimization(data: pd.DataFrame, lookback: int = 50, windows=range(5, 15)) -> int:
-    """Dynamically optimize RSI window using a rolling Sharpe ratio."""
     if len(data) < lookback:
-        return 9  # Default window
+        return 9
     
     best_window, best_sharpe = 9, -float('inf')
     recent_data = data['Close'].iloc[-lookback:]
@@ -149,41 +144,45 @@ def rolling_rsi_optimization(data: pd.DataFrame, lookback: int = 50, windows=ran
     return best_window
 
 def detect_divergence(data: pd.DataFrame, lookback: int = 20) -> str:
-    """Enhanced divergence detection with smoothing and longer lookback."""
     if 'RSI' not in data.columns or pd.isna(data['RSI'].iloc[-1]) or len(data) < lookback:
         return "No Divergence"
     
-    # Smooth price and RSI with a 5-day moving average
     price_smooth = data['Close'].rolling(window=5, min_periods=1).mean()
     rsi_smooth = data['RSI'].rolling(window=5, min_periods=1).mean()
     
-    recent_highs = price_smooth[-lookback:].idxmax()
-    recent_lows = price_smooth[-lookback:].idxmin()
-    rsi_highs = rsi_smooth[-lookback:].idxmax()
-    rsi_lows = rsi_smooth[-lookback:].idxmin()
+    # Convert index positions to integer indices for iloc
+    recent_highs_idx = price_smooth[-lookback:].index.get_loc(price_smooth[-lookback:].idxmax())
+    recent_lows_idx = price_smooth[-lookback:].index.get_loc(price_smooth[-lookback:].idxmin())
+    rsi_highs_idx = rsi_smooth[-lookback:].index.get_loc(rsi_smooth[-lookback:].idxmax())
+    rsi_lows_idx = rsi_smooth[-lookback:].index.get_loc(rsi_smooth[-lookback:].idxmin())
     
-    bullish_div = (recent_lows > rsi_lows) and (price_smooth[recent_lows] < price_smooth[-1]) and (rsi_smooth[rsi_lows] < rsi_smooth[-1])
-    bearish_div = (recent_highs < rsi_highs) and (price_smooth[recent_highs] > price_smooth[-1]) and (rsi_smooth[rsi_highs] > rsi_smooth[-1])
+    # Use iloc for positional access
+    price_smooth_last = price_smooth.iloc[-1]
+    rsi_smooth_last = rsi_smooth.iloc[-1]
+    
+    bullish_div = (recent_lows_idx > rsi_lows_idx) and \
+                  (price_smooth.iloc[recent_lows_idx] < price_smooth_last) and \
+                  (rsi_smooth.iloc[rsi_lows_idx] < rsi_smooth_last)
+    bearish_div = (recent_highs_idx < rsi_highs_idx) and \
+                  (price_smooth.iloc[recent_highs_idx] > price_smooth_last) and \
+                  (rsi_smooth.iloc[rsi_highs_idx] > rsi_smooth_last)
     return "Bullish Divergence" if bullish_div else "Bearish Divergence" if bearish_div else "No Divergence"
 
 def calculate_volume_profile(data: pd.DataFrame, bins: int = None) -> pd.Series:
-    """Dynamic binning for volume profile based on price range."""
     if len(data) < 2:
         return pd.Series()
     
     price_range = data['High'].max() - data['Low'].min()
-    bins = bins or max(10, int(price_range / (data['Close'].std() or 1)))  # Dynamic bins
+    bins = bins or max(10, int(price_range / (data['Close'].std() or 1)))
     price_bins = np.linspace(data['Low'].min(), data['High'].max(), bins + 1)
     volume_profile = np.zeros(bins)
     for i in range(bins):
         mask = (data['Close'] >= price_bins[i]) & (data['Close'] < price_bins[i + 1])
         volume_profile[i] = data['Volume'][mask].sum()
-    # Normalize by total volume
     total_volume = volume_profile.sum()
     return pd.Series(volume_profile / total_volume if total_volume > 0 else volume_profile, index=price_bins[:-1])
 
 def detect_waves(data: pd.DataFrame, min_length: int = 20) -> str:
-    """Enhanced wave detection with Fibonacci confirmation."""
     if len(data) < min_length:
         return "No Clear Wave Pattern"
     
@@ -197,7 +196,6 @@ def detect_waves(data: pd.DataFrame, min_length: int = 20) -> str:
     last_trough = data['Close'].iloc[troughs[-1]]
     current_price = data['Close'].iloc[-1]
     
-    # Fibonacci retracement check
     wave_range = last_peak - last_trough
     fib_618 = last_peak - 0.618 * wave_range
     
@@ -206,6 +204,34 @@ def detect_waves(data: pd.DataFrame, min_length: int = 20) -> str:
     elif current_price < fib_618:
         return "Potential Downtrend (Wave C?) with Fibonacci Confirmation"
     return "No Clear Wave Pattern"
+
+def calculate_supertrend(data: pd.DataFrame, period: int = 10, multiplier: float = 3.0) -> pd.Series:
+    """Custom Supertrend implementation."""
+    atr = ta.volatility.AverageTrueRange(data['High'], data['Low'], data['Close'], window=period).average_true_range()
+    hl2 = (data['High'] + data['Low']) / 2
+    upper_band = hl2 + (multiplier * atr)
+    lower_band = hl2 - (multiplier * atr)
+    
+    supertrend = pd.Series(index=data.index, dtype=float)
+    trend = pd.Series(index=data.index, dtype=bool)
+    
+    # Initialize first values
+    supertrend.iloc[0] = lower_band.iloc[0]
+    trend.iloc[0] = True  # Assume uptrend initially
+    
+    for i in range(1, len(data)):
+        if data['Close'].iloc[i-1] > supertrend.iloc[i-1]:
+            trend.iloc[i] = True
+            supertrend.iloc[i] = lower_band.iloc[i]
+            if supertrend.iloc[i] < supertrend.iloc[i-1]:
+                supertrend.iloc[i] = supertrend.iloc[i-1]
+        else:
+            trend.iloc[i] = False
+            supertrend.iloc[i] = upper_band.iloc[i]
+            if supertrend.iloc[i] > supertrend.iloc[i-1]:
+                supertrend.iloc[i] = supertrend.iloc[i-1]
+    
+    return supertrend
 
 def analyze_stock(data: pd.DataFrame) -> pd.DataFrame:
     if data.empty or len(data) < 15:
@@ -314,7 +340,6 @@ def analyze_stock(data: pd.DataFrame) -> pd.DataFrame:
             data['Donchian_Lower'] = donchian.donchian_channel_lband()
             data['Donchian_Middle'] = donchian.donchian_channel_mband()
         
-        # New indicators
         if days >= windows['keltner'] + 1:
             keltner = ta.volatility.KeltnerChannel(data['High'], data['Low'], data['Close'], window=windows['keltner'])
             data['Keltner_Upper'] = keltner.keltner_channel_hband()
@@ -322,8 +347,7 @@ def analyze_stock(data: pd.DataFrame) -> pd.DataFrame:
             data['Keltner_Middle'] = keltner.keltner_channel_mband()
         
         if days >= windows['supertrend'] + 1:
-            supertrend = ta.trend.STCIndicator(data['High'], data['Low'], data['Close'], window=windows['supertrend'])
-            data['Supertrend'] = supertrend.stc()
+            data['Supertrend'] = calculate_supertrend(data, period=windows['supertrend'])
         
         data['Volume_Profile'] = calculate_volume_profile(data)
         data['Wave_Pattern'] = detect_waves(data)
@@ -392,56 +416,84 @@ def generate_recommendations(data: pd.DataFrame, symbol: Optional[str] = None) -
     last_close = data['Close'].iloc[-1]
     recommendations["Current Price"] = round(float(last_close), 2) if pd.notnull(last_close) else None
     
-    # Weighted scores from multiple indicators
-    buy_scores = []
-    sell_scores = []
+    # Collect raw signals (0 to 1 range for normalization)
+    signals = []
     
+    # Price trend
     if pd.notnull(last_close) and pd.notnull(data['Close'].iloc[0]):
-        buy_scores.append(1 if last_close > data['Close'].iloc[0] else 0)
-        sell_scores.append(1 if last_close < data['Close'].iloc[0] else 0)
+        price_trend = 1 if last_close > data['Close'].iloc[0] else 0
+        signals.append(("Price Trend", price_trend, 1.0))
     
+    # RSI (strength-based scoring)
     if 'RSI' in data.columns and pd.notnull(data['RSI'].iloc[-1]):
-        buy_scores.append(2 if data['RSI'].iloc[-1] < 30 else 0)
-        sell_scores.append(2 if data['RSI'].iloc[-1] > 70 else 0)
+        rsi = data['RSI'].iloc[-1]
+        rsi_buy = max(0, (30 - rsi) / 30) if rsi < 30 else 0  # Stronger signal if RSI is far below 30
+        rsi_sell = max(0, (rsi - 70) / 30) if rsi > 70 else 0
+        signals.append(("RSI Buy", rsi_buy, 2.0))
+        signals.append(("RSI Sell", rsi_sell, 2.0))
     
+    # MACD
     if 'MACD' in data.columns and 'MACD_signal' in data.columns:
         if pd.notnull(data['MACD'].iloc[-1]) and pd.notnull(data['MACD_signal'].iloc[-1]):
-            buy_scores.append(1 if data['MACD'].iloc[-1] > data['MACD_signal'].iloc[-1] else 0)
-            sell_scores.append(1 if data['MACD'].iloc[-1] < data['MACD_signal'].iloc[-1] else 0)
+            macd_buy = 1 if data['MACD'].iloc[-1] > data['MACD_signal'].iloc[-1] else 0
+            signals.append(("MACD", macd_buy, 1.5))
     
+    # Keltner Channels
     if 'Keltner_Upper' in data.columns and 'Keltner_Lower' in data.columns:
         if pd.notnull(data['Keltner_Upper'].iloc[-1]) and pd.notnull(data['Keltner_Lower'].iloc[-1]):
-            buy_scores.append(1 if last_close > data['Keltner_Upper'].iloc[-1] else 0)
-            sell_scores.append(1 if last_close < data['Keltner_Lower'].iloc[-1] else 0)
+            keltner_buy = 1 if last_close > data['Keltner_Upper'].iloc[-1] else 0
+            keltner_sell = 1 if last_close < data['Keltner_Lower'].iloc[-1] else 0
+            signals.append(("Keltner Buy", keltner_buy, 1.2))
+            signals.append(("Keltner Sell", keltner_sell, 1.2))
     
+    # Supertrend
     if 'Supertrend' in data.columns and pd.notnull(data['Supertrend'].iloc[-1]):
-        buy_scores.append(1 if data['Supertrend'].iloc[-1] > 0 else 0)
-        sell_scores.append(1 if data['Supertrend'].iloc[-1] < 0 else 0)
+        supertrend_buy = 1 if last_close > data['Supertrend'].iloc[-1] else 0
+        signals.append(("Supertrend", supertrend_buy, 1.3))
     
-    # Aggregate scores with weights (example weights)
-    weights = [1.0, 2.0, 1.5, 1.2, 1.3]  # Adjust weights based on indicator reliability
-    buy_score = sum(w * s for w, s in zip(weights[:len(buy_scores)], buy_scores))
-    sell_score = sum(w * s for w, s in zip(weights[:len(sell_scores)], sell_scores))
+    # Volume Spike
+    if 'Volume_Spike' in data.columns and pd.notnull(data['Volume_Spike'].iloc[-1]):
+        volume_spike = 1 if data['Volume_Spike'].iloc[-1] else 0
+        signals.append(("Volume Spike", volume_spike, 1.0))
     
-    if buy_score >= 4:
+    # Divergence
+    if 'Divergence' in data.columns and pd.notnull(data['Divergence'].iloc[-1]):
+        div_buy = 1 if data['Divergence'].iloc[-1] == "Bullish Divergence" else 0
+        div_sell = 1 if data['Divergence'].iloc[-1] == "Bearish Divergence" else 0
+        signals.append(("Divergence Buy", div_buy, 1.5))
+        signals.append(("Divergence Sell", div_sell, 1.5))
+    
+    # Calculate weighted buy and sell scores
+    buy_score = sum(value * weight for name, value, weight in signals if "Sell" not in name)
+    sell_score = sum(value * weight for name, value, weight in signals if "Sell" in name)
+    
+    # Normalize score to 0-7 range
+    max_possible_score = sum(weight for _, _, weight in signals if "Sell" not in name)
+    if max_possible_score > 0:
+        normalized_score = (buy_score - sell_score) / max_possible_score * 7
+        recommendations["Score"] = max(0, min(round(normalized_score, 1), 7))
+    else:
+        recommendations["Score"] = 0
+    
+    # Update recommendations based on score
+    if recommendations["Score"] >= 5:
         recommendations["Intraday"] = "Strong Buy"
         recommendations["Swing"] = "Buy"
         recommendations["Short-Term"] = "Buy"
-    elif sell_score >= 4:
+    elif recommendations["Score"] <= 2:
         recommendations["Intraday"] = "Strong Sell"
         recommendations["Swing"] = "Sell"
         recommendations["Short-Term"] = "Sell"
-    elif buy_score > sell_score + 1:
+    elif recommendations["Score"] >= 4:
         recommendations["Intraday"] = "Buy"
         recommendations["Swing"] = "Buy"
-    elif sell_score > buy_score + 1:
+    elif recommendations["Score"] <= 3:
         recommendations["Intraday"] = "Sell"
         recommendations["Swing"] = "Sell"
     
     recommendations["Buy At"] = calculate_buy_at(data)
     recommendations["Stop Loss"] = calculate_stop_loss(data)
     recommendations["Target"] = calculate_target(data)
-    recommendations["Score"] = max(0, min(buy_score - sell_score, 7))
     return recommendations
 
 def analyze_batch(stock_batch: List[str]) -> List[Dict[str, any]]:
@@ -461,7 +513,7 @@ def analyze_stock_parallel(symbol: str) -> Optional[Dict[str, any]]:
     data = fetch_stock_data_cached(symbol)
     if not data.empty and len(data) >= 15:
         if invalidate_cache_if_stale(data):
-            data = fetch_stock_data_cached(symbol, _timestamp=int(time.time()))  # Force refresh
+            data = fetch_stock_data_cached(symbol, _timestamp=int(time.time()))
         data = analyze_stock(data)
         recommendations = generate_recommendations(data, symbol)
         return {
@@ -536,8 +588,8 @@ def colored_recommendation(recommendation: str) -> str:
     return recommendation
 
 def send_telegram_message(message: str):
-    url = f"https://api.telegram.org/bot{"7902319450:AAFPNcUyk9F6Sesy-h6SQnKHC_Yr6Uqk9ps"}/sendMessage"
-    payload = {"chat_id": "-1002411670969", "text": message, "parse_mode": "Markdown"}
+    url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
+    payload = {"chat_id": TELEGRAM_CHAT_ID, "text": message, "parse_mode": "Markdown"}
     try:
         response = requests.post(url, json=payload, timeout=5)
         response.raise_for_status()
@@ -559,7 +611,7 @@ def display_dashboard(symbol=None, data=None, recommendations=None, NSE_STOCKS=N
         results_df = analyze_all_stocks(NSE_STOCKS, price_range=price_range)
         if not results_df.empty and not st.session_state.cancel_operation:
             st.subheader("🏆 Today's Top 10 Stocks")
-            telegram_msg = f"*Top 10 Daily Stocks ({datetime.now().strftime('%d %b %Y')})*\nChat ID: {"-1002411670969"}\n\n"
+            telegram_msg = f"*Top 10 Daily Stocks ({datetime.now().strftime('%d %b %Y')})*\nChat ID: {TELEGRAM_CHAT_ID}\n\n"
             for _, row in results_df.iterrows():
                 with st.expander(f"{row['Symbol']} - Score: {row['Score']}/7"):
                     current_price = f"{row['Current Price']:.2f}" if pd.notnull(row['Current Price']) else "N/A"
@@ -587,7 +639,7 @@ def display_dashboard(symbol=None, data=None, recommendations=None, NSE_STOCKS=N
         intraday_results = analyze_intraday_stocks(NSE_STOCKS, price_range=price_range)
         if not intraday_results.empty and not st.session_state.cancel_operation:
             st.subheader("🏆 Top 5 Intraday Stocks")
-            telegram_msg = f"*Top 5 Intraday Stocks ({datetime.now().strftime('%d %b %Y')})*\nChat ID: {"-1002411670969"}\n\n"
+            telegram_msg = f"*Top 5 Intraday Stocks ({datetime.now().strftime('%d %b %Y')})*\nChat ID: {TELEGRAM_CHAT_ID}\n\n"
             for _, row in intraday_results.iterrows():
                 with st.expander(f"{row['Symbol']} - Score: {row['Score']}/7"):
                     current_price = f"{row['Current Price']:.2f}" if pd.notnull(row['Current Price']) else "N/A"
