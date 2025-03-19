@@ -2,7 +2,7 @@ import yfinance as yf
 import pandas as pd
 import ta
 import streamlit as st
-from datetime import datetime, timedelta
+from datetime import datetime
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from functools import lru_cache
 import plotly.express as px
@@ -15,15 +15,15 @@ from scipy.signal import find_peaks
 import os
 import logging
 
-# Setup logging (from 1st code)
+# Setup logging
 logging.basicConfig(level=logging.WARNING)
 logger = logging.getLogger(__name__)
 
-# Telegram Configuration (from 1st code)
+# Telegram Configuration
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "7902319450:AAFPNcUyk9F6Sesy-h6SQnKHC_Yr6Uqk9ps")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "-1002411670969")
 
-# Tooltip explanations (sentiment-related tooltips removed)
+# Tooltip explanations
 TOOLTIPS = {
     "RSI": "Relative Strength Index (30=Oversold, 70=Overbought)",
     "ATR": "Average True Range - Measures market volatility",
@@ -40,9 +40,6 @@ TOOLTIPS = {
     "Volume_Profile": "Volume traded at price levels - Support/Resistance",
     "Wave_Pattern": "Simplified Elliott Wave - Trend wave detection",
 }
-
-def tooltip(label, explanation):
-    return f"{label} 📌 ({explanation})"
 
 def retry(max_retries=3, delay=1, backoff_factor=2, jitter=0.5):
     def decorator(func):
@@ -86,27 +83,18 @@ def fetch_stock_data_cached(symbol, period="5y", interval="1d"):
         stock = yf.Ticker(symbol)
         data = stock.history(period=period, interval=interval)
         if data.empty:
-            st.warning(f"⚠️ No data returned for {symbol} from Yahoo Finance.")
+            logger.warning(f"No data returned for {symbol} from Yahoo Finance.")
             return pd.DataFrame()
         return data
     except Exception as e:
-        st.warning(f"⚠️ Error fetching data for {symbol}: {str(e)}")
+        logger.warning(f"Error fetching data for {symbol}: {str(e)}")
         return pd.DataFrame()
-
-def calculate_advance_decline_ratio(stock_list):
-    advances = 0
-    declines = 0
-    for symbol in stock_list:
-        data = fetch_stock_data_cached(symbol)
-        if not data.empty and len(data) > 1:
-            if data['Close'].iloc[-1] > data['Close'].iloc[-2]:
-                advances += 1
-            else:
-                declines += 1
-    return advances / declines if declines != 0 else 0
 
 def monte_carlo_simulation(data, simulations=1000, days=30):
     returns = data['Close'].pct_change().dropna()
+    if len(returns) < 2:
+        logger.warning("Insufficient data for Monte Carlo simulation.")
+        return []
     mean_return = returns.mean()
     std_return = returns.std() or 0.01
     simulation_results = []
@@ -117,36 +105,6 @@ def monte_carlo_simulation(data, simulations=1000, days=30):
             price_series.append(price)
         simulation_results.append(price_series)
     return simulation_results
-
-def scenario_analysis(data, days=30):
-    returns = data['Close'].pct_change().dropna()
-    mean_return = returns.mean()
-    std_return = returns.std() or 0.01
-    last_price = data['Close'].iloc[-1]
-    bull_return = mean_return + std_return
-    bear_return = mean_return - std_return
-    bull_scenario = [last_price]
-    bear_scenario = [last_price]
-    for _ in range(days):
-        bull_scenario.append(bull_scenario[-1] * (1 + bull_return))
-        bear_scenario.append(bear_scenario[-1] * (1 + bear_return))
-    return bull_scenario, bear_scenario
-
-def calculate_confidence_score(data):
-    score = 0
-    if 'RSI' in data.columns and pd.notnull(data['RSI'].iloc[-1]):
-        score += 1 if data['RSI'].iloc[-1] < 30 else 0
-    if 'MACD' in data.columns and 'MACD_signal' in data.columns and pd.notnull(data['MACD'].iloc[-1]) and pd.notnull(data['MACD_signal'].iloc[-1]):
-        score += 1 if data['MACD'].iloc[-1] > data['MACD_signal'].iloc[-1] else 0
-    if 'Ichimoku_Span_A' in data.columns and pd.notnull(data['Ichimoku_Span_A'].iloc[-1]) and pd.notnull(data['Close'].iloc[-1]):
-        score += 1 if data['Close'].iloc[-1] > data['Ichimoku_Span_A'].iloc[-1] else 0
-    return score / 3 if score > 0 else 0
-
-def assess_risk(data):
-    if 'ATR' in data.columns and pd.notnull(data['ATR'].iloc[-1]) and pd.notnull(data['ATR'].mean()):
-        if data['ATR'].iloc[-1] > data['ATR'].mean():
-            return "High Volatility Warning"
-    return "Low Volatility"
 
 def optimize_rsi_window(data, windows=range(5, 15)):
     best_window, best_sharpe = 9, -float('inf')
@@ -177,6 +135,8 @@ def detect_divergence(data):
     return "Bullish Divergence" if bullish_div else "Bearish Divergence" if bearish_div else "No Divergence"
 
 def calculate_volume_profile(data, bins=50):
+    if len(data) < 2:
+        return pd.Series()
     price_bins = np.linspace(data['Low'].min(), data['High'].max(), bins)
     volume_profile = np.zeros(bins - 1)
     for i in range(bins - 1):
@@ -185,6 +145,8 @@ def calculate_volume_profile(data, bins=50):
     return pd.Series(volume_profile, index=price_bins[:-1])
 
 def detect_waves(data):
+    if len(data) < 10:
+        return "No Clear Wave Pattern"
     peaks, _ = find_peaks(data['Close'], distance=5)
     troughs, _ = find_peaks(-data['Close'], distance=5)
     if len(peaks) > 2 and len(troughs) > 2:
@@ -195,28 +157,18 @@ def detect_waves(data):
                 return "Potential Downtrend (Wave C?)"
     return "No Clear Wave Pattern"
 
-def check_data_sufficiency(data):
-    days = len(data)
-    if days < 15:
-        st.warning("⚠️ Less than 15 days; most indicators unavailable or unreliable.")
-    elif days < 50:
-        st.warning("⚠️ Less than 50 days; some indicators may be limited.")
-    elif days < 200:
-        st.warning("⚠️ Less than 200 days; long-term indicators like SMA_200 unavailable.")
-
 def analyze_stock(data):
-    if data.empty:
-        st.warning("⚠️ No data available to analyze.")
+    if data.empty or len(data) < 15:  # Minimum for most indicators
+        logger.warning(f"Insufficient data: only {len(data)} days available, need at least 15.")
         return data
     
-    check_data_sufficiency(data)
-    days = len(data)
     required_columns = ['Open', 'High', 'Low', 'Close', 'Volume']
     missing_cols = [col for col in required_columns if col not in data.columns]
     if missing_cols:
-        st.warning(f"⚠️ Missing required columns: {', '.join(missing_cols)}")
+        logger.warning(f"Missing required columns: {', '.join(missing_cols)}")
         return data
     
+    days = len(data)
     windows = {
         'rsi': min(optimize_rsi_window(data), max(5, days - 1)),
         'macd_slow': min(26, max(5, days - 1)),
@@ -237,87 +189,114 @@ def analyze_stock(data):
         'donchian': min(20, max(5, days - 1)),
     }
 
-    if days >= windows['rsi'] + 1:
-        data['RSI'] = ta.momentum.RSIIndicator(data['Close'], window=windows['rsi']).rsi()
-        data['Divergence'] = detect_divergence(data)
+    try:
+        if days >= windows['rsi'] + 1:
+            data['RSI'] = ta.momentum.RSIIndicator(data['Close'], window=windows['rsi']).rsi()
+            data['Divergence'] = detect_divergence(data)
+        else:
+            logger.warning(f"Skipping RSI: {days} days < {windows['rsi'] + 1}")
 
-    if days >= max(windows['macd_slow'], windows['macd_fast']) + 1:
-        macd = ta.trend.MACD(data['Close'], window_slow=windows['macd_slow'], 
-                            window_fast=windows['macd_fast'], window_sign=windows['macd_sign'])
-        data['MACD'] = macd.macd()
-        data['MACD_signal'] = macd.macd_signal()
+        if days >= max(windows['macd_slow'], windows['macd_fast']) + 1:
+            macd = ta.trend.MACD(data['Close'], window_slow=windows['macd_slow'], 
+                                window_fast=windows['macd_fast'], window_sign=windows['macd_sign'])
+            data['MACD'] = macd.macd()
+            data['MACD_signal'] = macd.macd_signal()
+        else:
+            logger.warning(f"Skipping MACD: {days} days < {max(windows['macd_slow'], windows['macd_fast']) + 1}")
 
-    if days >= windows['sma_20'] + 1:
-        sma_20 = ta.trend.SMAIndicator(data['Close'], window=windows['sma_20']).sma_indicator()
-        data['EMA_20'] = ta.trend.EMAIndicator(data['Close'], window=windows['sma_20']).ema_indicator()
-        bollinger = ta.volatility.BollingerBands(data['Close'], window=windows['bollinger'], window_dev=2)
-        data['Middle_Band'] = sma_20
-        data['Upper_Band'] = bollinger.bollinger_hband()
-        data['Lower_Band'] = bollinger.bollinger_lband()
+        if days >= windows['sma_20'] + 1:
+            sma_20 = ta.trend.SMAIndicator(data['Close'], window=windows['sma_20']).sma_indicator()
+            data['EMA_20'] = ta.trend.EMAIndicator(data['Close'], window=windows['sma_20']).ema_indicator()
+            bollinger = ta.volatility.BollingerBands(data['Close'], window=windows['bollinger'], window_dev=2)
+            data['Middle_Band'] = sma_20
+            data['Upper_Band'] = bollinger.bollinger_hband()
+            data['Lower_Band'] = bollinger.bollinger_lband()
+        else:
+            logger.warning(f"Skipping SMA_20/Bollinger: {days} days < {windows['sma_20'] + 1}")
 
-    if days >= windows['sma_50'] + 1:
-        data['SMA_50'] = ta.trend.SMAIndicator(data['Close'], window=windows['sma_50']).sma_indicator()
-        data['EMA_50'] = ta.trend.EMAIndicator(data['Close'], window=windows['sma_50']).ema_indicator()
+        if days >= windows['sma_50'] + 1:
+            data['SMA_50'] = ta.trend.SMAIndicator(data['Close'], window=windows['sma_50']).sma_indicator()
+            data['EMA_50'] = ta.trend.EMAIndicator(data['Close'], window=windows['sma_50']).ema_indicator()
+        else:
+            logger.warning(f"Skipping SMA_50: {days} days < {windows['sma_50'] + 1}")
 
-    if days >= windows['sma_200'] + 1:
-        data['SMA_200'] = ta.trend.SMAIndicator(data['Close'], window=windows['sma_200']).sma_indicator()
+        if days >= windows['sma_200'] + 1:
+            data['SMA_200'] = ta.trend.SMAIndicator(data['Close'], window=windows['sma_200']).sma_indicator()
+        else:
+            logger.warning(f"Skipping SMA_200: {days} days < {windows['sma_200'] + 1}")
 
-    if days >= windows['stoch'] + 1:
-        stoch = ta.momentum.StochasticOscillator(data['High'], data['Low'], data['Close'], 
-                                                window=windows['stoch'], smooth_window=3)
-        data['SlowK'] = stoch.stoch()
-        data['SlowD'] = stoch.stoch_signal()
+        if days >= windows['stoch'] + 1:
+            stoch = ta.momentum.StochasticOscillator(data['High'], data['Low'], data['Close'], 
+                                                    window=windows['stoch'], smooth_window=3)
+            data['SlowK'] = stoch.stoch()
+            data['SlowD'] = stoch.stoch_signal()
+        else:
+            logger.warning(f"Skipping Stochastic: {days} days < {windows['stoch'] + 1}")
 
-    if days >= windows['atr'] + 1:
-        data['ATR'] = ta.volatility.AverageTrueRange(data['High'], data['Low'], data['Close'], 
-                                                    window=windows['atr']).average_true_range()
+        if days >= windows['atr'] + 1:
+            data['ATR'] = ta.volatility.AverageTrueRange(data['High'], data['Low'], data['Close'], 
+                                                        window=windows['atr']).average_true_range()
+        else:
+            logger.warning(f"Skipping ATR: {days} days < {windows['atr'] + 1}")
 
-    if days >= windows['adx'] + 1:
-        data['ADX'] = ta.trend.ADXIndicator(data['High'], data['Low'], data['Close'], 
-                                            window=windows['adx']).adx()
+        if days >= windows['adx'] + 1:
+            data['ADX'] = ta.trend.ADXIndicator(data['High'], data['Low'], data['Close'], 
+                                                window=windows['adx']).adx()
+        else:
+            logger.warning(f"Skipping ADX: {days} days < {windows['adx'] + 1}")
 
-    data['OBV'] = ta.volume.OnBalanceVolumeIndicator(data['Close'], data['Volume']).on_balance_volume()
-    data['Cumulative_TP'] = ((data['High'] + data['Low'] + data['Close']) / 3) * data['Volume']
-    data['Cumulative_Volume'] = data['Volume'].cumsum()
-    data['VWAP'] = data['Cumulative_TP'].cumsum() / data['Cumulative_Volume']
+        data['OBV'] = ta.volume.OnBalanceVolumeIndicator(data['Close'], data['Volume']).on_balance_volume()
+        data['Cumulative_TP'] = ((data['High'] + data['Low'] + data['Close']) / 3) * data['Volume']
+        data['Cumulative_Volume'] = data['Volume'].cumsum()
+        data['VWAP'] = data['Cumulative_TP'].cumsum() / data['Cumulative_Volume']
 
-    if days >= windows['volume'] + 1:
-        data['Avg_Volume'] = data['Volume'].rolling(window=windows['volume']).mean()
-        data['Volume_Spike'] = data['Volume'] > (data['Avg_Volume'] * 1.5)
+        if days >= windows['volume'] + 1:
+            data['Avg_Volume'] = data['Volume'].rolling(window=windows['volume']).mean()
+            data['Volume_Spike'] = data['Volume'] > (data['Avg_Volume'] * 1.5)
+        else:
+            logger.warning(f"Skipping Volume Spike: {days} days < {windows['volume'] + 1}")
 
-    data['Parabolic_SAR'] = ta.trend.PSARIndicator(data['High'], data['Low'], data['Close']).psar()
+        data['Parabolic_SAR'] = ta.trend.PSARIndicator(data['High'], data['Low'], data['Close']).psar()
 
-    high = data['High'].max()
-    low = data['Low'].min()
-    diff = high - low
-    data['Fib_23.6'] = high - diff * 0.236
-    data['Fib_38.2'] = high - diff * 0.382
-    data['Fib_50.0'] = high - diff * 0.5
-    data['Fib_61.8'] = high - diff * 0.618
+        high = data['High'].max()
+        low = data['Low'].min()
+        diff = high - low
+        data['Fib_23.6'] = high - diff * 0.236
+        data['Fib_38.2'] = high - diff * 0.382
+        data['Fib_50.0'] = high - diff * 0.5
+        data['Fib_61.8'] = high - diff * 0.618
 
-    if days >= windows['ichimoku_w2'] + 1:
-        ichimoku = ta.trend.IchimokuIndicator(data['High'], data['Low'], window1=windows['ichimoku_w1'], 
-                                             window2=windows['ichimoku_w2'], window3=windows['ichimoku_w3'])
-        data['Ichimoku_Tenkan'] = ichimoku.ichimoku_conversion_line()
-        data['Ichimoku_Kijun'] = ichimoku.ichimoku_base_line()
-        data['Ichimoku_Span_A'] = ichimoku.ichimoku_a()
-        data['Ichimoku_Span_B'] = ichimoku.ichimoku_b()
-        data['Ichimoku_Chikou'] = data['Close'].shift(-min(26, days - 1))
+        if days >= windows['ichimoku_w2'] + 1:
+            ichimoku = ta.trend.IchimokuIndicator(data['High'], data['Low'], window1=windows['ichimoku_w1'], 
+                                                 window2=windows['ichimoku_w2'], window3=windows['ichimoku_w3'])
+            data['Ichimoku_Tenkan'] = ichimoku.ichimoku_conversion_line()
+            data['Ichimoku_Kijun'] = ichimoku.ichimoku_base_line()
+            data['Ichimoku_Span_A'] = ichimoku.ichimoku_a()
+            data['Ichimoku_Span_B'] = ichimoku.ichimoku_b()
+            data['Ichimoku_Chikou'] = data['Close'].shift(-min(26, days - 1))
+        else:
+            logger.warning(f"Skipping Ichimoku: {days} days < {windows['ichimoku_w2'] + 1}")
 
-    if days >= windows['cmf'] + 1:
-        data['CMF'] = ta.volume.ChaikinMoneyFlowIndicator(data['High'], data['Low'], data['Close'], 
-                                                          data['Volume'], window=windows['cmf']).chaikin_money_flow()
+        if days >= windows['cmf'] + 1:
+            data['CMF'] = ta.volume.ChaikinMoneyFlowIndicator(data['High'], data['Low'], data['Close'], 
+                                                              data['Volume'], window=windows['cmf']).chaikin_money_flow()
+        else:
+            logger.warning(f"Skipping CMF: {days} days < {windows['cmf'] + 1}")
 
-    if days >= windows['donchian'] + 1:
-        donchian = ta.volatility.DonchianChannel(data['High'], data['Low'], data['Close'], 
-                                                window=windows['donchian'])
-        data['Donchian_Upper'] = donchian.donchian_channel_hband()
-        data['Donchian_Lower'] = donchian.donchian_channel_lband()
-        data['Donchian_Middle'] = donchian.donchian_channel_mband()
+        if days >= windows['donchian'] + 1:
+            donchian = ta.volatility.DonchianChannel(data['High'], data['Low'], data['Close'], 
+                                                    window=windows['donchian'])
+            data['Donchian_Upper'] = donchian.donchian_channel_hband()
+            data['Donchian_Lower'] = donchian.donchian_channel_lband()
+            data['Donchian_Middle'] = donchian.donchian_channel_mband()
+        else:
+            logger.warning(f"Skipping Donchian: {days} days < {windows['donchian'] + 1}")
 
-    data['Volume_Profile'] = calculate_volume_profile(data)
-    data['Wave_Pattern'] = detect_waves(data)
-
+        data['Volume_Profile'] = calculate_volume_profile(data)
+        data['Wave_Pattern'] = detect_waves(data)
+    except Exception as e:
+        logger.error(f"Error in analyze_stock: {str(e)}")
+    
     return data
 
 def calculate_buy_at(data):
@@ -338,8 +317,6 @@ def calculate_stop_loss(data, atr_multiplier=2.5):
     if pd.notnull(last_close) and pd.notnull(last_atr):
         if 'ADX' in data.columns and pd.notnull(data['ADX'].iloc[-1]) and data['ADX'].iloc[-1] > 25:
             atr_multiplier = 3.0
-        else:
-            atr_multiplier = 1.5
         stop_loss = last_close - (atr_multiplier * last_atr)
         return round(stop_loss, 2)
     return None
@@ -353,8 +330,6 @@ def calculate_target(data, risk_reward_ratio=3):
         risk = last_close - stop_loss
         if 'ADX' in data.columns and pd.notnull(data['ADX'].iloc[-1]) and data['ADX'].iloc[-1] > 25:
             risk_reward_ratio = 3
-        else:
-            risk_reward_ratio = 1.5
         target = last_close + (risk * risk_reward_ratio)
         return round(target, 2)
     return None
@@ -502,16 +477,19 @@ def generate_recommendations(data, symbol=None):
 def analyze_batch(stock_batch):
     results = []
     with ThreadPoolExecutor(max_workers=10) as executor:
-        futures = {executor.submit(analyze_stock_parallel, symbol): symbol for symbol in stock_batch if len(fetch_stock_data_cached(symbol)) >= 15}
+        futures = {executor.submit(analyze_stock_parallel, symbol): symbol for symbol in stock_batch}
         for future in as_completed(futures):
-            result = future.result()
-            if result:
-                results.append(result)
+            try:
+                result = future.result()
+                if result:
+                    results.append(result)
+            except Exception as e:
+                logger.error(f"Error processing {futures[future]}: {str(e)}")
     return results
 
 def analyze_stock_parallel(symbol):
     data = fetch_stock_data_cached(symbol)
-    if not data.empty:
+    if not data.empty and len(data) >= 15:  # Stricter minimum for analysis
         data = analyze_stock(data)
         recommendations = generate_recommendations(data, symbol)
         return {
@@ -529,7 +507,9 @@ def analyze_stock_parallel(symbol):
             "Ichimoku_Trend": recommendations["Ichimoku_Trend"],
             "Score": recommendations.get("Score", 0),
         }
-    return None
+    else:
+        logger.warning(f"Skipping {symbol}: only {len(data)} days of data.")
+        return None
 
 def update_progress(progress_bar, loading_text, progress_value, start_time, total_items, processed_items):
     progress_bar.progress(progress_value)
@@ -606,7 +586,7 @@ def colored_recommendation(recommendation):
     return recommendation
 
 def send_telegram_message(message):
-    url = f"https://api.telegram.org/bot{"7902319450:AAFPNcUyk9F6Sesy-h6SQnKHC_Yr6Uqk9ps"}/sendMessage"
+    url = f"https://api.telegram.org/bot{"-1002411670969"}/sendMessage"
     payload = {
         "chat_id": "-1002411670969",
         "text": message,
@@ -712,9 +692,12 @@ def display_dashboard(symbol=None, data=None, recommendations=None, NSE_STOCKS=N
             st.plotly_chart(fig)
         with tab4:
             mc_results = monte_carlo_simulation(data)
-            mc_df = pd.DataFrame(mc_results).T
-            fig = px.line(mc_df.mean(axis=1), title="Monte Carlo Mean Path")
-            st.plotly_chart(fig)
+            if mc_results:
+                mc_df = pd.DataFrame(mc_results).T
+                fig = px.line(mc_df.mean(axis=1), title="Monte Carlo Mean Path")
+                st.plotly_chart(fig)
+            else:
+                st.write("Insufficient data for Monte Carlo simulation.")
 
 def main():
     if 'cancel_operation' not in st.session_state:
@@ -727,12 +710,12 @@ def main():
     
     if symbol:
         data = fetch_stock_data_cached(symbol)
-        if not data.empty:
+        if not data.empty and len(data) >= 15:
             data = analyze_stock(data)
             recommendations = generate_recommendations(data, symbol)
             display_dashboard(symbol, data, recommendations, NSE_STOCKS)
         else:
-            st.error("❌ Failed to load data for this symbol")
+            st.error(f"❌ Failed to load sufficient data for {symbol} (only {len(data)} days).")
     else:
         display_dashboard(None, None, None, NSE_STOCKS)
 
