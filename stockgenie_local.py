@@ -14,6 +14,7 @@ import numpy as np
 from scipy.signal import find_peaks
 import os
 import logging
+from tenacity import retry, stop_after_attempt, wait_exponential  # Added for tenacity
 
 # Setup logging
 logging.basicConfig(level=logging.WARNING)
@@ -41,39 +42,26 @@ TOOLTIPS = {
     "Wave_Pattern": "Simplified Elliott Wave - Trend wave detection",
 }
 
-def retry(max_retries=3, delay=1, backoff_factor=2, jitter=0.5):
-    def decorator(func):
-        def wrapper(*args, **kwargs):
-            retries = 0
-            while retries < max_retries:
-                try:
-                    return func(*args, **kwargs)
-                except (requests.exceptions.RequestException, ConnectionError) as e:
-                    retries += 1
-                    if retries == max_retries:
-                        raise e
-                    sleep_time = (delay * (backoff_factor ** retries)) + random.uniform(0, jitter)
-                    time.sleep(sleep_time)
-        return wrapper
-    return decorator
-
-@retry(max_retries=3, delay=2)
+# Suggestion #2: Replaced custom retry with tenacity
+@retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=2, max=10))
 def fetch_nse_stock_list():
+    # Suggestion #1: Use requests.Session() for performance
     url = "https://archives.nseindia.com/content/equities/EQUITY_L.csv"
-    try:
-        response = requests.get(url, timeout=10)
-        response.raise_for_status()
-        nse_data = pd.read_csv(io.StringIO(response.text))
-        stock_list = [f"{symbol}.NS" for symbol in nse_data['SYMBOL']]
-        return stock_list
-    except Exception:
-        st.warning("⚠️ Failed to fetch NSE stock list; using fallback list.")
-        return [
-            "20MICRONS.NS", "21STCENMGM.NS", "360ONE.NS", "3IINFOLTD.NS", "3MINDIA.NS", "5PAISA.NS", "63MOONS.NS",
-            "A2ZINFRA.NS", "AAATECH.NS", "AADHARHFC.NS", "AAKASH.NS", "AAREYDRUGS.NS", "AARON.NS", "AARTIDRUGS.NS",
-            "AARTIIND.NS", "AARTIPHARM.NS", "AARTISURF.NS", "AARVEEDEN.NS", "AARVI.NS", "AATMAJ.NS", "AAVAS.NS",
-            "ABAN.NS", "ABB.NS", "ABBOTINDIA.NS", "ABCAPITAL.NS", "ABCOTS.NS", "ABDL.NS", "ABFRL.NS",
-        ]
+    with requests.Session() as session:
+        try:
+            response = session.get(url, timeout=10)
+            response.raise_for_status()
+            nse_data = pd.read_csv(io.StringIO(response.text))
+            stock_list = [f"{symbol}.NS" for symbol in nse_data['SYMBOL']]
+            return stock_list
+        except Exception:
+            st.warning("⚠️ Failed to fetch NSE stock list; using fallback list.")
+            return [
+                "20MICRONS.NS", "21STCENMGM.NS", "360ONE.NS", "3IINFOLTD.NS", "3MINDIA.NS", "5PAISA.NS", "63MOONS.NS",
+                "A2ZINFRA.NS", "AAATECH.NS", "AADHARHFC.NS", "AAKASH.NS", "AAREYDRUGS.NS", "AARON.NS", "AARTIDRUGS.NS",
+                "AARTIIND.NS", "AARTIPHARM.NS", "AARTISURF.NS", "AARVEEDEN.NS", "AARVI.NS", "AATMAJ.NS", "AAVAS.NS",
+                "ABAN.NS", "ABB.NS", "ABBOTINDIA.NS", "ABCAPITAL.NS", "ABCOTS.NS", "ABDL.NS", "ABFRL.NS",
+            ]
 
 @lru_cache(maxsize=100)
 def fetch_stock_data_cached(symbol, period="5y", interval="1d"):
@@ -85,6 +73,9 @@ def fetch_stock_data_cached(symbol, period="5y", interval="1d"):
         if data.empty:
             logger.warning(f"No data returned for {symbol} from Yahoo Finance.")
             return pd.DataFrame()
+        # Suggestion #3: Add data freshness check
+        if data.index[-1] < pd.Timestamp.now() - pd.Timedelta(days=2):
+            logger.warning(f"Stale data for {symbol}: Last update {data.index[-1]}")
         return data
     except Exception as e:
         logger.warning(f"Error fetching data for {symbol}: {str(e)}")
@@ -586,7 +577,7 @@ def colored_recommendation(recommendation):
     return recommendation
 
 def send_telegram_message(message):
-    url = f"https://api.telegram.org/bot{"-1002411670969"}/sendMessage"
+    url = f"https://api.telegram.org/bot{"7902319450:AAFPNcUyk9F6Sesy-h6SQnKHC_Yr6Uqk9ps"}/sendMessage"  # Fixed token usage
     payload = {
         "chat_id": "-1002411670969",
         "text": message,
