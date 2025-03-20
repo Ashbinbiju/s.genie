@@ -588,8 +588,8 @@ def colored_recommendation(recommendation: str) -> str:
     return recommendation
 
 def send_telegram_message(message: str):
-    url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
-    payload = {"chat_id": TELEGRAM_CHAT_ID, "text": message, "parse_mode": "Markdown"}
+    url = f"https://api.telegram.org/bot{"7902319450:AAFPNcUyk9F6Sesy-h6SQnKHC_Yr6Uqk9ps"}/sendMessage"
+    payload = {"chat_id": "-1002411670969", "text": message, "parse_mode": "Markdown"}
     try:
         response = requests.post(url, json=payload, timeout=5)
         response.raise_for_status()
@@ -611,7 +611,7 @@ def display_dashboard(symbol=None, data=None, recommendations=None, NSE_STOCKS=N
         results_df = analyze_all_stocks(NSE_STOCKS, price_range=price_range)
         if not results_df.empty and not st.session_state.cancel_operation:
             st.subheader("🏆 Today's Top 10 Stocks")
-            telegram_msg = f"*Top 10 Daily Stocks ({datetime.now().strftime('%d %b %Y')})*\nChat ID: {TELEGRAM_CHAT_ID}\n\n"
+            telegram_msg = f"*Top 10 Daily Stocks ({datetime.now().strftime('%d %b %Y')})*\nChat ID: {"-1002411670969"}\n\n"
             for _, row in results_df.iterrows():
                 with st.expander(f"{row['Symbol']} - Score: {row['Score']}/7"):
                     current_price = f"{row['Current Price']:.2f}" if pd.notnull(row['Current Price']) else "N/A"
@@ -639,7 +639,7 @@ def display_dashboard(symbol=None, data=None, recommendations=None, NSE_STOCKS=N
         intraday_results = analyze_intraday_stocks(NSE_STOCKS, price_range=price_range)
         if not intraday_results.empty and not st.session_state.cancel_operation:
             st.subheader("🏆 Top 5 Intraday Stocks")
-            telegram_msg = f"*Top 5 Intraday Stocks ({datetime.now().strftime('%d %b %Y')})*\nChat ID: {TELEGRAM_CHAT_ID}\n\n"
+            telegram_msg = f"*Top 5 Intraday Stocks ({datetime.now().strftime('%d %b %Y')})*\nChat ID: {"-1002411670969"}\n\n"
             for _, row in intraday_results.iterrows():
                 with st.expander(f"{row['Symbol']} - Score: {row['Score']}/7"):
                     current_price = f"{row['Current Price']:.2f}" if pd.notnull(row['Current Price']) else "N/A"
