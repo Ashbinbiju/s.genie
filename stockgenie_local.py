@@ -14,7 +14,7 @@ import numpy as np
 from scipy.signal import find_peaks
 import os
 import logging
-from tenacity import retry, stop_after_attempt, wait_exponential  # Added for tenacity
+from tenacity import retry, stop_after_attempt, wait_exponential
 
 # Setup logging
 logging.basicConfig(level=logging.WARNING)
@@ -45,21 +45,20 @@ TOOLTIPS = {
 @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=2, max=10))
 def fetch_nse_stock_list():
     url = "https://archives.nseindia.com/content/equities/EQUITY_L.csv"
-    with requests.Session() as session:
-        try:
-            response = session.get(url, timeout=10)
-            response.raise_for_status()
-            nse_data = pd.read_csv(io.StringIO(response.text))
-            stock_list = [f"{symbol}.NS" for symbol in nse_data['SYMBOL']]
-            return stock_list
-        except Exception:
-            st.warning("⚠️ Failed to fetch NSE stock list; using fallback list.")
-            return [
-                "20MICRONS.NS", "21STCENMGM.NS", "360ONE.NS", "3IINFOLTD.NS", "3MINDIA.NS", "5PAISA.NS", "63MOONS.NS",
-                "A2ZINFRA.NS", "AAATECH.NS", "AADHARHFC.NS", "AAKASH.NS", "AAREYDRUGS.NS", "AARON.NS", "AARTIDRUGS.NS",
-                "AARTIIND.NS", "AARTIPHARM.NS", "AARTISURF.NS", "AARVEEDEN.NS", "AARVI.NS", "AATMAJ.NS", "AAVAS.NS",
-                "ABAN.NS", "ABB.NS", "ABBOTINDIA.NS", "ABCAPITAL.NS", "ABCOTS.NS", "ABDL.NS", "ABFRL.NS",
-            ]
+    try:
+        response = requests.get(url, timeout=10)
+        response.raise_for_status()
+        nse_data = pd.read_csv(io.StringIO(response.text))
+        stock_list = [f"{symbol}.NS" for symbol in nse_data['SYMBOL']]
+        return stock_list
+    except Exception:
+        st.warning("⚠️ Failed to fetch NSE stock list; using fallback list.")
+        return [
+            "20MICRONS.NS", "21STCENMGM.NS", "360ONE.NS", "3IINFOLTD.NS", "3MINDIA.NS", "5PAISA.NS", "63MOONS.NS",
+            "A2ZINFRA.NS", "AAATECH.NS", "AADHARHFC.NS", "AAKASH.NS", "AAREYDRUGS.NS", "AARON.NS", "AARTIDRUGS.NS",
+            "AARTIIND.NS", "AARTIPHARM.NS", "AARTISURF.NS", "AARVEEDEN.NS", "AARVI.NS", "AATMAJ.NS", "AAVAS.NS",
+            "ABAN.NS", "ABB.NS", "ABBOTINDIA.NS", "ABCAPITAL.NS", "ABCOTS.NS", "ABDL.NS", "ABFRL.NS",
+        ]
 
 @lru_cache(maxsize=100)
 def fetch_stock_data_cached(symbol, period="5y", interval="1d"):
@@ -71,7 +70,7 @@ def fetch_stock_data_cached(symbol, period="5y", interval="1d"):
         if data.empty:
             logger.warning(f"No data returned for {symbol} from Yahoo Finance.")
             return pd.DataFrame()
-        return data  # Removed data freshness check
+        return data
     except Exception as e:
         logger.warning(f"Error fetching data for {symbol}: {str(e)}")
         return pd.DataFrame()
@@ -261,7 +260,7 @@ def analyze_stock(data):
             data['Ichimoku_Span_B'] = ichimoku.ichimoku_b()
             data['Ichimoku_Chikou'] = data['Close'].shift(-min(26, days - 1))
         else:
-            logger.warning(f"Skipping Ichimoku: {days} days < {windows['ichimoku_w2/aplus1]}")
+            logger.warning(f"Skipping Ichimoku: {days} days < {windows['ichimoku_w2'] + 1}")
 
         if days >= windows['cmf'] + 1:
             data['CMF'] = ta.volume.ChaikinMoneyFlowIndicator(data['High'], data['Low'], data['Close'], 
@@ -666,7 +665,7 @@ def display_dashboard(symbol=None, data=None, recommendations=None, NSE_STOCKS=N
             with col:
                 st.markdown(f"**{strategy}**: {colored_recommendation(recommendations[strategy])}", unsafe_allow_html=True)
         
-        tab1, tab2, tab3, tab4 = st.tabs(["📊 Price Action", "📉 Momentum", "📊 Volatility", "� полов Monte Carlo"])
+        tab1, tab2, tab3, tab4 = st.tabs(["📊 Price Action", "📉 Momentum", "📊 Volatility", "📈 Monte Carlo"])
         with tab1:
             fig = px.line(data, y=['Close', 'SMA_50', 'EMA_20'], title="Price with Moving Averages")
             st.plotly_chart(fig)
