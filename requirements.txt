@@ -1,6 +1,7 @@
 beautifulsoup4>=4.12.3
 dask
 pandas-datareader
+tenacity
 retrying
 diskcache==5.6.3
 matplotlib
