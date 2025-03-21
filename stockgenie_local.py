@@ -14,7 +14,6 @@ import numpy as np
 from scipy.signal import find_peaks
 import os
 import logging
-from tenacity import retry, stop_after_attempt, wait_exponential
 
 # Setup logging
 logging.basicConfig(level=logging.WARNING)
@@ -42,7 +41,23 @@ TOOLTIPS = {
     "Wave_Pattern": "Simplified Elliott Wave - Trend wave detection",
 }
 
-@retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=2, max=10))
+def retry(max_retries=3, delay=1, backoff_factor=2, jitter=0.5):
+    def decorator(func):
+        def wrapper(*args, **kwargs):
+            retries = 0
+            while retries < max_retries:
+                try:
+                    return func(*args, **kwargs)
+                except (requests.exceptions.RequestException, ConnectionError) as e:
+                    retries += 1
+                    if retries == max_retries:
+                        raise e
+                    sleep_time = (delay * (backoff_factor ** retries)) + random.uniform(0, jitter)
+                    time.sleep(sleep_time)
+        return wrapper
+    return decorator
+
+@retry(max_retries=3, delay=2)
 def fetch_nse_stock_list():
     url = "https://archives.nseindia.com/content/equities/EQUITY_L.csv"
     try:
@@ -571,7 +586,7 @@ def colored_recommendation(recommendation):
     return recommendation
 
 def send_telegram_message(message):
-    url = f"https://api.telegram.org/bot{"7902319450:AAFPNcUyk9F6Sesy-h6SQnKHC_Yr6Uqk9ps"}/sendMessage"
+    url = f"https://api.telegram.org/bot{"-1002411670969"}/sendMessage"
     payload = {
         "chat_id": "-1002411670969",
         "text": message,
