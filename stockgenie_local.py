@@ -12,7 +12,6 @@ import io
 import random
 import numpy as np
 from scipy.signal import find_peaks
-from scipy.stats import linregress
 import os
 import logging
 
@@ -40,8 +39,6 @@ TOOLTIPS = {
     "Donchian": "Donchian Channels - Breakout detection",
     "Volume_Profile": "Volume traded at price levels - Support/Resistance",
     "Wave_Pattern": "Simplified Elliott Wave - Trend wave detection",
-    "Channel": "Range-bound price channel - Buy low, sell high",
-    "Triangle": "Converging price pattern - Breakout potential",
 }
 
 def retry(max_retries=3, delay=1, backoff_factor=2, jitter=0.5):
@@ -148,20 +145,22 @@ def calculate_volume_profile(data, bins=50):
     return pd.Series(volume_profile, index=price_bins[:-1])
 
 def detect_waves(data):
-    if len(data) < 10:
+    if len(data) < 20:
         return "No Clear Wave Pattern"
     peaks, _ = find_peaks(data['Close'], distance=5)
     troughs, _ = find_peaks(-data['Close'], distance=5)
-    if len(peaks) > 2 and len(troughs) > 2:
-        if pd.notnull(data['Close'].iloc[-1]) and pd.notnull(data['Close'].iloc[peaks[-1]]):
-            if data['Close'].iloc[-1] > data['Close'].iloc[peaks[-1]]:
-                return "Potential Uptrend (Wave 5?)"
-            elif data['Close'].iloc[-1] < data['Close'].iloc[troughs[-1]]:
-                return "Potential Downtrend (Wave C?)"
+    if len(peaks) >= 3 and len(troughs) >= 2:
+        last_peak = data['Close'].iloc[peaks[-1]]
+        last_trough = data['Close'].iloc[troughs[-1]]
+        fib_618 = last_peak - (last_peak - last_trough) * 0.618
+        if (data['Close'].iloc[-1] > last_peak and last_trough > fib_618):
+            return "Potential Uptrend (Wave 5)"
+        elif (data['Close'].iloc[-1] < last_trough and last_peak < data['Close'].iloc[peaks[-2]]):
+            return "Potential Downtrend (Wave C)"
     return "No Clear Wave Pattern"
 
 def analyze_stock(data):
-    if data.empty or len(data) < 15:  # Minimum for most indicators
+    if data.empty or len(data) < 15:
         logger.warning(f"Insufficient data: only {len(data)} days available, need at least 15.")
         return data
     
@@ -190,8 +189,6 @@ def analyze_stock(data):
         'ichimoku_w3': min(52, max(10, days - 1)),
         'cmf': min(20, max(5, days - 1)),
         'donchian': min(20, max(5, days - 1)),
-        'channel': min(20, max(5, days - 1)),  # New: Channel window
-        'triangle': min(20, max(5, days - 1)),  # New: Triangle window
     }
 
     try:
@@ -204,7 +201,7 @@ def analyze_stock(data):
                                 window_fast=windows['macd_fast'], window_sign=windows['macd_sign'])
             data['MACD'] = macd.macd()
             data['MACD_signal'] = macd.macd_signal()
-        
+
         if days >= windows['sma_20'] + 1:
             sma_20 = ta.trend.SMAIndicator(data['Close'], window=windows['sma_20']).sma_indicator()
             data['EMA_20'] = ta.trend.EMAIndicator(data['Close'], window=windows['sma_20']).ema_indicator()
@@ -212,28 +209,28 @@ def analyze_stock(data):
             data['Middle_Band'] = sma_20
             data['Upper_Band'] = bollinger.bollinger_hband()
             data['Lower_Band'] = bollinger.bollinger_lband()
-        
+
         if days >= windows['sma_50'] + 1:
             data['SMA_50'] = ta.trend.SMAIndicator(data['Close'], window=windows['sma_50']).sma_indicator()
             data['EMA_50'] = ta.trend.EMAIndicator(data['Close'], window=windows['sma_50']).ema_indicator()
-        
+
         if days >= windows['sma_200'] + 1:
             data['SMA_200'] = ta.trend.SMAIndicator(data['Close'], window=windows['sma_200']).sma_indicator()
-        
+
         if days >= windows['stoch'] + 1:
             stoch = ta.momentum.StochasticOscillator(data['High'], data['Low'], data['Close'], 
                                                     window=windows['stoch'], smooth_window=3)
             data['SlowK'] = stoch.stoch()
             data['SlowD'] = stoch.stoch_signal()
-        
+
         if days >= windows['atr'] + 1:
             data['ATR'] = ta.volatility.AverageTrueRange(data['High'], data['Low'], data['Close'], 
                                                         window=windows['atr']).average_true_range()
-        
+
         if days >= windows['adx'] + 1:
             data['ADX'] = ta.trend.ADXIndicator(data['High'], data['Low'], data['Close'], 
                                                 window=windows['adx']).adx()
-        
+
         data['OBV'] = ta.volume.OnBalanceVolumeIndicator(data['Close'], data['Volume']).on_balance_volume()
         data['Cumulative_TP'] = ((data['High'] + data['Low'] + data['Close']) / 3) * data['Volume']
         data['Cumulative_Volume'] = data['Volume'].cumsum()
@@ -242,7 +239,7 @@ def analyze_stock(data):
         if days >= windows['volume'] + 1:
             data['Avg_Volume'] = data['Volume'].rolling(window=windows['volume']).mean()
             data['Volume_Spike'] = data['Volume'] > (data['Avg_Volume'] * 1.5)
-        
+
         data['Parabolic_SAR'] = ta.trend.PSARIndicator(data['High'], data['Low'], data['Close']).psar()
 
         high = data['High'].max()
@@ -261,40 +258,20 @@ def analyze_stock(data):
             data['Ichimoku_Span_A'] = ichimoku.ichimoku_a()
             data['Ichimoku_Span_B'] = ichimoku.ichimoku_b()
             data['Ichimoku_Chikou'] = data['Close'].shift(-min(26, days - 1))
-        
+            data['Cloud_Thickness'] = data['Ichimoku_Span_A'] - data['Ichimoku_Span_B']
+
         if days >= windows['cmf'] + 1:
             data['CMF'] = ta.volume.ChaikinMoneyFlowIndicator(data['High'], data['Low'], data['Close'], 
                                                               data['Volume'], window=windows['cmf']).chaikin_money_flow()
-        
+
         if days >= windows['donchian'] + 1:
             donchian = ta.volatility.DonchianChannel(data['High'], data['Low'], data['Close'], 
                                                     window=windows['donchian'])
             data['Donchian_Upper'] = donchian.donchian_channel_hband()
             data['Donchian_Lower'] = donchian.donchian_channel_lband()
             data['Donchian_Middle'] = donchian.donchian_channel_mband()
-            # Enhanced Breakout/Breakdown with volume confirmation
-            data['Breakout_Confirmed'] = (data['Close'] > data['Donchian_Upper']) & (data['Volume'] > data['Avg_Volume'] * 1.5)
-            data['Breakdown_Confirmed'] = (data['Close'] < data['Donchian_Lower']) & (data['Volume'] > data['Avg_Volume'] * 1.5)
-
-        # New: Channel Pattern
-        if days >= windows['channel'] + 1:
-            data['Channel_Upper'] = data['High'].rolling(window=windows['channel']).max()
-            data['Channel_Lower'] = data['Low'].rolling(window=windows['channel']).min()
-            data['Channel_Width'] = data['Channel_Upper'] - data['Channel_Lower']
-            data['Channel_Pattern'] = (data['Channel_Width'].pct_change().abs() < 0.05).rolling(5).mean() > 0.8
-
-        # New: Triangle Pattern Detection
-        if days >= windows['triangle'] + 1:
-            highs = data['High'].rolling(window=windows['triangle']).max()
-            lows = data['Low'].rolling(window=windows['triangle']).min()
-            x = np.arange(windows['triangle'])
-            slope_high, _, _, _, _ = linregress(x, highs[-windows['triangle']:].fillna(method='ffill'))
-            slope_low, _, _, _, _ = linregress(x, lows[-windows['triangle']:].fillna(method='ffill'))
-            data['Triangle_Pattern'] = "No Triangle"
-            if slope_high < 0 and slope_low > 0:
-                data['Triangle_Pattern'] = "Triangle Detected"
-                if 0.8 <= abs(slope_high / slope_low) <= 1.2:
-                    data['Triangle_Pattern'] = "Symmetric Triangle Detected"
+            data['Breakout_Confirmed'] = (data['Close'] > data['Donchian_Upper'].shift(1)) & (data['Volume_Spike']) & (data['ADX'] > 25)
+            data['Breakdown_Confirmed'] = (data['Close'] < data['Donchian_Lower'].shift(1)) & (data['Volume_Spike']) & (data['ADX'] > 25)
 
         data['Volume_Profile'] = calculate_volume_profile(data)
         data['Wave_Pattern'] = detect_waves(data)
@@ -355,8 +332,8 @@ def generate_recommendations(data, symbol=None):
     recommendations = {
         "Intraday": "Hold", "Swing": "Hold", "Short-Term": "Hold", "Long-Term": "Hold",
         "Mean_Reversion": "Hold", "Breakout": "Hold", "Ichimoku_Trend": "Hold",
-        "Channel": "Hold", "Triangle": "Hold",  # New strategies
-        "Current Price": None, "Buy At": None, "Stop Loss": None, "Target": None, "Score": 0
+        "Current Price": None, "Buy At": None, "Stop Loss": None, "Target": None, 
+        "Score": 0, "Confidence Score (%)": 0
     }
     if data.empty or 'Close' not in data.columns or pd.isna(data['Close'].iloc[-1]):
         return recommendations
@@ -406,17 +383,60 @@ def generate_recommendations(data, symbol=None):
         elif data['Divergence'].iloc[-1] == "Bearish Divergence":
             sell_score += 1
 
+    # Refined Breakout Strategy
+    if 'Breakout_Confirmed' in data.columns and 'Breakdown_Confirmed' in data.columns:
+        if data['Breakout_Confirmed'].iloc[-1]:
+            buy_score += 2
+            recommendations["Breakout"] = "Buy"
+        elif data['Breakdown_Confirmed'].iloc[-1]:
+            sell_score += 2
+            recommendations["Breakout"] = "Sell"
+        elif pd.notnull(data['Donchian_Upper'].iloc[-1]) and last_close > data['Donchian_Upper'].iloc[-1] * 0.995:
+            buy_score += 1
+            recommendations["Breakout"] = "Potential Buy"
+        elif pd.notnull(data['Donchian_Lower'].iloc[-1]) and last_close < data['Donchian_Lower'].iloc[-1] * 1.005:
+            sell_score += 1
+            recommendations["Breakout"] = "Potential Sell"
+
+    # Refined Mean Reversion Strategy
+    if 'RSI' in data.columns and 'Lower_Band' in data.columns and pd.notnull(last_close):
+        if (pd.notnull(data['RSI'].iloc[-1]) and pd.notnull(data['Lower_Band'].iloc[-1]) and 
+            pd.notnull(data['ADX'].iloc[-1])):
+            rsi = data['RSI'].iloc[-1]
+            adx = data['ADX'].iloc[-1]
+            if (rsi < 30 and last_close <= data['Lower_Band'].iloc[-1] and adx < 25 and 
+                data['Divergence'].iloc[-1] == "Bullish Divergence"):
+                buy_score += 3
+                recommendations["Mean_Reversion"] = "Strong Buy"
+            elif rsi < 30 and last_close <= data['Lower_Band'].iloc[-1] and adx < 25:
+                buy_score += 2
+                recommendations["Mean_Reversion"] = "Buy"
+            elif (rsi > 70 and last_close >= data['Upper_Band'].iloc[-1] and adx < 25 and 
+                  data['Divergence'].iloc[-1] == "Bearish Divergence"):
+                sell_score += 3
+                recommendations["Mean_Reversion"] = "Strong Sell"
+            elif rsi > 70 and last_close >= data['Upper_Band'].iloc[-1] and adx < 25:
+                sell_score += 2
+                recommendations["Mean_Reversion"] = "Sell"
+
+    # Refined Ichimoku Trend Strategy
     if all(col in data.columns for col in ['Ichimoku_Tenkan', 'Ichimoku_Kijun', 'Ichimoku_Span_A', 'Ichimoku_Span_B', 'Ichimoku_Chikou']):
         if all(pd.notnull(data[col].iloc[-1]) for col in ['Ichimoku_Tenkan', 'Ichimoku_Kijun', 'Ichimoku_Span_A', 'Ichimoku_Span_B', 'Ichimoku_Chikou']):
-            if (last_close > max(data['Ichimoku_Span_A'].iloc[-1], data['Ichimoku_Span_B'].iloc[-1]) and
-                data['Ichimoku_Tenkan'].iloc[-1] > data['Ichimoku_Kijun'].iloc[-1] and
-                data['Ichimoku_Chikou'].iloc[-1] > last_close):
-                buy_score += 2
+            cloud_top = max(data['Ichimoku_Span_A'].iloc[-1], data['Ichimoku_Span_B'].iloc[-1])
+            cloud_bottom = min(data['Ichimoku_Span_A'].iloc[-1], data['Ichimoku_Span_B'].iloc[-1])
+            thickness = data['Cloud_Thickness'].iloc[-1]
+            macd_bullish = data['MACD'].iloc[-1] > data['MACD_signal'].iloc[-1] if 'MACD' in data.columns else False
+            if (last_close > cloud_top and 
+                data['Ichimoku_Tenkan'].iloc[-1] > data['Ichimoku_Kijun'].iloc[-1] and 
+                (data['Ichimoku_Chikou'].iloc[-1] > cloud_top or macd_bullish) and 
+                thickness > 0):
+                buy_score += 2 + (1 if thickness > last_close * 0.01 else 0)
                 recommendations["Ichimoku_Trend"] = "Strong Buy"
-            elif (last_close < min(data['Ichimoku_Span_A'].iloc[-1], data['Ichimoku_Span_B'].iloc[-1]) and
-                  data['Ichimoku_Tenkan'].iloc[-1] < data['Ichimoku_Kijun'].iloc[-1] and
-                  data['Ichimoku_Chikou'].iloc[-1] < last_close):
-                sell_score += 2
+            elif (last_close < cloud_bottom and 
+                  data['Ichimoku_Tenkan'].iloc[-1] < data['Ichimoku_Kijun'].iloc[-1] and 
+                  (data['Ichimoku_Chikou'].iloc[-1] < cloud_bottom or not macd_bullish) and 
+                  thickness < 0):
+                sell_score += 2 + (1 if abs(thickness) > last_close * 0.01 else 0)
                 recommendations["Ichimoku_Trend"] = "Strong Sell"
 
     if 'CMF' in data.columns and pd.notnull(data['CMF'].iloc[-1]):
@@ -425,37 +445,11 @@ def generate_recommendations(data, symbol=None):
         elif data['CMF'].iloc[-1] < -0.2:
             sell_score += 1
 
-    # Enhanced Breakout/Breakdown
-    if 'Breakout_Confirmed' in data.columns and 'Breakdown_Confirmed' in data.columns:
-        if data['Breakout_Confirmed'].iloc[-1]:
-            buy_score += 2
-            recommendations["Breakout"] = "Buy"
-        elif data['Breakdown_Confirmed'].iloc[-1]:
-            sell_score += 2
-            recommendations["Breakout"] = "Sell"
-
-    # New: Channel Pattern
-    if 'Channel_Pattern' in data.columns and 'Channel_Upper' in data.columns and 'Channel_Lower' in data.columns:
-        if pd.notnull(data['Channel_Pattern'].iloc[-1]) and data['Channel_Pattern'].iloc[-1]:
-            if last_close <= data['Channel_Lower'].iloc[-1] * 1.01:
-                buy_score += 1
-                recommendations["Channel"] = "Buy"
-            elif last_close >= data['Channel_Upper'].iloc[-1] * 0.99:
-                sell_score += 1
-                recommendations["Channel"] = "Sell"
-
-    # New: Triangle Pattern (including Symmetric)
-    if 'Triangle_Pattern' in data.columns and pd.notnull(data['Triangle_Pattern'].iloc[-1]):
-        triangle_type = data['Triangle_Pattern'].iloc[-1]
-        prev_high = data['High'].rolling(window=20).max().iloc[-2]
-        prev_low = data['Low'].rolling(window=20).min().iloc[-2]
-        if triangle_type in ["Triangle Detected", "Symmetric Triangle Detected"]:
-            if last_close > prev_high and data['Volume'].iloc[-1] > data['Avg_Volume'].iloc[-1]:
-                buy_score += 2
-                recommendations["Triangle"] = "Buy"
-            elif last_close < prev_low and data['Volume'].iloc[-1] > data['Avg_Volume'].iloc[-1]:
-                sell_score += 2
-                recommendations["Triangle"] = "Sell"
+    if 'Wave_Pattern' in data.columns and pd.notnull(data['Wave_Pattern'].iloc[-1]):
+        if data['Wave_Pattern'].iloc[-1] == "Potential Uptrend (Wave 5)":
+            buy_score += 1
+        elif data['Wave_Pattern'].iloc[-1] == "Potential Downtrend (Wave C)":
+            sell_score += 1
 
     if symbol:
         fundamentals = fetch_fundamentals(symbol)
@@ -467,25 +461,39 @@ def generate_recommendations(data, symbol=None):
             buy_score += 0.5
             recommendations["Long-Term"] = "Buy" if buy_score > sell_score else "Hold"
 
-    if buy_score >= 4:
+    # Refined Scoring and Confidence
+    max_score_per_strategy = 3
+    strategy_count = sum(1 for key in ["Breakout", "Mean_Reversion", "Ichimoku_Trend", "Wave_Pattern"] 
+                         if recommendations[key] != "Hold")
+    if strategy_count > 0:
+        normalized_score = (buy_score - sell_score) / (max_score_per_strategy * strategy_count)
+        recommendations["Score"] = max(0, min(round(normalized_score * 7), 7))
+        # Confidence Score: 50% base + up to 50% based on normalized score and supporting indicators
+        confidence = 50 + (normalized_score * 25)  # Base 50% + up to 25%
+        if 'Volume_Spike' in data.columns and data['Volume_Spike'].iloc[-1]:
+            confidence += 10  # Volume confirmation
+        if 'ADX' in data.columns and data['ADX'].iloc[-1] > 25:
+            confidence += 10  # Strong trend confirmation
+        recommendations["Confidence Score (%)"] = min(round(confidence), 100)
+
+    if buy_score >= 6:
         recommendations["Intraday"] = "Strong Buy"
         recommendations["Swing"] = "Buy"
         recommendations["Short-Term"] = "Buy"
-    elif sell_score >= 4:
+    elif sell_score >= 6:
         recommendations["Intraday"] = "Strong Sell"
         recommendations["Swing"] = "Sell"
         recommendations["Short-Term"] = "Sell"
-    elif buy_score > sell_score + 1:
+    elif buy_score > sell_score + 2:
         recommendations["Intraday"] = "Buy"
         recommendations["Swing"] = "Buy"
-    elif sell_score > buy_score + 1:
+    elif sell_score > buy_score + 2:
         recommendations["Intraday"] = "Sell"
         recommendations["Swing"] = "Sell"
 
     recommendations["Buy At"] = calculate_buy_at(data)
     recommendations["Stop Loss"] = calculate_stop_loss(data)
     recommendations["Target"] = calculate_target(data)
-    recommendations["Score"] = max(0, min(buy_score - sell_score, 7))
     return recommendations
 
 def analyze_batch(stock_batch):
@@ -519,9 +527,8 @@ def analyze_stock_parallel(symbol):
             "Mean_Reversion": recommendations["Mean_Reversion"],
             "Breakout": recommendations["Breakout"],
             "Ichimoku_Trend": recommendations["Ichimoku_Trend"],
-            "Channel": recommendations["Channel"],  # New
-            "Triangle": recommendations["Triangle"],  # New
             "Score": recommendations.get("Score", 0),
+            "Confidence Score (%)": recommendations.get("Confidence Score (%)", 0),
         }
     else:
         logger.warning(f"Skipping {symbol}: only {len(data)} days of data.")
@@ -631,7 +638,7 @@ def display_dashboard(symbol=None, data=None, recommendations=None, NSE_STOCKS=N
             st.subheader("🏆 Today's Top 10 Stocks")
             telegram_msg = f"*Top 10 Daily Stocks ({datetime.now().strftime('%d %b %Y')})*\nChat ID: {TELEGRAM_CHAT_ID}\n\n"
             for _, row in results_df.iterrows():
-                with st.expander(f"{row['Symbol']} - Score: {row['Score']}/7"):
+                with st.expander(f"{row['Symbol']} - Score: {row['Score']}/7 (Confidence: {row['Confidence Score (%)']}%)"):
                     current_price = f"{row['Current Price']:.2f}" if pd.notnull(row['Current Price']) else "N/A"
                     buy_at = f"{row['Buy At']:.2f}" if pd.notnull(row['Buy At']) else "N/A"
                     stop_loss = f"{row['Stop Loss']:.2f}" if pd.notnull(row['Stop Loss']) else "N/A"
@@ -644,11 +651,9 @@ def display_dashboard(symbol=None, data=None, recommendations=None, NSE_STOCKS=N
                     Swing: {colored_recommendation(row['Swing'])}  
                     Short-Term: {colored_recommendation(row['Short-Term'])}  
                     Long-Term: {colored_recommendation(row['Long-Term'])}  
-                    Breakout: {colored_recommendation(row['Breakout'])}  
-                    Channel: {colored_recommendation(row['Channel'])}  
-                    Triangle: {colored_recommendation(row['Triangle'])}
+                    Confidence: {row['Confidence Score (%)']}%
                     """, unsafe_allow_html=True)
-                telegram_msg += f"*{row['Symbol']}*: ₹{current_price} - {row['Intraday']} (Score: {row['Score']})\n"
+                telegram_msg += f"*{row['Symbol']}*: ₹{current_price} - {row['Intraday']} (Score: {row['Score']}, Confidence: {row['Confidence Score (%)']}%)\n"
             send_telegram_message(telegram_msg)
             st.success("✅ Top picks sent to Telegram!")
     
@@ -662,7 +667,7 @@ def display_dashboard(symbol=None, data=None, recommendations=None, NSE_STOCKS=N
             st.subheader("🏆 Top 5 Intraday Stocks")
             telegram_msg = f"*Top 5 Intraday Stocks ({datetime.now().strftime('%d %b %Y')})*\nChat ID: {TELEGRAM_CHAT_ID}\n\n"
             for _, row in intraday_results.iterrows():
-                with st.expander(f"{row['Symbol']} - Score: {row['Score']}/7"):
+                with st.expander(f"{row['Symbol']} - Score: {row['Score']}/7 (Confidence: {row['Confidence Score (%)']}%)"):
                     current_price = f"{row['Current Price']:.2f}" if pd.notnull(row['Current Price']) else "N/A"
                     buy_at = f"{row['Buy At']:.2f}" if pd.notnull(row['Buy At']) else "N/A"
                     stop_loss = f"{row['Stop Loss']:.2f}" if pd.notnull(row['Stop Loss']) else "N/A"
@@ -672,11 +677,9 @@ def display_dashboard(symbol=None, data=None, recommendations=None, NSE_STOCKS=N
                     Buy At: ₹{buy_at} | Stop Loss: ₹{stop_loss}  
                     Target: ₹{target}  
                     Intraday: {colored_recommendation(row['Intraday'])}  
-                    Breakout: {colored_recommendation(row['Breakout'])}  
-                    Channel: {colored_recommendation(row['Channel'])}  
-                    Triangle: {colored_recommendation(row['Triangle'])}
+                    Confidence: {row['Confidence Score (%)']}%
                     """, unsafe_allow_html=True)
-                telegram_msg += f"*{row['Symbol']}*: ₹{current_price} - {row['Intraday']} (Score: {row['Score']})\n"
+                telegram_msg += f"*{row['Symbol']}*: ₹{current_price} - {row['Intraday']} (Score: {row['Score']}, Confidence: {row['Confidence Score (%)']}%)\n"
             send_telegram_message(telegram_msg)
             st.success("✅ Intraday picks sent to Telegram!")
     
@@ -698,12 +701,15 @@ def display_dashboard(symbol=None, data=None, recommendations=None, NSE_STOCKS=N
         
         st.subheader("📈 Trading Recommendations")
         cols = st.columns(5)
-        strategies = ["Intraday", "Swing", "Breakout", "Channel", "Triangle"]
-        for col, strategy in zip(cols, strategies):
-            with col:
-                st.markdown(f"**{strategy}**: {colored_recommendation(recommendations[strategy])}", unsafe_allow_html=True)
+        for col, (strategy, value) in zip(cols, recommendations.items()):
+            if strategy in ["Intraday", "Swing", "Short-Term", "Long-Term", "Confidence Score (%)"]:
+                with col:
+                    if strategy == "Confidence Score (%)":
+                        st.markdown(f"**Confidence**: {value}%", unsafe_allow_html=True)
+                    else:
+                        st.markdown(f"**{strategy}**: {colored_recommendation(value)}", unsafe_allow_html=True)
         
-        tab1, tab2, tab3, tab4, tab5 = st.tabs(["📊 Price Action", "📉 Momentum", "📊 Volatility", "📈 Monte Carlo", "📐 Patterns"])
+        tab1, tab2, tab3, tab4 = st.tabs(["📊 Price Action", "📉 Momentum", "📊 Volatility", "📈 Monte Carlo"])
         with tab1:
             fig = px.line(data, y=['Close', 'SMA_50', 'EMA_20'], title="Price with Moving Averages")
             st.plotly_chart(fig)
@@ -721,14 +727,6 @@ def display_dashboard(symbol=None, data=None, recommendations=None, NSE_STOCKS=N
                 st.plotly_chart(fig)
             else:
                 st.write("Insufficient data for Monte Carlo simulation.")
-        with tab5:
-            fig = px.line(data, y=['Close', 'Channel_Upper', 'Channel_Lower', 'Donchian_Upper', 'Donchian_Lower'], 
-                          title="Pattern Analysis (Channels & Breakouts)")
-            st.plotly_chart(fig)
-            if 'Triangle_Pattern' in data.columns:
-                st.write(f"Triangle Pattern: {data['Triangle_Pattern'].iloc[-1]}")
-            if 'Channel_Pattern' in data.columns:
-                st.write(f"Channel Pattern Detected: {'Yes' if data['Channel_Pattern'].iloc[-1] else 'No'}")
 
 def main():
     if 'cancel_operation' not in st.session_state:
