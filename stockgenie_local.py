@@ -14,6 +14,10 @@ import numpy as np
 from scipy.signal import find_peaks
 import os
 import logging
+import warnings
+
+# Suppress FutureWarnings from ta library
+warnings.filterwarnings("ignore", category=FutureWarning)
 
 # Setup logging
 logging.basicConfig(level=logging.WARNING)
@@ -23,7 +27,7 @@ logger = logging.getLogger(__name__)
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "7902319450:AAFPNcUyk9F6Sesy-h6SQnKHC_Yr6Uqk9ps")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "-1002411670969")
 
-# Tooltip explanations
+# Tooltip explanations (unchanged)
 TOOLTIPS = {
     "RSI": "Relative Strength Index (30=Oversold, 70=Overbought)",
     "ATR": "Average True Range - Measures market volatility",
@@ -75,7 +79,24 @@ def fetch_nse_stock_list():
             "ABAN.NS", "ABB.NS", "ABBOTINDIA.NS", "ABCAPITAL.NS", "ABCOTS.NS", "ABDL.NS", "ABFRL.NS",
         ]
 
+@lru_cache(maxsize=1000)
+@retry(max_retries=3, delay=2)
+def fetch_current_price(symbol):
+    try:
+        if ".NS" not in symbol:
+            symbol += ".NS"
+        stock = yf.Ticker(symbol)
+        data = stock.history(period="1d", interval="1d")
+        if not data.empty and 'Close' in data.columns:
+            return data['Close'].iloc[-1]
+        logger.warning(f"No current price data for {symbol}")
+        return None
+    except Exception as e:
+        logger.warning(f"Error fetching current price for {symbol}: {str(e)}")
+        return None
+
 @lru_cache(maxsize=100)
+@retry(max_retries=3, delay=2)
 def fetch_stock_data_cached(symbol, period="5y", interval="1d"):
     try:
         if ".NS" not in symbol:
@@ -85,10 +106,26 @@ def fetch_stock_data_cached(symbol, period="5y", interval="1d"):
         if data.empty:
             logger.warning(f"No data returned for {symbol} from Yahoo Finance.")
             return pd.DataFrame()
+        time.sleep(0.5)  # Delay to avoid rate limiting
         return data
     except Exception as e:
         logger.warning(f"Error fetching data for {symbol}: {str(e)}")
         return pd.DataFrame()
+
+def filter_stocks_by_price(stock_list, price_range):
+    filtered_stocks = []
+    with ThreadPoolExecutor(max_workers=5) as executor:
+        future_to_symbol = {executor.submit(fetch_current_price, symbol): symbol for symbol in stock_list}
+        for future in as_completed(future_to_symbol):
+            symbol = future_to_symbol[future]
+            try:
+                current_price = future.result()
+                if current_price is not None and price_range[0] <= current_price <= price_range[1]:
+                    filtered_stocks.append(symbol)
+            except Exception as e:
+                logger.error(f"Error filtering {symbol}: {str(e)}")
+    logger.info(f"Filtered {len(filtered_stocks)} stocks within price range {price_range}")
+    return filtered_stocks
 
 def monte_carlo_simulation(data, simulations=1000, days=30):
     returns = data['Close'].pct_change().dropna()
@@ -158,7 +195,7 @@ def detect_waves(data):
     return "No Clear Wave Pattern"
 
 def analyze_stock(data):
-    if data.empty or len(data) < 15:  # Minimum for most indicators
+    if data.empty or len(data) < 15:
         logger.warning(f"Insufficient data: only {len(data)} days available, need at least 15.")
         return data
     
@@ -193,17 +230,11 @@ def analyze_stock(data):
         if days >= windows['rsi'] + 1:
             data['RSI'] = ta.momentum.RSIIndicator(data['Close'], window=windows['rsi']).rsi()
             data['Divergence'] = detect_divergence(data)
-        else:
-            logger.warning(f"Skipping RSI: {days} days < {windows['rsi'] + 1}")
-
         if days >= max(windows['macd_slow'], windows['macd_fast']) + 1:
             macd = ta.trend.MACD(data['Close'], window_slow=windows['macd_slow'], 
                                 window_fast=windows['macd_fast'], window_sign=windows['macd_sign'])
             data['MACD'] = macd.macd()
             data['MACD_signal'] = macd.macd_signal()
-        else:
-            logger.warning(f"Skipping MACD: {days} days < {max(windows['macd_slow'], windows['macd_fast']) + 1}")
-
         if days >= windows['sma_20'] + 1:
             sma_20 = ta.trend.SMAIndicator(data['Close'], window=windows['sma_20']).sma_indicator()
             data['EMA_20'] = ta.trend.EMAIndicator(data['Close'], window=windows['sma_20']).ema_indicator()
@@ -211,53 +242,30 @@ def analyze_stock(data):
             data['Middle_Band'] = sma_20
             data['Upper_Band'] = bollinger.bollinger_hband()
             data['Lower_Band'] = bollinger.bollinger_lband()
-        else:
-            logger.warning(f"Skipping SMA_20/Bollinger: {days} days < {windows['sma_20'] + 1}")
-
         if days >= windows['sma_50'] + 1:
             data['SMA_50'] = ta.trend.SMAIndicator(data['Close'], window=windows['sma_50']).sma_indicator()
             data['EMA_50'] = ta.trend.EMAIndicator(data['Close'], window=windows['sma_50']).ema_indicator()
-        else:
-            logger.warning(f"Skipping SMA_50: {days} days < {windows['sma_50'] + 1}")
-
         if days >= windows['sma_200'] + 1:
             data['SMA_200'] = ta.trend.SMAIndicator(data['Close'], window=windows['sma_200']).sma_indicator()
-        else:
-            logger.warning(f"Skipping SMA_200: {days} days < {windows['sma_200'] + 1}")
-
         if days >= windows['stoch'] + 1:
             stoch = ta.momentum.StochasticOscillator(data['High'], data['Low'], data['Close'], 
                                                     window=windows['stoch'], smooth_window=3)
             data['SlowK'] = stoch.stoch()
             data['SlowD'] = stoch.stoch_signal()
-        else:
-            logger.warning(f"Skipping Stochastic: {days} days < {windows['stoch'] + 1}")
-
         if days >= windows['atr'] + 1:
             data['ATR'] = ta.volatility.AverageTrueRange(data['High'], data['Low'], data['Close'], 
                                                         window=windows['atr']).average_true_range()
-        else:
-            logger.warning(f"Skipping ATR: {days} days < {windows['atr'] + 1}")
-
         if days >= windows['adx'] + 1:
             data['ADX'] = ta.trend.ADXIndicator(data['High'], data['Low'], data['Close'], 
                                                 window=windows['adx']).adx()
-        else:
-            logger.warning(f"Skipping ADX: {days} days < {windows['adx'] + 1}")
-
         data['OBV'] = ta.volume.OnBalanceVolumeIndicator(data['Close'], data['Volume']).on_balance_volume()
         data['Cumulative_TP'] = ((data['High'] + data['Low'] + data['Close']) / 3) * data['Volume']
         data['Cumulative_Volume'] = data['Volume'].cumsum()
         data['VWAP'] = data['Cumulative_TP'].cumsum() / data['Cumulative_Volume']
-
         if days >= windows['volume'] + 1:
             data['Avg_Volume'] = data['Volume'].rolling(window=windows['volume']).mean()
             data['Volume_Spike'] = data['Volume'] > (data['Avg_Volume'] * 1.5)
-        else:
-            logger.warning(f"Skipping Volume Spike: {days} days < {windows['volume'] + 1}")
-
         data['Parabolic_SAR'] = ta.trend.PSARIndicator(data['High'], data['Low'], data['Close']).psar()
-
         high = data['High'].max()
         low = data['Low'].min()
         diff = high - low
@@ -265,7 +273,6 @@ def analyze_stock(data):
         data['Fib_38.2'] = high - diff * 0.382
         data['Fib_50.0'] = high - diff * 0.5
         data['Fib_61.8'] = high - diff * 0.618
-
         if days >= windows['ichimoku_w2'] + 1:
             ichimoku = ta.trend.IchimokuIndicator(data['High'], data['Low'], window1=windows['ichimoku_w1'], 
                                                  window2=windows['ichimoku_w2'], window3=windows['ichimoku_w3'])
@@ -274,24 +281,15 @@ def analyze_stock(data):
             data['Ichimoku_Span_A'] = ichimoku.ichimoku_a()
             data['Ichimoku_Span_B'] = ichimoku.ichimoku_b()
             data['Ichimoku_Chikou'] = data['Close'].shift(-min(26, days - 1))
-        else:
-            logger.warning(f"Skipping Ichimoku: {days} days < {windows['ichimoku_w2'] + 1}")
-
         if days >= windows['cmf'] + 1:
             data['CMF'] = ta.volume.ChaikinMoneyFlowIndicator(data['High'], data['Low'], data['Close'], 
                                                               data['Volume'], window=windows['cmf']).chaikin_money_flow()
-        else:
-            logger.warning(f"Skipping CMF: {days} days < {windows['cmf'] + 1}")
-
         if days >= windows['donchian'] + 1:
             donchian = ta.volatility.DonchianChannel(data['High'], data['Low'], data['Close'], 
                                                     window=windows['donchian'])
             data['Donchian_Upper'] = donchian.donchian_channel_hband()
             data['Donchian_Lower'] = donchian.donchian_channel_lband()
             data['Donchian_Middle'] = donchian.donchian_channel_mband()
-        else:
-            logger.warning(f"Skipping Donchian: {days} days < {windows['donchian'] + 1}")
-
         data['Volume_Profile'] = calculate_volume_profile(data)
         data['Wave_Pattern'] = detect_waves(data)
     except Exception as e:
@@ -438,7 +436,7 @@ def generate_recommendations(data, symbol=None):
                 recommendations["Mean_Reversion"] = "Sell"
 
     if 'Wave_Pattern' in data.columns and pd.notnull(data['Wave_Pattern'].iloc[-1]):
-        if data['Wave_Pattern'].iloc[-1] == "Potential Uptrend (Wave 5?)":
+        if data['Wave_Pattern'].iloc CEE[-1] == "Potential Uptrend (Wave 5?)":
             buy_score += 1
         elif data['Wave_Pattern'].iloc[-1] == "Potential Downtrend (Wave C?)":
             sell_score += 1
@@ -476,7 +474,7 @@ def generate_recommendations(data, symbol=None):
 
 def analyze_batch(stock_batch):
     results = []
-    with ThreadPoolExecutor(max_workers=10) as executor:
+    with ThreadPoolExecutor(max_workers=3) as executor:  # Reduced workers
         futures = {executor.submit(analyze_stock_parallel, symbol): symbol for symbol in stock_batch}
         for future in as_completed(futures):
             try:
@@ -489,7 +487,8 @@ def analyze_batch(stock_batch):
 
 def analyze_stock_parallel(symbol):
     data = fetch_stock_data_cached(symbol)
-    if not data.empty and len(data) >= 15:  # Stricter minimum for analysis
+    if not data.empty and len(data) >= 15:
+        logger.info(f"Fetched {len(data)} days of data for {symbol}")
         data = analyze_stock(data)
         recommendations = generate_recommendations(data, symbol)
         return {
@@ -521,6 +520,13 @@ def update_progress(progress_bar, loading_text, progress_value, start_time, tota
 def analyze_all_stocks(stock_list, batch_size=50, price_range=None):
     if st.session_state.cancel_operation:
         return pd.DataFrame()
+    
+    if price_range:
+        stock_list = filter_stocks_by_price(stock_list, price_range)
+        if not stock_list:
+            st.warning("⚠️ No stocks found in the selected price range.")
+            return pd.DataFrame()
+
     results = []
     total_items = len(stock_list)
     progress_bar = st.progress(0)
@@ -542,15 +548,18 @@ def analyze_all_stocks(stock_list, batch_size=50, price_range=None):
         return pd.DataFrame()
     
     results_df = pd.DataFrame([r for r in results if r is not None])
-    if price_range:
-        results_df = results_df[results_df['Current Price'].notnull() & 
-                                (results_df['Current Price'] >= price_range[0]) & 
-                                (results_df['Current Price'] <= price_range[1])]
     return results_df.sort_values(by="Score", ascending=False).head(10)
 
 def analyze_intraday_stocks(stock_list, batch_size=50, price_range=None):
     if st.session_state.cancel_operation:
         return pd.DataFrame()
+    
+    if price_range:
+        stock_list = filter_stocks_by_price(stock_list, price_range)
+        if not stock_list:
+            st.warning("⚠️ No stocks found in the selected price range.")
+            return pd.DataFrame()
+
     results = []
     total_items = len(stock_list)
     progress_bar = st.progress(0)
@@ -569,10 +578,6 @@ def analyze_intraday_stocks(stock_list, batch_size=50, price_range=None):
     progress_bar.empty()
     loading_text.empty()
     results_df = pd.DataFrame([r for r in results if r is not None])
-    if price_range:
-        results_df = results_df[results_df['Current Price'].notnull() & 
-                                (results_df['Current Price'] >= price_range[0]) & 
-                                (results_df['Current Price'] <= price_range[1])]
     intraday_df = results_df[results_df["Intraday"].str.contains("Buy", na=False)]
     return intraday_df.sort_values(by="Score", ascending=False).head(5)
 
@@ -586,9 +591,9 @@ def colored_recommendation(recommendation):
     return recommendation
 
 def send_telegram_message(message):
-    url = f"https://api.telegram.org/bot{"-1002411670969"}/sendMessage"
+    url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
     payload = {
-        "chat_id": "-1002411670969",
+        "chat_id": TELEGRAM_CHAT_ID,
         "text": message,
         "parse_mode": "Markdown"
     }
@@ -613,7 +618,7 @@ def display_dashboard(symbol=None, data=None, recommendations=None, NSE_STOCKS=N
         results_df = analyze_all_stocks(NSE_STOCKS, price_range=price_range)
         if not results_df.empty and not st.session_state.cancel_operation:
             st.subheader("🏆 Today's Top 10 Stocks")
-            telegram_msg = f"*Top 10 Daily Stocks ({datetime.now().strftime('%d %b %Y')})*\nChat ID: {"-1002411670969"}\n\n"
+            telegram_msg = f"*Top 10 Daily Stocks ({datetime.now().strftime('%d %b %Y')})*\nChat ID: {TELEGRAM_CHAT_ID}\n\n"
             for _, row in results_df.iterrows():
                 with st.expander(f"{row['Symbol']} - Score: {row['Score']}/7"):
                     current_price = f"{row['Current Price']:.2f}" if pd.notnull(row['Current Price']) else "N/A"
@@ -641,7 +646,7 @@ def display_dashboard(symbol=None, data=None, recommendations=None, NSE_STOCKS=N
         intraday_results = analyze_intraday_stocks(NSE_STOCKS, price_range=price_range)
         if not intraday_results.empty and not st.session_state.cancel_operation:
             st.subheader("🏆 Top 5 Intraday Stocks")
-            telegram_msg = f"*Top 5 Intraday Stocks ({datetime.now().strftime('%d %b %Y')})*\nChat ID: {"-1002411670969"}\n\n"
+            telegram_msg = f"*Top 5 Intraday Stocks ({datetime.now().strftime('%d %b %Y')})*\nChat ID: {TELEGRAM_CHAT_ID}\n\n"
             for _, row in intraday_results.iterrows():
                 with st.expander(f"{row['Symbol']} - Score: {row['Score']}/7"):
                     current_price = f"{row['Current Price']:.2f}" if pd.notnull(row['Current Price']) else "N/A"
