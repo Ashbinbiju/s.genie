@@ -27,7 +27,7 @@ logger = logging.getLogger(__name__)
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "7902319450:AAFPNcUyk9F6Sesy-h6SQnKHC_Yr6Uqk9ps")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "-1002411670969")
 
-# Tooltip explanations (unchanged)
+# Tooltip explanations
 TOOLTIPS = {
     "RSI": "Relative Strength Index (30=Oversold, 70=Overbought)",
     "ATR": "Average True Range - Measures market volatility",
@@ -472,9 +472,79 @@ def generate_recommendations(data, symbol=None):
     recommendations["Score"] = max(0, min(buy_score - sell_score, 7))
     return recommendations
 
+def detect_short_selling_opportunities(data, symbol=None):
+    short_sell_signals = {
+        "Symbol": symbol,
+        "Current Price": None,
+        "Sell At": None,
+        "Stop Loss": None,
+        "Target": None,
+        "Short_Sell_Score": 0,
+        "Recommendation": "Hold"
+    }
+    
+    if data.empty or 'Close' not in data.columns or pd.isna(data['Close'].iloc[-1]):
+        return short_sell_signals
+    
+    last_close = data['Close'].iloc[-1]
+    short_sell_signals["Current Price"] = round(float(last_close), 2) if pd.notnull(last_close) else None
+    short_score = 0
+    
+    # RSI Overbought (>70)
+    if 'RSI' in data.columns and pd.notnull(data['RSI'].iloc[-1]):
+        if data['RSI'].iloc[-1] > 70:
+            short_score += 2
+    
+    # MACD Bearish Crossover
+    if 'MACD' in data.columns and 'MACD_signal' in data.columns:
+        if pd.notnull(data['MACD'].iloc[-1]) and pd.notnull(data['MACD_signal'].iloc[-1]):
+            if data['MACD'].iloc[-1] < data['MACD_signal'].iloc[-1] and data['MACD'].iloc[-2] > data['MACD_signal'].iloc[-2]:
+                short_score += 2
+    
+    # Price Above Upper Bollinger Band
+    if 'Upper_Band' in data.columns and pd.notnull(data['Upper_Band'].iloc[-1]):
+        if last_close > data['Upper_Band'].iloc[-1]:
+            short_score += 1
+    
+    # Price Above VWAP
+    if 'VWAP' in data.columns and pd.notnull(data['VWAP'].iloc[-1]):
+        if last_close > data['VWAP'].iloc[-1]:
+            short_score += 1
+    
+    # Bearish Divergence
+    if 'Divergence' in data.columns and pd.notnull(data['Divergence'].iloc[-1]):
+        if data['Divergence'].iloc[-1] == "Bearish Divergence":
+            short_score += 1
+    
+    # Volume Spike (Potential Exhaustion)
+    if 'Volume_Spike' in data.columns and pd.notnull(data['Volume_Spike'].iloc[-1]):
+        if data['Volume_Spike'].iloc[-1]:
+            short_score += 1
+    
+    # Ichimoku Bearish Signal
+    if all(col in data.columns for col in ['Ichimoku_Span_A', 'Ichimoku_Span_B', 'Ichimoku_Tenkan', 'Ichimoku_Kijun']):
+        if all(pd.notnull(data[col].iloc[-1]) for col in ['Ichimoku_Span_A', 'Ichimoku_Span_B', 'Ichimoku_Tenkan', 'Ichimoku_Kijun']):
+            if (last_close < min(data['Ichimoku_Span_A'].iloc[-1], data['Ichimoku_Span_B'].iloc[-1]) and
+                data['Ichimoku_Tenkan'].iloc[-1] < data['Ichimoku_Kijun'].iloc[-1]):
+                short_score += 2
+
+    # Calculate Sell At, Stop Loss, and Target for Short Selling
+    if short_score > 0:
+        short_sell_signals["Sell At"] = round(last_close * 1.01, 2) if pd.notnull(last_close) else None
+        if 'ATR' in data.columns and pd.notnull(data['ATR'].iloc[-1]):
+            stop_loss = last_close + (data['ATR'].iloc[-1] * 2.5)
+            short_sell_signals["Stop Loss"] = round(stop_loss, 2)
+            risk = stop_loss - last_close
+            short_sell_signals["Target"] = round(last_close - (risk * 3), 2)
+    
+    short_sell_signals["Short_Sell_Score"] = min(short_score, 7)
+    short_sell_signals["Recommendation"] = "Short Sell" if short_score >= 3 else "Hold"
+    
+    return short_sell_signals
+
 def analyze_batch(stock_batch):
     results = []
-    with ThreadPoolExecutor(max_workers=3) as executor:  # Reduced workers
+    with ThreadPoolExecutor(max_workers=3) as executor:
         futures = {executor.submit(analyze_stock_parallel, symbol): symbol for symbol in stock_batch}
         for future in as_completed(futures):
             try:
@@ -491,6 +561,7 @@ def analyze_stock_parallel(symbol):
         logger.info(f"Fetched {len(data)} days of data for {symbol}")
         data = analyze_stock(data)
         recommendations = generate_recommendations(data, symbol)
+        short_sell_signals = detect_short_selling_opportunities(data, symbol)
         return {
             "Symbol": symbol,
             "Current Price": recommendations["Current Price"],
@@ -505,6 +576,11 @@ def analyze_stock_parallel(symbol):
             "Breakout": recommendations["Breakout"],
             "Ichimoku_Trend": recommendations["Ichimoku_Trend"],
             "Score": recommendations.get("Score", 0),
+            "Short_Sell": short_sell_signals["Recommendation"],
+            "Short_Sell_Score": short_sell_signals["Short_Sell_Score"],
+            "Short_Sell_Sell_At": short_sell_signals["Sell At"],
+            "Short_Sell_Stop_Loss": short_sell_signals["Stop Loss"],
+            "Short_Sell_Target": short_sell_signals["Target"],
         }
     else:
         logger.warning(f"Skipping {symbol}: only {len(data)} days of data.")
@@ -514,7 +590,7 @@ def update_progress(progress_bar, loading_text, progress_value, start_time, tota
     progress_bar.progress(progress_value)
     elapsed_time = time.time() - start_time
     if processed_items > 0:
-        eta = int((elapsed_time / processed_items) * (total_items - processed_items))
+        investissements = int((elapsed_time / processed_items) * (total_items - processed_items))
         loading_text.text(f"Processing {processed_items}/{total_items} stocks (ETA: {eta}s)")
 
 def analyze_all_stocks(stock_list, batch_size=50, price_range=None):
@@ -581,11 +657,44 @@ def analyze_intraday_stocks(stock_list, batch_size=50, price_range=None):
     intraday_df = results_df[results_df["Intraday"].str.contains("Buy", na=False)]
     return intraday_df.sort_values(by="Score", ascending=False).head(5)
 
+def analyze_short_selling_stocks(stock_list, batch_size=50, price_range=None):
+    if st.session_state.cancel_operation:
+        return pd.DataFrame()
+    
+    if price_range:
+        stock_list = filter_stocks_by_price(stock_list, price_range)
+        if not stock_list:
+            st.warning("⚠️ No stocks found in the selected price range.")
+            return pd.DataFrame()
+
+    results = []
+    total_items = len(stock_list)
+    progress_bar = st.progress(0)
+    loading_text = st.empty()
+    start_time = time.time()
+    
+    for i in range(0, total_items, batch_size):
+        if st.session_state.cancel_operation:
+            break
+        batch = stock_list[i:i + batch_size]
+        batch_results = analyze_batch(batch)
+        results.extend(batch_results)
+        processed_items = min(i + len(batch), total_items)
+        update_progress(progress_bar, loading_text, processed_items / total_items, start_time, total_items, processed_items)
+    
+    progress_bar.empty()
+    loading_text.empty()
+    results_df = pd.DataFrame([r for r in results if r is not None])
+    short_sell_df = results_df[results_df["Short_Sell"] == "Short Sell"]
+    return short_sell_df.sort_values(by="Short_Sell_Score", ascending=False).head(5)
+
 def colored_recommendation(recommendation):
     if "Buy" in recommendation:
         return f"🟢 {recommendation}"
-    elif "Sell" in recommendation:
+    elif "Sell" in recommendation and "Short" not in recommendation:
         return f"🔴 {recommendation}"
+    elif "Short Sell" in recommendation:
+        return f"🔵 {recommendation}"
     elif "Hold" in recommendation:
         return f"🟡 {recommendation}"
     return recommendation
@@ -663,6 +772,31 @@ def display_dashboard(symbol=None, data=None, recommendations=None, NSE_STOCKS=N
             send_telegram_message(telegram_msg)
             st.success("✅ Intraday picks sent to Telegram!")
     
+    if st.button("📉 Generate Top 5 Short-Selling Picks"):
+        st.session_state.cancel_operation = False
+        cancel_button = st.button("❌ Cancel Short-Selling Analysis")
+        if cancel_button:
+            st.session_state.cancel_operation = True
+        short_sell_results = analyze_short_selling_stocks(NSE_STOCKS, price_range=price_range)
+        if not short_sell_results.empty and not st.session_state.cancel_operation:
+            st.subheader("🏆 Top 5 Short-Selling Opportunities")
+            telegram_msg = f"*Top 5 Short-Selling Stocks ({datetime.now().strftime('%d %b %Y')})*\nChat ID: {TELEGRAM_CHAT_ID}\n\n"
+            for _, row in short_sell_results.iterrows():
+                with st.expander(f"{row['Symbol']} - Short Sell Score: {row['Short_Sell_Score']}/7"):
+                    current_price = f"{row['Current Price']:.2f}" if pd.notnull(row['Current Price']) else "N/A"
+                    sell_at = f"{row['Short_Sell_Sell_At']:.2f}" if pd.notnull(row['Short_Sell_Sell_At']) else "N/A"
+                    stop_loss = f"{row['Short_Sell_Stop_Loss']:.2f}" if pd.notnull(row['Short_Sell_Stop_Loss']) else "N/A"
+                    target = f"{row['Short_Sell_Target']:.2f}" if pd.notnull(row['Short_Sell_Target']) else "N/A"
+                    st.markdown(f"""
+                    Current Price: ₹{current_price}  
+                    Sell At: ₹{sell_at} | Stop Loss: ₹{stop_loss}  
+                    Target: ₹{target}  
+                    Short Sell: {colored_recommendation(row['Short_Sell'])}
+                    """, unsafe_allow_html=True)
+                telegram_msg += f"*{row['Symbol']}*: ₹{current_price} - {row['Short_Sell']} (Score: {row['Short_Sell_Score']})\n"
+            send_telegram_message(telegram_msg)
+            st.success("✅ Short-selling picks sent to Telegram!")
+    
     if symbol and data is not None and recommendations is not None:
         st.header(f"📋 {symbol.split('.')[0]} Analysis")
         col1, col2, col3, col4 = st.columns(4)
@@ -680,10 +814,11 @@ def display_dashboard(symbol=None, data=None, recommendations=None, NSE_STOCKS=N
             st.metric("Target", f"₹{target}")
         
         st.subheader("📈 Trading Recommendations")
-        cols = st.columns(4)
-        for col, strategy in zip(cols, ["Intraday", "Swing", "Short-Term", "Long-Term"]):
+        cols = st.columns(5)
+        strategies = ["Intraday", "Swing", "Short-Term", "Long-Term", "Short_Sell"]
+        for col, strategy in zip(cols, strategies):
             with col:
-                st.markdown(f"**{strategy}**: {colored_recommendation(recommendations[strategy])}", unsafe_allow_html=True)
+                st.markdown(f"**{strategy.replace('_', ' ')}**: {colored_recommendation(recommendations.get(strategy, 'Hold'))}", unsafe_allow_html=True)
         
         tab1, tab2, tab3, tab4 = st.tabs(["📊 Price Action", "📉 Momentum", "📊 Volatility", "📈 Monte Carlo"])
         with tab1:
@@ -718,6 +853,14 @@ def main():
         if not data.empty and len(data) >= 15:
             data = analyze_stock(data)
             recommendations = generate_recommendations(data, symbol)
+            short_sell_signals = detect_short_selling_opportunities(data, symbol)
+            recommendations.update({
+                "Short_Sell": short_sell_signals["Recommendation"],
+                "Short_Sell_Score": short_sell_signals["Short_Sell_Score"],
+                "Short_Sell_Sell_At": short_sell_signals["Sell At"],
+                "Short_Sell_Stop_Loss": short_sell_signals["Stop Loss"],
+                "Short_Sell_Target": short_sell_signals["Target"]
+            })
             display_dashboard(symbol, data, recommendations, NSE_STOCKS)
         else:
             st.error(f"❌ Failed to load sufficient data for {symbol} (only {len(data)} days).")
