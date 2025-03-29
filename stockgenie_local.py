@@ -45,23 +45,27 @@ TOOLTIPS = {
     "Wave_Pattern": "Simplified Elliott Wave - Trend wave detection",
 }
 
-def retry(max_retries=3, delay=1, backoff_factor=2, jitter=0.5):
+def retry(max_retries=5, delay=5, backoff_factor=2, jitter=1.0):
     def decorator(func):
         def wrapper(*args, **kwargs):
             retries = 0
             while retries < max_retries:
                 try:
                     return func(*args, **kwargs)
-                except (requests.exceptions.RequestException, ConnectionError) as e:
+                except (requests.exceptions.RequestException, ConnectionError, yf.YFinanceError) as e:
                     retries += 1
+                    if "429" in str(e):  # HTTP 429 Too Many Requests
+                        logger.warning(f"Rate limit hit: {e}. Retrying {retries}/{max_retries}...")
                     if retries == max_retries:
+                        logger.error(f"Max retries reached for {func.__name__}: {e}")
                         raise e
                     sleep_time = (delay * (backoff_factor ** retries)) + random.uniform(0, jitter)
+                    logger.info(f"Backing off for {sleep_time:.2f} seconds...")
                     time.sleep(sleep_time)
         return wrapper
     return decorator
 
-@retry(max_retries=3, delay=2)
+@retry(max_retries=5, delay=5)
 def fetch_nse_stock_list():
     url = "https://archives.nseindia.com/content/equities/EQUITY_L.csv"
     try:
@@ -79,8 +83,8 @@ def fetch_nse_stock_list():
             "ABAN.NS", "ABB.NS", "ABBOTINDIA.NS", "ABCAPITAL.NS", "ABCOTS.NS", "ABDL.NS", "ABFRL.NS",
         ]
 
-@lru_cache(maxsize=1000)
-@retry(max_retries=3, delay=2)
+@lru_cache(maxsize=2000)  # Increased cache size
+@retry(max_retries=5, delay=5)
 def fetch_current_price(symbol):
     try:
         if ".NS" not in symbol:
@@ -88,6 +92,7 @@ def fetch_current_price(symbol):
         stock = yf.Ticker(symbol)
         data = stock.history(period="1d", interval="1d")
         if not data.empty and 'Close' in data.columns:
+            time.sleep(2)  # Increased delay to 2 seconds
             return data['Close'].iloc[-1]
         logger.warning(f"No current price data for {symbol}")
         return None
@@ -95,8 +100,8 @@ def fetch_current_price(symbol):
         logger.warning(f"Error fetching current price for {symbol}: {str(e)}")
         return None
 
-@lru_cache(maxsize=100)
-@retry(max_retries=3, delay=2)
+@lru_cache(maxsize=500)  # Increased cache size
+@retry(max_retries=5, delay=5)
 def fetch_stock_data_cached(symbol, period="5y", interval="1d"):
     try:
         if ".NS" not in symbol:
@@ -106,7 +111,7 @@ def fetch_stock_data_cached(symbol, period="5y", interval="1d"):
         if data.empty:
             logger.warning(f"No data returned for {symbol} from Yahoo Finance.")
             return pd.DataFrame()
-        time.sleep(0.5)  # Delay to avoid rate limiting
+        time.sleep(2)  # Increased delay to 2 seconds
         return data
     except Exception as e:
         logger.warning(f"Error fetching data for {symbol}: {str(e)}")
@@ -114,7 +119,7 @@ def fetch_stock_data_cached(symbol, period="5y", interval="1d"):
 
 def filter_stocks_by_price(stock_list, price_range):
     filtered_stocks = []
-    with ThreadPoolExecutor(max_workers=5) as executor:
+    with ThreadPoolExecutor(max_workers=2) as executor:  # Reduced to 2 workers
         future_to_symbol = {executor.submit(fetch_current_price, symbol): symbol for symbol in stock_list}
         for future in as_completed(future_to_symbol):
             symbol = future_to_symbol[future]
@@ -458,7 +463,7 @@ def generate_recommendations(data, symbol=None):
     elif sell_score >= 4:
         recommendations["Intraday"] = "Strong Sell"
         recommendations["Swing"] = "Sell"
-        recommendations["Short-Term"] = "Sell"
+        recommendations["Short-Term"] =一緒に "Sell"
     elif buy_score > sell_score + 1:
         recommendations["Intraday"] = "Buy"
         recommendations["Swing"] = "Buy"
@@ -490,45 +495,37 @@ def detect_short_selling_opportunities(data, symbol=None):
     short_sell_signals["Current Price"] = round(float(last_close), 2) if pd.notnull(last_close) else None
     short_score = 0
     
-    # RSI Overbought (>70)
     if 'RSI' in data.columns and pd.notnull(data['RSI'].iloc[-1]):
         if data['RSI'].iloc[-1] > 70:
             short_score += 2
     
-    # MACD Bearish Crossover
     if 'MACD' in data.columns and 'MACD_signal' in data.columns:
         if pd.notnull(data['MACD'].iloc[-1]) and pd.notnull(data['MACD_signal'].iloc[-1]):
             if data['MACD'].iloc[-1] < data['MACD_signal'].iloc[-1] and data['MACD'].iloc[-2] > data['MACD_signal'].iloc[-2]:
                 short_score += 2
     
-    # Price Above Upper Bollinger Band
     if 'Upper_Band' in data.columns and pd.notnull(data['Upper_Band'].iloc[-1]):
         if last_close > data['Upper_Band'].iloc[-1]:
             short_score += 1
     
-    # Price Above VWAP
     if 'VWAP' in data.columns and pd.notnull(data['VWAP'].iloc[-1]):
         if last_close > data['VWAP'].iloc[-1]:
             short_score += 1
     
-    # Bearish Divergence
     if 'Divergence' in data.columns and pd.notnull(data['Divergence'].iloc[-1]):
         if data['Divergence'].iloc[-1] == "Bearish Divergence":
             short_score += 1
     
-    # Volume Spike (Potential Exhaustion)
     if 'Volume_Spike' in data.columns and pd.notnull(data['Volume_Spike'].iloc[-1]):
         if data['Volume_Spike'].iloc[-1]:
             short_score += 1
     
-    # Ichimoku Bearish Signal
     if all(col in data.columns for col in ['Ichimoku_Span_A', 'Ichimoku_Span_B', 'Ichimoku_Tenkan', 'Ichimoku_Kijun']):
         if all(pd.notnull(data[col].iloc[-1]) for col in ['Ichimoku_Span_A', 'Ichimoku_Span_B', 'Ichimoku_Tenkan', 'Ichimoku_Kijun']):
             if (last_close < min(data['Ichimoku_Span_A'].iloc[-1], data['Ichimoku_Span_B'].iloc[-1]) and
                 data['Ichimoku_Tenkan'].iloc[-1] < data['Ichimoku_Kijun'].iloc[-1]):
                 short_score += 2
 
-    # Calculate Sell At, Stop Loss, and Target for Short Selling
     if short_score > 0:
         short_sell_signals["Sell At"] = round(last_close * 1.01, 2) if pd.notnull(last_close) else None
         if 'ATR' in data.columns and pd.notnull(data['ATR'].iloc[-1]):
@@ -544,7 +541,7 @@ def detect_short_selling_opportunities(data, symbol=None):
 
 def analyze_batch(stock_batch):
     results = []
-    with ThreadPoolExecutor(max_workers=3) as executor:
+    with ThreadPoolExecutor(max_workers=2) as executor:  # Reduced to 2 workers
         futures = {executor.submit(analyze_stock_parallel, symbol): symbol for symbol in stock_batch}
         for future in as_completed(futures):
             try:
@@ -553,6 +550,7 @@ def analyze_batch(stock_batch):
                     results.append(result)
             except Exception as e:
                 logger.error(f"Error processing {futures[future]}: {str(e)}")
+    time.sleep(5)  # Pause between batches
     return results
 
 def analyze_stock_parallel(symbol):
@@ -590,10 +588,10 @@ def update_progress(progress_bar, loading_text, progress_value, start_time, tota
     progress_bar.progress(progress_value)
     elapsed_time = time.time() - start_time
     if processed_items > 0:
-        investissements = int((elapsed_time / processed_items) * (total_items - processed_items))
+        eta = int((elapsed_time / processed_items) * (total_items - processed_items))
         loading_text.text(f"Processing {processed_items}/{total_items} stocks (ETA: {eta}s)")
 
-def analyze_all_stocks(stock_list, batch_size=50, price_range=None):
+def analyze_all_stocks(stock_list, batch_size=20, price_range=None):  # Reduced batch size
     if st.session_state.cancel_operation:
         return pd.DataFrame()
     
@@ -626,7 +624,7 @@ def analyze_all_stocks(stock_list, batch_size=50, price_range=None):
     results_df = pd.DataFrame([r for r in results if r is not None])
     return results_df.sort_values(by="Score", ascending=False).head(10)
 
-def analyze_intraday_stocks(stock_list, batch_size=50, price_range=None):
+def analyze_intraday_stocks(stock_list, batch_size=20, price_range=None):
     if st.session_state.cancel_operation:
         return pd.DataFrame()
     
@@ -657,7 +655,7 @@ def analyze_intraday_stocks(stock_list, batch_size=50, price_range=None):
     intraday_df = results_df[results_df["Intraday"].str.contains("Buy", na=False)]
     return intraday_df.sort_values(by="Score", ascending=False).head(5)
 
-def analyze_short_selling_stocks(stock_list, batch_size=50, price_range=None):
+def analyze_short_selling_stocks(stock_list, batch_size=20, price_range=None):
     if st.session_state.cancel_operation:
         return pd.DataFrame()
     
