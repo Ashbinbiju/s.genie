@@ -51,46 +51,25 @@ def clear_cache():
     logger.info("Cache cleared.")
 
 def calculate_volume_profile(data, bins=50):
-    """
-    Calculate volume profile: volume traded at each price level.
-    
-    Args:
-        data (pd.DataFrame): DataFrame with 'Close', 'High', 'Low', 'Volume' columns
-        bins (int): Number of price bins (default 50)
-    
-    Returns:
-        pd.Series: Volume aggregated by price levels, indexed by price
-    """
     if len(data) < 2 or 'Volume' not in data.columns or data['Close'].isna().all():
         logger.debug("Insufficient data for volume profile calculation")
         return pd.Series(index=data.index, data=0, dtype=float)
     
     try:
-        # Define price range based on min/low and max/high
         price_min = data['Low'].min()
         price_max = data['High'].max()
-        if price_min == price_max:  # Avoid division by zero or invalid bins
+        if price_min == price_max:
             return pd.Series(index=data.index, data=0, dtype=float)
         
-        # Create price bins
-        price_bins = np.linspace(price_min, price_max, bins + 1)  # +1 for edges
-        
-        # Bin the 'Close' prices and associate with volume
+        price_bins = np.linspace(price_min, price_max, bins + 1)
         price_categories = pd.cut(data['Close'], bins=price_bins, include_lowest=True)
-        
-        # Group volume by price bins and sum
         volume_profile = data.groupby(price_categories, observed=True)['Volume'].sum()
-        
-        # Reindex to ensure all bins are present, fill missing with 0
         volume_profile = volume_profile.reindex(
             pd.IntervalIndex.from_arrays(price_bins[:-1], price_bins[1:]), 
             fill_value=0
         )
-        
-        # Convert to a Series with midpoints of bins as index
         midpoints = (price_bins[:-1] + price_bins[1:]) / 2
         volume_profile = pd.Series(volume_profile.values, index=midpoints, name='Volume_Profile')
-        
         logger.debug(f"Volume profile calculated with {bins} bins, total volume: {volume_profile.sum()}")
         return volume_profile
     
@@ -185,11 +164,10 @@ def analyze_stock(data):
         data['Avg_Volume'] = avg_volume.reindex(data.index, fill_value=0)
         data['Volume_Spike'] = data['Volume'] > (data['Avg_Volume'] * get_volume_multiplier(data))
         
-        # Update Volume Profile calculation
         vol_profile = calculate_volume_profile(data)
-        data['Volume_Profile'] = data['Close'].map(vol_profile)  # Map profile values to close prices
-        data['POC'] = vol_profile.idxmax() if not vol_profile.empty else np.nan  # Point of Control
-        data['HVN'] = vol_profile[vol_profile > np.percentile(vol_profile.dropna(), 70)].index.tolist() if not vol_profile.empty else []  # High Volume Nodes
+        data['Volume_Profile'] = data['Close'].map(vol_profile)
+        data['POC'] = vol_profile.idxmax() if not vol_profile.empty else np.nan
+        data['HVN'] = vol_profile[vol_profile > np.percentile(vol_profile.dropna(), 70)].index.tolist() if not vol_profile.empty else []
         
         data['VW_MACD'] = volume_weighted_macd(data).reindex(data.index, fill_value=0)
         
@@ -261,18 +239,27 @@ def generate_recommendations(data, symbol=None):
         buy_score *= 1.2
         sell_score *= 1.2
 
-    # Dynamic Threshold
-    threshold = 2.0 + (data['ATR'].iloc[-1] / data['Close'].iloc[-1]) if 'ATR' in data.columns and pd.notnull(data['ATR'].iloc[-1]) else 2.0
+    # Dynamic Thresholds
+    base_threshold = 2.0 + (data['ATR'].iloc[-1] / data['Close'].iloc[-1]) if 'ATR' in data.columns and pd.notnull(data['ATR'].iloc[-1]) else 2.0
+    strong_threshold = base_threshold + 1.5  # Strong Buy/Sell requires higher confidence
 
-    # Decision Logic
-    if buy_score >= threshold and sell_score >= threshold:
-        recommendations["Intraday"] = "Hold (High Volatility)"
-    elif buy_score >= threshold:
-        recommendations["Intraday"] = "Buy"
+    # Decision Logic with Emojis
+    if buy_score >= strong_threshold and sell_score < base_threshold:
+        recommendations["Intraday"] = "🚀 Strong Buy"
         recommendations["Signal"] = 1
-    elif sell_score >= threshold:
-        recommendations["Intraday"] = "Sell"
+    elif buy_score >= base_threshold and sell_score < base_threshold:
+        recommendations["Intraday"] = "📈 Buy"
+        recommendations["Signal"] = 1
+    elif sell_score >= strong_threshold and buy_score < base_threshold:
+        recommendations["Intraday"] = "🔥 Strong Sell"
         recommendations["Signal"] = -1
+    elif sell_score >= base_threshold and buy_score < base_threshold:
+        recommendations["Intraday"] = "📉 Sell"
+        recommendations["Signal"] = -1
+    elif buy_score >= base_threshold and sell_score >= base_threshold:
+        recommendations["Intraday"] = "⚠️ Hold (High Volatility)"
+    else:
+        recommendations["Intraday"] = "🛑 Hold"
 
     # Normalized Score
     max_possible_score = 7  # Max weights: RSI (2) + VW_MACD (1) + Breakout (2) + Climax (1.5) + VWAP (1.5)
@@ -401,7 +388,7 @@ def fetch_current_price(symbol):
         stock = yf.Ticker(symbol)
         data = stock.history(period="1d", interval="1d")
         if not data.empty and 'Close' in data.columns:
-            time.sleep(0.5)  # Small delay for rate limiting
+            time.sleep(0.5)
             return data['Close'].iloc[-1]
         logger.debug(f"No current price data for {symbol}")
         return None
@@ -434,8 +421,8 @@ def analyze_all_stocks(stock_list, batch_size=10, price_range=None, short_sell=F
         return pd.DataFrame(columns=["Symbol", "Current Price", "Buy At", "Stop Loss", "Target", "Intraday", "Score", "Position_Size"])
     
     if short_sell:
-        return results_df[results_df['Intraday'] == "Sell"].sort_values(by="Score").head(5)
-    return results_df[results_df['Intraday'] == "Buy"].sort_values(by="Score", ascending=False).head(5)
+        return results_df[results_df['Intraday'].isin(["📉 Sell", "🔥 Strong Sell"])].sort_values(by="Score").head(5)
+    return results_df[results_df['Intraday'].isin(["📈 Buy", "🚀 Strong Buy"])].sort_values(by="Score", ascending=False).head(5)
 
 def send_telegram_message(message):
     url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
