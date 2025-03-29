@@ -23,18 +23,50 @@ logger = logging.getLogger(__name__)
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "YOUR_TOKEN")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "YOUR_CHAT_ID")
 
-# Retry decorator for handling 429 errors with exponential backoff
+# Enhanced Yahoo Finance Client with rate-limit handling
+class YahooFinanceClient:
+    def __init__(self):
+        self.last_call = 0
+        self.delay = 0.6  # 600ms base delay
+        self.consecutive_failures = 0
+        self.max_failures = 5
+    
+    def get_history(self, symbol, period="5y", interval="1d"):
+        now = time.time()
+        elapsed = now - self.last_call
+        if elapsed < self.delay:
+            time.sleep(self.delay - elapsed)
+        try:
+            self.last_call = time.time()
+            ticker = yf.Ticker(symbol)
+            data = ticker.history(period=period, interval=interval)
+            if data.empty:
+                logger.debug(f"No data fetched for {symbol}")
+                return pd.DataFrame()
+            self.consecutive_failures = 0  # Reset on success
+            logger.debug(f"Fetched {len(data)} rows for {symbol}")
+            return data
+        except Exception as e:
+            if "429" in str(e):  # Rate limit detection
+                self.consecutive_failures += 1
+                if self.consecutive_failures >= self.max_failures:
+                    logger.warning("Rate limit exceeded, pausing for 60s")
+                    time.sleep(60)
+                    self.consecutive_failures = 0
+                else:
+                    time.sleep(10)  # Short pause for initial 429s
+            else:
+                self.consecutive_failures += 1
+            raise
+
+yahoo_client = YahooFinanceClient()
+
 @retry(stop=stop_after_attempt(5), wait=wait_exponential(multiplier=1, min=2, max=10), retry=retry_if_exception_type(Exception))
 def fetch_stock_data_with_retry(symbol, period="5y", interval="1d"):
     if ".NS" not in symbol:
         symbol += ".NS"
-    stock = yf.Ticker(symbol)
-    data = stock.history(period=period, interval=interval)
-    if data.empty:
-        logger.debug(f"No data fetched for {symbol}")
-        return pd.DataFrame()
-    logger.debug(f"Fetched {len(data)} rows for {symbol}")
-    time.sleep(0.5)  # Small delay to avoid hitting rate limits
+    data = yahoo_client.get_history(symbol, period, interval)
+    time.sleep(0.1)  # Additional small delay for safety
     return data
 
 @lru_cache(maxsize=500)
@@ -51,16 +83,14 @@ def clear_cache():
     logger.info("Cache cleared.")
 
 def calculate_volume_profile(data, bins=50):
-    if len(data) < 2 or 'Volume' not in data.columns or data['Close'].isna().all():
-        logger.debug("Insufficient data for volume profile calculation")
-        return pd.Series(index=data.index, data=0, dtype=float)
+    if (len(data) < 2 or 'Volume' not in data.columns or 
+        data['Close'].isna().all() or data['High'].equals(data['Low'])):
+        logger.debug("Insufficient or invalid data for volume profile calculation")
+        return pd.Series()  # Empty series for invalid data
     
     try:
         price_min = data['Low'].min()
         price_max = data['High'].max()
-        if price_min == price_max:
-            return pd.Series(index=data.index, data=0, dtype=float)
-        
         price_bins = np.linspace(price_min, price_max, bins + 1)
         price_categories = pd.cut(data['Close'], bins=price_bins, include_lowest=True)
         volume_profile = data.groupby(price_categories, observed=True)['Volume'].sum()
@@ -75,7 +105,7 @@ def calculate_volume_profile(data, bins=50):
     
     except Exception as e:
         logger.error(f"Error in volume profile calculation: {str(e)}")
-        return pd.Series(index=data.index, data=0, dtype=float)
+        return pd.Series()
 
 def get_volume_multiplier(data, window=14):
     if 'ATR' not in data.columns or pd.isna(data['ATR'].iloc[-1]):
@@ -124,7 +154,9 @@ def dynamic_position_size(data, portfolio_size=100000):
 
 def detect_volume_confirmed_breakout(data):
     required_cols = ['Donchian_Upper', 'Donchian_Lower', 'Volume', 'Avg_Volume', 'Close']
-    if not all(col in data.columns for col in required_cols) or data[required_cols].iloc[-1].isna().any():
+    if (not all(col in data.columns for col in required_cols) or 
+        data[required_cols].iloc[-1].isna().any() or len(data) < 20):
+        logger.debug("Insufficient data for Donchian breakout")
         return "Neutral"
     last_close = data['Close'].iloc[-1]
     upper_band = data['Donchian_Upper'].iloc[-1]
@@ -165,7 +197,7 @@ def analyze_stock(data):
         data['Volume_Spike'] = data['Volume'] > (data['Avg_Volume'] * get_volume_multiplier(data))
         
         vol_profile = calculate_volume_profile(data)
-        data['Volume_Profile'] = data['Close'].map(vol_profile)
+        data['Volume_Profile'] = data['Close'].map(vol_profile) if not vol_profile.empty else 0
         data['POC'] = vol_profile.idxmax() if not vol_profile.empty else np.nan
         data['HVN'] = vol_profile[vol_profile > np.percentile(vol_profile.dropna(), 70)].index.tolist() if not vol_profile.empty else []
         
@@ -212,13 +244,9 @@ def generate_recommendations(data, symbol=None):
         elif data['VW_MACD'].iloc[-1] < 0:
             sell_score += 1
 
-    # Breakout
+    # Breakout (prioritized)
     breakout_signal = detect_volume_confirmed_breakout(data)
-    if breakout_signal == "Bullish Breakout":
-        buy_score += 2
-    elif breakout_signal == "Bearish Breakout":
-        sell_score += 2
-
+    
     # Climax
     climax_signal = detect_volume_climax(data)
     if climax_signal == "Bullish Climax":
@@ -241,10 +269,16 @@ def generate_recommendations(data, symbol=None):
 
     # Dynamic Thresholds
     base_threshold = 2.0 + (data['ATR'].iloc[-1] / data['Close'].iloc[-1]) if 'ATR' in data.columns and pd.notnull(data['ATR'].iloc[-1]) else 2.0
-    strong_threshold = base_threshold + 1.5  # Strong Buy/Sell requires higher confidence
+    strong_threshold = base_threshold + 1.5
 
-    # Decision Logic with Emojis
-    if buy_score >= strong_threshold and sell_score < base_threshold:
+    # Decision Logic with Breakout Priority
+    if breakout_signal == "Bullish Breakout" and buy_score > sell_score:
+        recommendations["Intraday"] = "🚀 Strong Buy" if buy_score >= strong_threshold else "📈 Buy"
+        recommendations["Signal"] = 1
+    elif breakout_signal == "Bearish Breakout" and sell_score > buy_score:
+        recommendations["Intraday"] = "🔥 Strong Sell" if sell_score >= strong_threshold else "📉 Sell"
+        recommendations["Signal"] = -1
+    elif buy_score >= strong_threshold and sell_score < base_threshold:
         recommendations["Intraday"] = "🚀 Strong Buy"
         recommendations["Signal"] = 1
     elif buy_score >= base_threshold and sell_score < base_threshold:
@@ -262,7 +296,7 @@ def generate_recommendations(data, symbol=None):
         recommendations["Intraday"] = "🛑 Hold"
 
     # Normalized Score
-    max_possible_score = 7  # Max weights: RSI (2) + VW_MACD (1) + Breakout (2) + Climax (1.5) + VWAP (1.5)
+    max_possible_score = 7
     recommendations["Score"] = round(((buy_score - sell_score) / max_possible_score) * 10, 2)
 
     if 'ATR' in data.columns and pd.notnull(data['ATR'].iloc[-1]):
@@ -315,20 +349,40 @@ def show_performance_metrics(data, recommendations):
 
 def analyze_batch(stock_batch, progress_bar, progress_text, total_stocks, processed_count):
     results = []
+    failed_symbols = []
     with ThreadPoolExecutor(max_workers=4) as executor:
         futures = {executor.submit(analyze_stock_parallel, symbol): symbol for symbol in stock_batch}
         for future in as_completed(futures):
+            symbol = futures[future]
             try:
                 result = future.result()
                 if result:
                     results.append(result)
-                processed_count[0] += 1
-                progress = min(1.0, processed_count[0] / total_stocks)
-                progress_bar.progress(progress)
-                progress_text.text(f"Progress: {processed_count[0]}/{total_stocks} stocks analyzed "
-                                 f"(Estimated time remaining: {int((total_stocks - processed_count[0]) * 0.5)}s)")
+                else:
+                    failed_symbols.append(symbol)
             except Exception as e:
-                logger.error(f"Error processing {futures[future]}: {str(e)}")
+                logger.error(f"Error processing {symbol}: {str(e)}")
+                failed_symbols.append(symbol)
+            processed_count[0] += 1
+            progress = min(1.0, processed_count[0] / total_stocks)
+            progress_bar.progress(progress)
+            progress_text.text(f"Progress: {processed_count[0]}/{total_stocks} stocks analyzed "
+                             f"(Failed: {len(failed_symbols)}, Estimated time remaining: {int((total_stocks - processed_count[0]) * 0.5)}s)")
+    
+    # Retry failed symbols once
+    if failed_symbols:
+        logger.info(f"Retrying {len(failed_symbols)} failed symbols")
+        with ThreadPoolExecutor(max_workers=4) as executor:
+            futures = {executor.submit(analyze_stock_parallel, symbol): symbol for symbol in failed_symbols}
+            for future in as_completed(futures):
+                symbol = futures[future]
+                try:
+                    result = future.result()
+                    if result:
+                        results.append(result)
+                except Exception as e:
+                    logger.error(f"Failed retry for {symbol}: {str(e)}")
+    
     clear_cache()
     return results
 
@@ -385,10 +439,8 @@ def fetch_current_price(symbol):
     try:
         if ".NS" not in symbol:
             symbol += ".NS"
-        stock = yf.Ticker(symbol)
-        data = stock.history(period="1d", interval="1d")
+        data = yahoo_client.get_history(symbol, period="1d", interval="1d")
         if not data.empty and 'Close' in data.columns:
-            time.sleep(0.5)
             return data['Close'].iloc[-1]
         logger.debug(f"No current price data for {symbol}")
         return None
