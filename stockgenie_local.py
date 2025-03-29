@@ -14,6 +14,7 @@ import random
 import numpy as np
 import logging
 import warnings
+from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
 
 warnings.filterwarnings("ignore", category=FutureWarning)
 logging.basicConfig(level=logging.DEBUG)
@@ -22,20 +23,27 @@ logger = logging.getLogger(__name__)
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "YOUR_TOKEN")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "YOUR_CHAT_ID")
 
+# Retry decorator for handling 429 errors with exponential backoff
+@retry(stop=stop_after_attempt(5), wait=wait_exponential(multiplier=1, min=2, max=10), retry=retry_if_exception_type(Exception))
+def fetch_stock_data_with_retry(symbol, period="5y", interval="1d"):
+    if ".NS" not in symbol:
+        symbol += ".NS"
+    stock = yf.Ticker(symbol)
+    data = stock.history(period=period, interval=interval)
+    if data.empty:
+        logger.debug(f"No data fetched for {symbol}")
+        return pd.DataFrame()
+    logger.debug(f"Fetched {len(data)} rows for {symbol}")
+    time.sleep(0.5)  # Small delay to avoid hitting rate limits
+    return data
+
 @lru_cache(maxsize=500)
 def fetch_stock_data_cached(symbol, period="5y", interval="1d"):
     try:
-        if ".NS" not in symbol:
-            symbol += ".NS"
-        stock = yf.Ticker(symbol)
-        data = stock.history(period=period, interval=interval)
-        if data.empty:
-            logger.debug(f"No data fetched for {symbol}")
-            return pd.DataFrame()
-        logger.debug(f"Fetched {len(data)} rows for {symbol}")
+        data = fetch_stock_data_with_retry(symbol, period, interval)
         return data
     except Exception as e:
-        logger.warning(f"Error fetching {symbol}: {str(e)}")
+        logger.warning(f"Failed to fetch data for {symbol} after retries: {str(e)}")
         return pd.DataFrame()
 
 def clear_cache():
@@ -116,7 +124,7 @@ def detect_volume_confirmed_breakout(data):
     return "Neutral"
 
 def analyze_stock(data):
-    if data.empty or len(data) < 10:  # Reduced from 15 to 10
+    if data.empty or len(data) < 10:
         logger.warning(f"Insufficient data: only {len(data)} rows.")
         return data
     
@@ -205,10 +213,10 @@ def generate_recommendations(data, symbol=None):
         elif data['VWAP_Signal'].iloc[-1] == -1:
             buy_score += 1
 
-    if buy_score >= 2.5:  # Lowered threshold from 3 to 2.5
+    if buy_score >= 2.5:
         recommendations["Intraday"] = "Buy"
         recommendations["Signal"] = 1
-    elif sell_score >= 2.5:  # Lowered threshold from 3 to 2.5
+    elif sell_score >= 2.5:
         recommendations["Intraday"] = "Sell"
         recommendations["Signal"] = -1
 
@@ -282,7 +290,7 @@ def analyze_batch(stock_batch, progress_bar, progress_text, total_stocks, proces
 
 def analyze_stock_parallel(symbol):
     data = fetch_stock_data_cached(symbol)
-    if not data.empty and len(data) >= 10:  # Reduced from 15 to 10
+    if not data.empty and len(data) >= 10:
         data = analyze_stock(data)
         recommendations = generate_recommendations(data, symbol)
         return {
@@ -336,6 +344,7 @@ def fetch_current_price(symbol):
         stock = yf.Ticker(symbol)
         data = stock.history(period="1d", interval="1d")
         if not data.empty and 'Close' in data.columns:
+            time.sleep(0.5)  # Small delay for rate limiting
             return data['Close'].iloc[-1]
         logger.debug(f"No current price data for {symbol}")
         return None
@@ -343,7 +352,7 @@ def fetch_current_price(symbol):
         logger.warning(f"Error fetching current price for {symbol}: {str(e)}")
         return None
 
-def analyze_all_stocks(stock_list, batch_size=20, price_range=None, short_sell=False):
+def analyze_all_stocks(stock_list, batch_size=10, price_range=None, short_sell=False):  # Reduced batch size
     progress_bar = st.progress(0)
     progress_text = st.empty()
     processed_count = [0]
