@@ -1,4 +1,4 @@
-import os  # Add this import
+import os
 import yfinance as yf
 import pandas as pd
 import ta
@@ -46,7 +46,6 @@ def calculate_volume_profile(data, bins=50):
     if len(data) < 2 or 'Volume' not in data.columns or data['Close'].isna().all():
         return pd.Series(index=data.index, data=0, dtype=float)
     try:
-        # Assign volume to each closing price directly, avoiding binning mismatch
         volume_profile = pd.Series(index=data.index, data=0, dtype=float)
         for idx in data.index:
             volume_profile[idx] = data['Volume'].loc[idx]
@@ -137,25 +136,50 @@ def analyze_stock(data):
         return data
     
     try:
-        data['RSI'] = ta.momentum.RSIIndicator(data['Close'], window=14).rsi().reindex(data.index, fill_value=0)
-        data['ATR'] = ta.volatility.AverageTrueRange(data['High'], data['Low'], data['Close'], window=14).average_true_range().reindex(data.index, fill_value=0)
+        # Ensure all required columns are present and aligned
+        required_cols = ['Close', 'High', 'Low', 'Volume']
+        if not all(col in data.columns for col in required_cols):
+            logger.error(f"Missing required columns: {set(required_cols) - set(data.columns)}")
+            return data
+        
+        # RSI
+        rsi = ta.momentum.RSIIndicator(data['Close'], window=14).rsi()
+        data['RSI'] = rsi.reindex(data.index, fill_value=0)
+        
+        # ATR
+        atr = ta.volatility.AverageTrueRange(data['High'], data['Low'], data['Close'], window=14).average_true_range()
+        data['ATR'] = atr.reindex(data.index, fill_value=0)
+        
+        # VWAP Calculations
         data['Cumulative_TP'] = ((data['High'] + data['Low'] + data['Close']) / 3) * data['Volume']
         data['Cumulative_Volume'] = data['Volume'].cumsum()
         data['VWAP'] = data['Cumulative_TP'].cumsum() / data['Cumulative_Volume']
         data = add_vwap_indicators(data)
-        data['Avg_Volume'] = data['Volume'].rolling(window=10, min_periods=1).mean().reindex(data.index, fill_value=0)
+        
+        # Average Volume
+        avg_volume = data['Volume'].rolling(window=10, min_periods=1).mean()
+        data['Avg_Volume'] = avg_volume.reindex(data.index, fill_value=0)
         data['Volume_Spike'] = data['Volume'] > (data['Avg_Volume'] * get_volume_multiplier(data))
+        
+        # Volume Profile
         data['Volume_Profile'] = calculate_volume_profile(data)
         data['POC'] = data['Volume_Profile'].idxmax() if not data['Volume_Profile'].isna().all() else np.nan
         data['HVN'] = data['Volume_Profile'][data['Volume_Profile'] > 
                       np.percentile(data['Volume_Profile'].dropna(), 70)].index.tolist() if not data['Volume_Profile'].isna().all() else []
-        data['VW_MACD'] = volume_weighted_macd(data)
+        
+        # Volume Weighted MACD
+        data['VW_MACD'] = volume_weighted_macd(data).reindex(data.index, fill_value=0)
+        
+        # Bollinger Bands
         bollinger = ta.volatility.BollingerBands(data['Close'], window=20, window_dev=2)
         data['Upper_Band'] = bollinger.bollinger_hband().reindex(data.index, fill_value=0)
         data['Lower_Band'] = bollinger.bollinger_lband().reindex(data.index, fill_value=0)
+        
+        # Donchian Channels
         donchian = ta.volatility.DonchianChannel(data['High'], data['Low'], data['Close'], window=20)
         data['Donchian_Upper'] = donchian.donchian_channel_hband().reindex(data.index, fill_value=0)
         data['Donchian_Lower'] = donchian.donchian_channel_lband().reindex(data.index, fill_value=0)
+        
     except Exception as e:
         logger.error(f"Error in analyze_stock: {str(e)}")
     
@@ -211,7 +235,6 @@ def generate_recommendations(data, symbol=None):
         recommendations["Intraday"] = "Sell"
         recommendations["Signal"] = -1
 
-    # Set Buy At, Stop Loss, Target even for Hold if buy_score > 0
     if buy_score > 0:
         recommendations["Buy At"] = round(last_close * 0.99, 2)
         recommendations["Stop Loss"] = round(last_close - (data['ATR'].iloc[-1] * 2.5), 2) if 'ATR' in data.columns else None
