@@ -43,18 +43,27 @@ def clear_cache():
     logger.info("Cache cleared.")
 
 def calculate_volume_profile(data, bins=50):
-    if len(data) < 2 or 'Volume' not in data.columns:
-        return pd.Series()
-    price_bins = np.linspace(data['Low'].min(), data['High'].max(), bins)
-    volume_profile = np.zeros(bins - 1)
-    for i in range(bins - 1):
-        mask = (data['Close'] >= price_bins[i]) & (data['Close'] < price_bins[i + 1])
-        volume_profile[i] = data['Volume'][mask].sum()
-    return pd.Series(volume_profile, index=price_bins[:-1])
+    if len(data) < 2 or 'Volume' not in data.columns or data['Low'].isna().all() or data['High'].isna().all():
+        return pd.Series(index=data.index, dtype=float) * 0  # Return zeros aligned with index
+    try:
+        price_bins = np.linspace(data['Low'].min(), data['High'].max(), bins)
+        volume_profile = np.zeros(bins - 1)
+        for i in range(bins - 1):
+            mask = (data['Close'] >= price_bins[i]) & (data['Close'] < price_bins[i + 1])
+            volume_profile[i] = data['Volume'][mask].sum()
+        # Interpolate to match data index
+        full_profile = pd.Series(index=data.index, dtype=float)
+        bin_centers = (price_bins[:-1] + price_bins[1:]) / 2
+        full_profile.iloc[-len(volume_profile):] = np.interp(data['Close'].iloc[-len(volume_profile):], bin_centers, volume_profile)
+        full_profile.fillna(0, inplace=True)
+        return full_profile
+    except Exception as e:
+        logger.error(f"Error in volume profile calculation: {str(e)}")
+        return pd.Series(index=data.index, dtype=float) * 0
 
 def get_volume_profile_levels(data):
     try:
-        if 'Volume_Profile' not in data.columns or data['Volume_Profile'].empty:
+        if 'Volume_Profile' not in data.columns or data['Volume_Profile'].empty or data['Volume_Profile'].isna().all():
             return None, []
         vp = data['Volume_Profile'].dropna()
         if vp.empty:
@@ -64,7 +73,7 @@ def get_volume_profile_levels(data):
         hvn = vp[vp > threshold].index.tolist()
         return poc_price, hvn
     except Exception as e:
-        logger.error(f"Error in volume profile for {data.get('Symbol', 'unknown')}: {str(e)}")
+        logger.error(f"Error in volume profile levels for {data.get('Symbol', 'unknown')}: {str(e)}")
         return None, []
 
 def get_volume_multiplier(data, window=14):
@@ -75,10 +84,10 @@ def get_volume_multiplier(data, window=14):
 
 def volume_weighted_macd(data, window_fast=12, window_slow=26):
     if len(data) < window_slow or 'Volume' not in data.columns:
-        return pd.Series(index=data.index, dtype=float)
+        return pd.Series(index=data.index, dtype=float) * 0
     vwma_fast = (data['Close'] * data['Volume']).rolling(window_fast).sum() / data['Volume'].rolling(window_fast).sum()
     vwma_slow = (data['Close'] * data['Volume']).rolling(window_slow).sum() / data['Volume'].rolling(window_slow).sum()
-    return vwma_fast - vwma_slow
+    return (vwma_fast - vwma_slow).reindex(data.index, fill_value=0)
 
 def detect_volume_climax(data):
     if not all(col in data.columns for col in ['Close', 'High', 'Low', 'Volume_Spike', 'RSI']):
@@ -94,7 +103,7 @@ def detect_volume_climax(data):
     return None
 
 def add_vwap_indicators(data):
-    if 'VWAP' not in data.columns:
+    if 'VWAP' not in data.columns or data['VWAP'].isna().all():
         return data
     data['VWAP_Deviation'] = (data['Close'] - data['VWAP']) / data['VWAP'] * 100
     data['VWAP_Signal'] = np.where(data['VWAP_Deviation'] > 1, 1, 
@@ -105,9 +114,9 @@ def dynamic_position_size(data, portfolio_size=100000):
     if 'ATR' not in data.columns or pd.isna(data['ATR'].iloc[-1]):
         return 0.1
     risk_per_share = data['ATR'].iloc[-1] * 2
-    max_risk = portfolio_size * 0.01  # 1% risk
+    max_risk = portfolio_size * 0.01
     position_size = min(0.2, max_risk / (risk_per_share * data['Close'].iloc[-1]))
-    return max(0.01, position_size)  # Minimum 1%
+    return max(0.01, position_size)
 
 def detect_volume_confirmed_breakout(data):
     required_cols = ['Donchian_Upper', 'Donchian_Lower', 'Volume', 'Avg_Volume', 'Close']
@@ -130,27 +139,26 @@ def analyze_stock(data):
         logger.warning(f"Insufficient data: only {len(data)} days.")
         return data
     
-    days = len(data)
     try:
-        data['RSI'] = ta.momentum.RSIIndicator(data['Close'], window=14).rsi()
-        data['ATR'] = ta.volatility.AverageTrueRange(data['High'], data['Low'], data['Close'], window=14).average_true_range()
+        data['RSI'] = ta.momentum.RSIIndicator(data['Close'], window=14).rsi().reindex(data.index, fill_value=0)
+        data['ATR'] = ta.volatility.AverageTrueRange(data['High'], data['Low'], data['Close'], window=14).average_true_range().reindex(data.index, fill_value=0)
         data['Cumulative_TP'] = ((data['High'] + data['Low'] + data['Close']) / 3) * data['Volume']
         data['Cumulative_Volume'] = data['Volume'].cumsum()
         data['VWAP'] = data['Cumulative_TP'].cumsum() / data['Cumulative_Volume']
         data = add_vwap_indicators(data)
-        data['Avg_Volume'] = data['Volume'].rolling(window=10).mean()
+        data['Avg_Volume'] = data['Volume'].rolling(window=10, min_periods=1).mean().reindex(data.index, fill_value=0)
         data['Volume_Spike'] = data['Volume'] > (data['Avg_Volume'] * get_volume_multiplier(data))
         data['Volume_Profile'] = calculate_volume_profile(data, bins=50)
-        data['POC'] = data['Volume_Profile'].idxmax()
+        data['POC'] = data['Volume_Profile'].idxmax() if not data['Volume_Profile'].isna().all() else np.nan
         data['HVN'] = data['Volume_Profile'][data['Volume_Profile'] > 
-                      np.percentile(data['Volume_Profile'], 70)].index.tolist()
+                      np.percentile(data['Volume_Profile'].dropna(), 70)].index.tolist() if not data['Volume_Profile'].isna().all() else []
         data['VW_MACD'] = volume_weighted_macd(data)
         bollinger = ta.volatility.BollingerBands(data['Close'], window=20, window_dev=2)
-        data['Upper_Band'] = bollinger.bollinger_hband()
-        data['Lower_Band'] = bollinger.bollinger_lband()
+        data['Upper_Band'] = bollinger.bollinger_hband().reindex(data.index, fill_value=0)
+        data['Lower_Band'] = bollinger.bollinger_lband().reindex(data.index, fill_value=0)
         donchian = ta.volatility.DonchianChannel(data['High'], data['Low'], data['Close'], window=20)
-        data['Donchian_Upper'] = donchian.donchian_channel_hband()
-        data['Donchian_Lower'] = donchian.donchian_channel_lband()
+        data['Donchian_Upper'] = donchian.donchian_channel_hband().reindex(data.index, fill_value=0)
+        data['Donchian_Lower'] = donchian.donchian_channel_lband().reindex(data.index, fill_value=0)
     except Exception as e:
         logger.error(f"Error in analyze_stock: {str(e)}")
     
@@ -209,7 +217,7 @@ def generate_recommendations(data, symbol=None):
     recommendations["Buy At"] = round(last_close * 0.99, 2) if buy_score > sell_score else None
     recommendations["Stop Loss"] = round(last_close - (data['ATR'].iloc[-1] * 2.5), 2) if 'ATR' in data.columns and buy_score >= 3 else None
     recommendations["Target"] = round(last_close + ((last_close - recommendations["Stop Loss"]) * 3), 2) if recommendations["Stop Loss"] else None
-    recommendations["Score"] = buy_score - sell_score  # Allow negative for short sell
+    recommendations["Score"] = buy_score - sell_score
     recommendations["Position_Size"] = dynamic_position_size(data)
     return recommendations
 
@@ -219,7 +227,7 @@ def check_real_time_alerts(symbol):
         return
     data = analyze_stock(data)
     current = data.iloc[-1]
-    if current['Volume'] > 2 * data['Volume'].rolling(20).mean().iloc[-1]:
+    if current['Volume'] > 2 * data['Volume'].rolling(20, min_periods=1).mean().iloc[-1]:
         send_telegram_message(f"🚨 Volume spike in {symbol}: {current['Volume']/1000:.0f}K shares")
     if current['Close'] > data['Upper_Band'].iloc[-1]:
         send_telegram_message(f"🚀 Breakout in {symbol} at ₹{current['Close']:.2f}")
@@ -227,7 +235,6 @@ def check_real_time_alerts(symbol):
 def show_performance_metrics(data, recommendations):
     st.subheader("📊 Strategy Performance")
     
-    # Generate signals for all days
     signals = []
     for i in range(len(data)):
         temp_data = data.iloc[:i+1]
@@ -235,7 +242,6 @@ def show_performance_metrics(data, recommendations):
         signals.append(rec["Signal"])
     data['Signal'] = signals
     
-    # Calculate strategy returns
     returns = data['Close'].pct_change()
     strategy_returns = returns * data['Signal'].shift(1).fillna(0)
     strategy_returns = strategy_returns.dropna()
@@ -336,7 +342,7 @@ def analyze_all_stocks(stock_list, batch_size=20, price_range=None, short_sell=F
         results.extend(analyze_batch(batch))
     results_df = pd.DataFrame([r for r in results if r is not None])
     if short_sell:
-        return results_df[results_df['Intraday'] == "Sell"].sort_values(by="Score").head(5)  # Lower score = stronger sell
+        return results_df[results_df['Intraday'] == "Sell"].sort_values(by="Score").head(5)
     return results_df[results_df['Intraday'] == "Buy"].sort_values(by="Score", ascending=False).head(5)
 
 def send_telegram_message(message):
@@ -349,19 +355,19 @@ def send_telegram_message(message):
 
 def display_dashboard(symbol=None, data=None, recommendations=None, NSE_STOCKS=None):
     st.title("📊 StockGenie Pro")
-    st.sidebar.button("🧹 Clear Cache", on_click=clear_cache)
+    st.sidebar.button("🧹 Clear Cache", on_click=clear_cache, key="clear_cache")
     enable_alerts = st.sidebar.checkbox("Enable Real-time Alerts", False)
     
     price_range = st.sidebar.slider("Price Range (₹)", 0, 10000, (100, 1000))
     
     col1, col2, col3 = st.columns(3)
     with col1:
-        if st.button("🚀 Generate Top Picks"):
+        if st.button("🚀 Generate Top Picks", key="top_picks"):
             results_df = analyze_all_stocks(NSE_STOCKS, price_range=price_range, short_sell=False)
             if not results_df.empty:
                 st.subheader("🏆 Top 5 Buy Picks")
                 for _, row in results_df.iterrows():
-                    with st.expander(f"{row['Symbol']} - Score: {row['Score']}/7"):
+                    with st.expander(f"{row['Symbol']} - Score: {row['Score']}"):
                         st.write(f"Current Price: ₹{row['Current Price']:.2f}")
                         st.write(f"Buy At: ₹{row['Buy At']:.2f}" if row['Buy At'] else "Buy At: N/A")
                         st.write(f"Stop Loss: ₹{row['Stop Loss']:.2f}" if row['Stop Loss'] else "Stop Loss: N/A")
@@ -372,7 +378,7 @@ def display_dashboard(symbol=None, data=None, recommendations=None, NSE_STOCKS=N
                 st.write("No buy recommendations found.")
     
     with col2:
-        if st.button("📈 Intraday Analysis") and symbol:
+        if st.button("📈 Intraday Analysis", key="intraday_analysis") and symbol:
             period = '1d' if enable_alerts else '5y'
             interval = '5m' if enable_alerts else '1d'
             data = fetch_stock_data_cached(symbol, period=period, interval=interval)
@@ -400,7 +406,7 @@ def display_dashboard(symbol=None, data=None, recommendations=None, NSE_STOCKS=N
                 st.error(f"❌ Insufficient intraday data for {symbol}.")
     
     with col3:
-        if st.button("📉 Short Sell Picks"):
+        if st.button("📉 Short Sell Picks", key="short_sell_picks"):
             results_df = analyze_all_stocks(NSE_STOCKS, price_range=price_range, short_sell=True)
             if not results_df.empty:
                 st.subheader("🏆 Top 5 Short Sell Picks")
@@ -415,26 +421,30 @@ def display_dashboard(symbol=None, data=None, recommendations=None, NSE_STOCKS=N
             else:
                 st.write("No short sell recommendations found.")
 
-    if symbol and data is not None and recommendations is not None and not st.button("📈 Intraday Analysis"):
-        st.subheader(f"📋 {symbol.split('.')[0]} Long-term Analysis")
-        col1, col2, col3, col4 = st.columns(4)
-        with col1:
-            st.metric("Current Price", f"₹{recommendations['Current Price']:.2f}")
-        with col2:
-            st.metric("Buy At", f"₹{recommendations['Buy At']:.2f}" if recommendations['Buy At'] else "N/A")
-        with col3:
-            st.metric("Stop Loss", f"₹{recommendations['Stop Loss']:.2f}" if recommendations['Stop Loss'] else "N/A")
-        with col4:
-            st.metric("Target", f"₹{recommendations['Target']:.2f}" if recommendations['Target'] else "N/A")
-        st.write(f"Intraday: {recommendations['Intraday']}")
-        st.write(f"Position Size: {recommendations['Position_Size']*100:.1f}%")
-        show_performance_metrics(data, recommendations)
-        fig = px.line(data, y=['Close', 'VWAP'], title="Price and VWAP (Long-term)")
-        st.plotly_chart(fig)
+    if symbol and data is not None and recommendations is not None:
+        if 'intraday_clicked' not in st.session_state or not st.session_state.intraday_clicked:
+            st.subheader(f"📋 {symbol.split('.')[0]} Long-term Analysis")
+            col1, col2, col3, col4 = st.columns(4)
+            with col1:
+                st.metric("Current Price", f"₹{recommendations['Current Price']:.2f}")
+            with col2:
+                st.metric("Buy At", f"₹{recommendations['Buy At']:.2f}" if recommendations['Buy At'] else "N/A")
+            with col3:
+                st.metric("Stop Loss", f"₹{recommendations['Stop Loss']:.2f}" if recommendations['Stop Loss'] else "N/A")
+            with col4:
+                st.metric("Target", f"₹{recommendations['Target']:.2f}" if recommendations['Target'] else "N/A")
+            st.write(f"Intraday: {recommendations['Intraday']}")
+            st.write(f"Position Size: {recommendations['Position_Size']*100:.1f}%")
+            show_performance_metrics(data, recommendations)
+            fig = px.line(data, y=['Close', 'VWAP'], title="Price and VWAP (Long-term)")
+            st.plotly_chart(fig)
 
 def main():
     if 'cancel_operation' not in st.session_state:
         st.session_state.cancel_operation = False
+    if 'intraday_clicked' not in st.session_state:
+        st.session_state.intraday_clicked = False
+    
     NSE_STOCKS = fetch_nse_stock_list()
     symbol = st.sidebar.selectbox("Choose stock:", [""] + NSE_STOCKS)
     if symbol:
