@@ -1,4 +1,3 @@
-import os  # Add this import
 import yfinance as yf
 import pandas as pd
 import ta
@@ -207,9 +206,9 @@ def generate_recommendations(data, symbol=None):
         recommendations["Signal"] = -1
 
     recommendations["Buy At"] = round(last_close * 0.99, 2) if buy_score > sell_score else None
-    recommendations["Stop Loss"] = round(last_close - (data['ATR'].iloc[-1] * 2.5), 2) if 'ATR' in data.columns else None
+    recommendations["Stop Loss"] = round(last_close - (data['ATR'].iloc[-1] * 2.5), 2) if 'ATR' in data.columns and buy_score >= 3 else None
     recommendations["Target"] = round(last_close + ((last_close - recommendations["Stop Loss"]) * 3), 2) if recommendations["Stop Loss"] else None
-    recommendations["Score"] = max(0, min(buy_score - sell_score, 7))
+    recommendations["Score"] = buy_score - sell_score  # Allow negative for short sell
     recommendations["Position_Size"] = dynamic_position_size(data)
     return recommendations
 
@@ -327,7 +326,7 @@ def fetch_current_price(symbol):
         logger.warning(f"Error fetching current price for {symbol}: {str(e)}")
         return None
 
-def analyze_all_stocks(stock_list, batch_size=20, price_range=None):
+def analyze_all_stocks(stock_list, batch_size=20, price_range=None, short_sell=False):
     if price_range:
         stock_list = filter_stocks_by_price(stock_list, price_range)
     results = []
@@ -335,7 +334,9 @@ def analyze_all_stocks(stock_list, batch_size=20, price_range=None):
         batch = stock_list[i:i + batch_size]
         results.extend(analyze_batch(batch))
     results_df = pd.DataFrame([r for r in results if r is not None])
-    return results_df.sort_values(by="Score", ascending=False).head(5)
+    if short_sell:
+        return results_df[results_df['Intraday'] == "Sell"].sort_values(by="Score").head(5)  # Lower score = stronger sell
+    return results_df[results_df['Intraday'] == "Buy"].sort_values(by="Score", ascending=False).head(5)
 
 def send_telegram_message(message):
     url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
@@ -352,21 +353,69 @@ def display_dashboard(symbol=None, data=None, recommendations=None, NSE_STOCKS=N
     
     price_range = st.sidebar.slider("Price Range (₹)", 0, 10000, (100, 1000))
     
-    if st.button("🚀 Generate Top Picks"):
-        results_df = analyze_all_stocks(NSE_STOCKS, price_range=price_range)
-        if not results_df.empty:
-            st.subheader("🏆 Top 5 Stocks")
-            for _, row in results_df.iterrows():
-                with st.expander(f"{row['Symbol']} - Score: {row['Score']}/7"):
-                    st.write(f"Current Price: ₹{row['Current Price']:.2f}")
-                    st.write(f"Buy At: ₹{row['Buy At']:.2f}" if row['Buy At'] else "Buy At: N/A")
-                    st.write(f"Stop Loss: ₹{row['Stop Loss']:.2f}" if row['Stop Loss'] else "Stop Loss: N/A")
-                    st.write(f"Target: ₹{row['Target']:.2f}" if row['Target'] else "Target: N/A")
-                    st.write(f"Intraday: {row['Intraday']}")
-                    st.write(f"Position Size: {row['Position_Size']*100:.1f}%")
+    col1, col2, col3 = st.columns(3)
+    with col1:
+        if st.button("🚀 Generate Top Picks"):
+            results_df = analyze_all_stocks(NSE_STOCKS, price_range=price_range, short_sell=False)
+            if not results_df.empty:
+                st.subheader("🏆 Top 5 Buy Picks")
+                for _, row in results_df.iterrows():
+                    with st.expander(f"{row['Symbol']} - Score: {row['Score']}/7"):
+                        st.write(f"Current Price: ₹{row['Current Price']:.2f}")
+                        st.write(f"Buy At: ₹{row['Buy At']:.2f}" if row['Buy At'] else "Buy At: N/A")
+                        st.write(f"Stop Loss: ₹{row['Stop Loss']:.2f}" if row['Stop Loss'] else "Stop Loss: N/A")
+                        st.write(f"Target: ₹{row['Target']:.2f}" if row['Target'] else "Target: N/A")
+                        st.write(f"Intraday: {row['Intraday']}")
+                        st.write(f"Position Size: {row['Position_Size']*100:.1f}%")
+            else:
+                st.write("No buy recommendations found.")
+    
+    with col2:
+        if st.button("📈 Intraday Analysis") and symbol:
+            period = '1d' if enable_alerts else '5y'
+            interval = '5m' if enable_alerts else '1d'
+            data = fetch_stock_data_cached(symbol, period=period, interval=interval)
+            if not data.empty and len(data) >= 15:
+                data = analyze_stock(data)
+                recommendations = generate_recommendations(data, symbol)
+                st.subheader(f"📋 {symbol.split('.')[0]} Intraday Analysis")
+                col1, col2, col3, col4 = st.columns(4)
+                with col1:
+                    st.metric("Current Price", f"₹{recommendations['Current Price']:.2f}")
+                with col2:
+                    st.metric("Buy At", f"₹{recommendations['Buy At']:.2f}" if recommendations['Buy At'] else "N/A")
+                with col3:
+                    st.metric("Stop Loss", f"₹{recommendations['Stop Loss']:.2f}" if recommendations['Stop Loss'] else "N/A")
+                with col4:
+                    st.metric("Target", f"₹{recommendations['Target']:.2f}" if recommendations['Target'] else "N/A")
+                st.write(f"Intraday: {recommendations['Intraday']}")
+                st.write(f"Position Size: {recommendations['Position_Size']*100:.1f}%")
+                show_performance_metrics(data, recommendations)
+                if enable_alerts:
+                    check_real_time_alerts(symbol)
+                fig = px.line(data, y=['Close', 'VWAP'], title="Price and VWAP")
+                st.plotly_chart(fig)
+            else:
+                st.error(f"❌ Insufficient intraday data for {symbol}.")
+    
+    with col3:
+        if st.button("📉 Short Sell Picks"):
+            results_df = analyze_all_stocks(NSE_STOCKS, price_range=price_range, short_sell=True)
+            if not results_df.empty:
+                st.subheader("🏆 Top 5 Short Sell Picks")
+                for _, row in results_df.iterrows():
+                    with st.expander(f"{row['Symbol']} - Score: {row['Score']}"):
+                        st.write(f"Current Price: ₹{row['Current Price']:.2f}")
+                        st.write(f"Sell At: ₹{row['Current Price']:.2f}")
+                        st.write(f"Stop Loss: ₹{row['Current Price'] + (row['Current Price'] - row['Buy At']) if row['Buy At'] else row['Current Price']:.2f}")
+                        st.write(f"Target: ₹{row['Buy At']:.2f}" if row['Buy At'] else "N/A")
+                        st.write(f"Intraday: {row['Intraday']}")
+                        st.write(f"Position Size: {row['Position_Size']*100:.1f}%")
+            else:
+                st.write("No short sell recommendations found.")
 
-    if symbol and data is not None and recommendations is not None:
-        st.header(f"📋 {symbol.split('.')[0]} Analysis")
+    if symbol and data is not None and recommendations is not None and not st.button("📈 Intraday Analysis"):
+        st.subheader(f"📋 {symbol.split('.')[0]} Long-term Analysis")
         col1, col2, col3, col4 = st.columns(4)
         with col1:
             st.metric("Current Price", f"₹{recommendations['Current Price']:.2f}")
@@ -376,16 +425,10 @@ def display_dashboard(symbol=None, data=None, recommendations=None, NSE_STOCKS=N
             st.metric("Stop Loss", f"₹{recommendations['Stop Loss']:.2f}" if recommendations['Stop Loss'] else "N/A")
         with col4:
             st.metric("Target", f"₹{recommendations['Target']:.2f}" if recommendations['Target'] else "N/A")
-        
         st.write(f"Intraday: {recommendations['Intraday']}")
         st.write(f"Position Size: {recommendations['Position_Size']*100:.1f}%")
-        
         show_performance_metrics(data, recommendations)
-        
-        if enable_alerts:
-            check_real_time_alerts(symbol)
-        
-        fig = px.line(data, y=['Close', 'VWAP'], title="Price and VWAP")
+        fig = px.line(data, y=['Close', 'VWAP'], title="Price and VWAP (Long-term)")
         st.plotly_chart(fig)
 
 def main():
