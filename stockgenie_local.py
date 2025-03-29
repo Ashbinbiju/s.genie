@@ -43,27 +43,21 @@ def clear_cache():
     logger.info("Cache cleared.")
 
 def calculate_volume_profile(data, bins=50):
-    if len(data) < 2 or 'Volume' not in data.columns or data['Low'].isna().all() or data['High'].isna().all():
-        return pd.Series(index=data.index, dtype=float) * 0  # Return zeros aligned with index
+    if len(data) < 2 or 'Volume' not in data.columns or data['Close'].isna().all():
+        return pd.Series(index=data.index, data=0, dtype=float)
     try:
-        price_bins = np.linspace(data['Low'].min(), data['High'].max(), bins)
-        volume_profile = np.zeros(bins - 1)
-        for i in range(bins - 1):
-            mask = (data['Close'] >= price_bins[i]) & (data['Close'] < price_bins[i + 1])
-            volume_profile[i] = data['Volume'][mask].sum()
-        # Interpolate to match data index
-        full_profile = pd.Series(index=data.index, dtype=float)
-        bin_centers = (price_bins[:-1] + price_bins[1:]) / 2
-        full_profile.iloc[-len(volume_profile):] = np.interp(data['Close'].iloc[-len(volume_profile):], bin_centers, volume_profile)
-        full_profile.fillna(0, inplace=True)
-        return full_profile
+        # Assign volume to each closing price directly, avoiding binning mismatch
+        volume_profile = pd.Series(index=data.index, data=0, dtype=float)
+        for idx in data.index:
+            volume_profile[idx] = data['Volume'].loc[idx]
+        return volume_profile
     except Exception as e:
         logger.error(f"Error in volume profile calculation: {str(e)}")
-        return pd.Series(index=data.index, dtype=float) * 0
+        return pd.Series(index=data.index, data=0, dtype=float)
 
 def get_volume_profile_levels(data):
     try:
-        if 'Volume_Profile' not in data.columns or data['Volume_Profile'].empty or data['Volume_Profile'].isna().all():
+        if 'Volume_Profile' not in data.columns or data['Volume_Profile'].isna().all():
             return None, []
         vp = data['Volume_Profile'].dropna()
         if vp.empty:
@@ -73,7 +67,7 @@ def get_volume_profile_levels(data):
         hvn = vp[vp > threshold].index.tolist()
         return poc_price, hvn
     except Exception as e:
-        logger.error(f"Error in volume profile levels for {data.get('Symbol', 'unknown')}: {str(e)}")
+        logger.error(f"Error in volume profile levels: {str(e)}")
         return None, []
 
 def get_volume_multiplier(data, window=14):
@@ -84,17 +78,17 @@ def get_volume_multiplier(data, window=14):
 
 def volume_weighted_macd(data, window_fast=12, window_slow=26):
     if len(data) < window_slow or 'Volume' not in data.columns:
-        return pd.Series(index=data.index, dtype=float) * 0
-    vwma_fast = (data['Close'] * data['Volume']).rolling(window_fast).sum() / data['Volume'].rolling(window_fast).sum()
-    vwma_slow = (data['Close'] * data['Volume']).rolling(window_slow).sum() / data['Volume'].rolling(window_slow).sum()
+        return pd.Series(index=data.index, data=0, dtype=float)
+    vwma_fast = (data['Close'] * data['Volume']).rolling(window_fast, min_periods=1).sum() / data['Volume'].rolling(window_fast, min_periods=1).sum()
+    vwma_slow = (data['Close'] * data['Volume']).rolling(window_slow, min_periods=1).sum() / data['Volume'].rolling(window_slow, min_periods=1).sum()
     return (vwma_fast - vwma_slow).reindex(data.index, fill_value=0)
 
 def detect_volume_climax(data):
     if not all(col in data.columns for col in ['Close', 'High', 'Low', 'Volume_Spike', 'RSI']):
         return None
     last_close = data['Close'].iloc[-1]
-    is_high = last_close == data['High'].rolling(5).max().iloc[-1]
-    is_low = last_close == data['Low'].rolling(5).min().iloc[-1]
+    is_high = last_close == data['High'].rolling(5, min_periods=1).max().iloc[-1]
+    is_low = last_close == data['Low'].rolling(5, min_periods=1).min().iloc[-1]
     volume_spike = data['Volume_Spike'].iloc[-1]
     if volume_spike and is_high and data['RSI'].iloc[-1] > 70:
         return "Bearish Climax"
@@ -111,11 +105,14 @@ def add_vwap_indicators(data):
     return data
 
 def dynamic_position_size(data, portfolio_size=100000):
-    if 'ATR' not in data.columns or pd.isna(data['ATR'].iloc[-1]):
-        return 0.1
+    if 'ATR' not in data.columns or pd.isna(data['ATR'].iloc[-1]) or data['Close'].iloc[-1] == 0:
+        return 0.01
     risk_per_share = data['ATR'].iloc[-1] * 2
     max_risk = portfolio_size * 0.01
-    position_size = min(0.2, max_risk / (risk_per_share * data['Close'].iloc[-1]))
+    denominator = risk_per_share * data['Close'].iloc[-1]
+    if denominator == 0:
+        return 0.01
+    position_size = min(0.2, max_risk / denominator)
     return max(0.01, position_size)
 
 def detect_volume_confirmed_breakout(data):
@@ -148,7 +145,7 @@ def analyze_stock(data):
         data = add_vwap_indicators(data)
         data['Avg_Volume'] = data['Volume'].rolling(window=10, min_periods=1).mean().reindex(data.index, fill_value=0)
         data['Volume_Spike'] = data['Volume'] > (data['Avg_Volume'] * get_volume_multiplier(data))
-        data['Volume_Profile'] = calculate_volume_profile(data, bins=50)
+        data['Volume_Profile'] = calculate_volume_profile(data)
         data['POC'] = data['Volume_Profile'].idxmax() if not data['Volume_Profile'].isna().all() else np.nan
         data['HVN'] = data['Volume_Profile'][data['Volume_Profile'] > 
                       np.percentile(data['Volume_Profile'].dropna(), 70)].index.tolist() if not data['Volume_Profile'].isna().all() else []
@@ -214,9 +211,12 @@ def generate_recommendations(data, symbol=None):
         recommendations["Intraday"] = "Sell"
         recommendations["Signal"] = -1
 
-    recommendations["Buy At"] = round(last_close * 0.99, 2) if buy_score > sell_score else None
-    recommendations["Stop Loss"] = round(last_close - (data['ATR'].iloc[-1] * 2.5), 2) if 'ATR' in data.columns and buy_score >= 3 else None
-    recommendations["Target"] = round(last_close + ((last_close - recommendations["Stop Loss"]) * 3), 2) if recommendations["Stop Loss"] else None
+    # Set Buy At, Stop Loss, Target even for Hold if buy_score > 0
+    if buy_score > 0:
+        recommendations["Buy At"] = round(last_close * 0.99, 2)
+        recommendations["Stop Loss"] = round(last_close - (data['ATR'].iloc[-1] * 2.5), 2) if 'ATR' in data.columns else None
+        recommendations["Target"] = round(last_close + ((last_close - recommendations["Stop Loss"]) * 3), 2) if recommendations["Stop Loss"] else None
+    
     recommendations["Score"] = buy_score - sell_score
     recommendations["Position_Size"] = dynamic_position_size(data)
     return recommendations
@@ -379,6 +379,7 @@ def display_dashboard(symbol=None, data=None, recommendations=None, NSE_STOCKS=N
     
     with col2:
         if st.button("📈 Intraday Analysis", key="intraday_analysis") and symbol:
+            st.session_state.intraday_clicked = True
             period = '1d' if enable_alerts else '5y'
             interval = '5m' if enable_alerts else '1d'
             data = fetch_stock_data_cached(symbol, period=period, interval=interval)
