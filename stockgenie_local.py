@@ -16,7 +16,7 @@ import logging
 import warnings
 
 warnings.filterwarnings("ignore", category=FutureWarning)
-logging.basicConfig(level=logging.WARNING)
+logging.basicConfig(level=logging.DEBUG)  # Set to DEBUG to see detailed logs
 logger = logging.getLogger(__name__)
 
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "YOUR_TOKEN")
@@ -136,6 +136,9 @@ def analyze_stock(data):
         return data
     
     try:
+        # Log initial DataFrame length
+        logger.debug(f"Initial data length: {len(data.index)}")
+        
         # Ensure all required columns are present and aligned
         required_cols = ['Close', 'High', 'Low', 'Volume']
         if not all(col in data.columns for col in required_cols):
@@ -144,41 +147,59 @@ def analyze_stock(data):
         
         # RSI
         rsi = ta.momentum.RSIIndicator(data['Close'], window=14).rsi()
+        logger.debug(f"RSI length: {len(rsi)} vs data index: {len(data.index)}")
         data['RSI'] = rsi.reindex(data.index, fill_value=0)
         
         # ATR
         atr = ta.volatility.AverageTrueRange(data['High'], data['Low'], data['Close'], window=14).average_true_range()
+        logger.debug(f"ATR length: {len(atr)} vs data index: {len(data.index)}")
         data['ATR'] = atr.reindex(data.index, fill_value=0)
         
         # VWAP Calculations
         data['Cumulative_TP'] = ((data['High'] + data['Low'] + data['Close']) / 3) * data['Volume']
+        logger.debug(f"Cumulative_TP length: {len(data['Cumulative_TP'])} vs data index: {len(data.index)}")
         data['Cumulative_Volume'] = data['Volume'].cumsum()
+        logger.debug(f"Cumulative_Volume length: {len(data['Cumulative_Volume'])} vs data index: {len(data.index)}")
         data['VWAP'] = data['Cumulative_TP'].cumsum() / data['Cumulative_Volume']
+        logger.debug(f"VWAP length: {len(data['VWAP'])} vs data index: {len(data.index)}")
         data = add_vwap_indicators(data)
         
         # Average Volume
         avg_volume = data['Volume'].rolling(window=10, min_periods=1).mean()
+        logger.debug(f"Avg_Volume length: {len(avg_volume)} vs data index: {len(data.index)}")
         data['Avg_Volume'] = avg_volume.reindex(data.index, fill_value=0)
         data['Volume_Spike'] = data['Volume'] > (data['Avg_Volume'] * get_volume_multiplier(data))
+        logger.debug(f"Volume_Spike length: {len(data['Volume_Spike'])} vs data index: {len(data.index)}")
         
         # Volume Profile
         data['Volume_Profile'] = calculate_volume_profile(data)
+        logger.debug(f"Volume_Profile length: {len(data['Volume_Profile'])} vs data index: {len(data.index)}")
         data['POC'] = data['Volume_Profile'].idxmax() if not data['Volume_Profile'].isna().all() else np.nan
         data['HVN'] = data['Volume_Profile'][data['Volume_Profile'] > 
                       np.percentile(data['Volume_Profile'].dropna(), 70)].index.tolist() if not data['Volume_Profile'].isna().all() else []
         
         # Volume Weighted MACD
-        data['VW_MACD'] = volume_weighted_macd(data).reindex(data.index, fill_value=0)
+        vw_macd = volume_weighted_macd(data)
+        logger.debug(f"VW_MACD length: {len(vw_macd)} vs data index: {len(data.index)}")
+        data['VW_MACD'] = vw_macd.reindex(data.index, fill_value=0)
         
         # Bollinger Bands
         bollinger = ta.volatility.BollingerBands(data['Close'], window=20, window_dev=2)
-        data['Upper_Band'] = bollinger.bollinger_hband().reindex(data.index, fill_value=0)
-        data['Lower_Band'] = bollinger.bollinger_lband().reindex(data.index, fill_value=0)
+        upper_band = bollinger.bollinger_hband()
+        logger.debug(f"Upper_Band length: {len(upper_band)} vs data index: {len(data.index)}")
+        data['Upper_Band'] = upper_band.reindex(data.index, fill_value=0)
+        lower_band = bollinger.bollinger_lband()
+        logger.debug(f"Lower_Band length: {len(lower_band)} vs data index: {len(data.index)}")
+        data['Lower_Band'] = lower_band.reindex(data.index, fill_value=0)
         
         # Donchian Channels
         donchian = ta.volatility.DonchianChannel(data['High'], data['Low'], data['Close'], window=20)
-        data['Donchian_Upper'] = donchian.donchian_channel_hband().reindex(data.index, fill_value=0)
-        data['Donchian_Lower'] = donchian.donchian_channel_lband().reindex(data.index, fill_value=0)
+        donchian_upper = donchian.donchian_channel_hband()
+        logger.debug(f"Donchian_Upper length: {len(donchian_upper)} vs data index: {len(data.index)}")
+        data['Donchian_Upper'] = donchian_upper.reindex(data.index, fill_value=0)
+        donchian_lower = donchian.donchian_channel_lband()
+        logger.debug(f"Donchian_Lower length: {len(donchian_lower)} vs data index: {len(data.index)}")
+        data['Donchian_Lower'] = donchian_lower.reindex(data.index, fill_value=0)
         
     except Exception as e:
         logger.error(f"Error in analyze_stock: {str(e)}")
