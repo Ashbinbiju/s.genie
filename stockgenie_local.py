@@ -1,3 +1,4 @@
+import os  # Add this import
 import yfinance as yf
 import pandas as pd
 import ta
