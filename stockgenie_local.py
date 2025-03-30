@@ -25,6 +25,10 @@ logger = logging.getLogger(__name__)
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "YOUR_TOKEN")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "YOUR_CHAT_ID")
 
+# Define RateLimitError before it's used
+class RateLimitError(Exception):
+    pass
+
 # Enhanced Yahoo Finance Client with thread safety and circuit breaker
 class YahooFinanceClient:
     def __init__(self):
@@ -74,9 +78,6 @@ class YahooFinanceClient:
                 self.consecutive_failures = max(0, self.consecutive_failures - 1)
 
 yahoo_client = YahooFinanceClient()
-
-class RateLimitError(Exception):
-    pass
 
 @retry(
     stop=stop_after_attempt(3),
