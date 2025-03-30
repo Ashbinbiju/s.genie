@@ -25,14 +25,16 @@ logger = logging.getLogger(__name__)
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "YOUR_TOKEN")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "YOUR_CHAT_ID")
 
+# Define RateLimitError before it's used
 class RateLimitError(Exception):
     pass
 
+# Enhanced Yahoo Finance Client with thread safety and circuit breaker
 class YahooFinanceClient:
     def __init__(self):
-        self._lock = threading.RLock()
+        self._lock = threading.RLock()  # Reentrant lock for thread safety
         self.last_call = 0
-        self.delay = 0.6
+        self.delay = 0.6  # Base delay in seconds
         self.consecutive_failures = 0
         self.max_failures = 5
 
@@ -87,14 +89,14 @@ def fetch_stock_data_with_retry(symbol, period="5y", interval="1d"):
     if ".NS" not in symbol:
         symbol += ".NS"
     data = yahoo_client.get_history(symbol, period, interval)
-    time.sleep(0.1)
+    time.sleep(0.1)  # Small safety delay
     return data
 
 @lru_cache(maxsize=2000)
 def fetch_stock_data_cached(symbol, period="5y", interval="1d"):
     try:
         data = fetch_stock_data_with_retry(symbol, period, interval)
-        if len(data) > 1000:
+        if len(data) > 1000:  # Cache recent data only
             return data.iloc[-1000:]
         return data
     except Exception as e:
@@ -132,6 +134,13 @@ def get_volume_multiplier(data, window=14):
         return 1.5
     volatility_ratio = data['ATR'].iloc[-1] / data['Close'].iloc[-1]
     return min(2.5, max(1.5, 1.5 + (volatility_ratio * 10)))
+
+def volume_weighted_macd(data, window_fast=12, window_slow=26):
+    if len(data) < window_slow or 'Volume' not in data.columns:
+        return pd.Series(index=data.index, data=0, dtype=float)
+    vwma_fast = (data['Close'] * data['Volume']).rolling(window_fast, min_periods=1).sum() / data['Volume'].rolling(window_fast, min_periods=1).sum()
+    vwma_slow = (data['Close'] * data['Volume']).rolling(window_slow, min_periods=1).sum() / data['Volume'].rolling(window_slow, min_periods=1).sum()
+    return (vwma_fast - vwma_slow).reindex(data.index, fill_value=0)
 
 def detect_volume_climax(data):
     if not all(col in data.columns for col in ['Close', 'High', 'Low', 'Volume_Spike', 'RSI']):
@@ -183,86 +192,6 @@ def detect_volume_confirmed_breakout(data):
         return "Bearish Breakout"
     return "Neutral"
 
-def add_moving_averages(data):
-    data['SMA_200'] = ta.trend.SMAIndicator(data['Close'], window=200).sma_indicator()
-    data['EMA_5'] = ta.trend.EMAIndicator(data['Close'], window=5).ema_indicator()
-    data['EMA_10'] = ta.trend.EMAIndicator(data['Close'], window=10).ema_indicator()
-    data['EMA_20'] = ta.trend.EMAIndicator(data['Close'], window=20).ema_indicator()
-    data['EMA_50'] = ta.trend.EMAIndicator(data['Close'], window=50).ema_indicator()
-    data['EMA_200'] = ta.trend.EMAIndicator(data['Close'], window=200).ema_indicator()
-    return data
-
-def add_standard_macd(data):
-    macd = ta.trend.MACD(data['Close'], window_slow=26, window_fast=12, window_sign=9)
-    data['MACD'] = macd.macd()
-    data['MACD_Signal'] = macd.macd_signal()
-    data['MACD_Histogram'] = macd.macd_diff()
-    return data
-
-def calculate_cpr(data):
-    if len(data) < 2:
-        return data
-    
-    prev_day = data.iloc[-2]
-    high = prev_day['High']
-    low = prev_day['Low']
-    close = prev_day['Close']
-    
-    pivot = (high + low + close) / 3
-    bc = (high + low) / 2
-    tc = (pivot - bc) + pivot if pivot > bc else (bc - pivot) + bc
-    
-    r1 = 2 * pivot - low
-    s1 = 2 * pivot - high
-    r2 = pivot + (high - low)
-    s2 = pivot - (high - low)
-    r3 = high + 2 * (pivot - low)
-    s3 = low - 2 * (high - pivot)
-    
-    data['Pivot'] = pivot
-    data['TC'] = tc
-    data['BC'] = bc
-    data['R1'] = r1
-    data['S1'] = s1
-    data['R2'] = r2
-    data['S2'] = s2
-    data['R3'] = r3
-    data['S3'] = s3
-    return data
-
-def add_supertrend(data):
-    supertrend = ta.trend.SuperTrend(data['High'], data['Low'], data['Close'], period=10, multiplier=3)
-    data['Supertrend'] = supertrend.supertrend()
-    data['Supertrend_Direction'] = supertrend.supertrend_direction()  # 1 for up, -1 for down
-    return data
-
-def calculate_fibonacci_levels(data, lookback=20):
-    if len(data) < lookback:
-        return data
-    
-    recent_data = data.tail(lookback)
-    swing_high = recent_data['High'].max()
-    swing_low = recent_data['Low'].min()
-    diff = swing_high - swing_low
-    
-    levels = {
-        'Fib_23.6': swing_high - (diff * 0.236),
-        'Fib_38.2': swing_high - (diff * 0.382),
-        'Fib_50.0': swing_high - (diff * 0.50),
-        'Fib_61.8': swing_high - (diff * 0.618),
-        'Swing_High': swing_high,
-        'Swing_Low': swing_low
-    }
-    
-    for key, value in levels.items():
-        data[key] = value
-    return data
-
-def add_price_action(data, lookback=5):
-    data['Higher_High'] = data['High'] > data['High'].shift(1).rolling(lookback).max()
-    data['Lower_Low'] = data['Low'] < data['Low'].shift(1).rolling(lookback).min()
-    return data
-
 def analyze_stock(data):
     if data.empty or len(data) < 10:
         logger.warning(f"Insufficient data: only {len(data)} rows.")
@@ -294,6 +223,8 @@ def analyze_stock(data):
         data['POC'] = vol_profile.idxmax() if not vol_profile.empty else np.nan
         data['HVN'] = vol_profile[vol_profile > np.percentile(vol_profile.dropna(), 70)].index.tolist() if not vol_profile.empty else []
         
+        data['VW_MACD'] = volume_weighted_macd(data).reindex(data.index, fill_value=0)
+        
         bollinger = ta.volatility.BollingerBands(data['Close'], window=20, window_dev=2)
         data['Upper_Band'] = bollinger.bollinger_hband().reindex(data.index, fill_value=0)
         data['Lower_Band'] = bollinger.bollinger_lband().reindex(data.index, fill_value=0)
@@ -301,14 +232,6 @@ def analyze_stock(data):
         donchian = ta.volatility.DonchianChannel(data['High'], data['Low'], data['Close'], window=20)
         data['Donchian_Upper'] = donchian.donchian_channel_hband().reindex(data.index, fill_value=0)
         data['Donchian_Lower'] = donchian.donchian_channel_lband().reindex(data.index, fill_value=0)
-        
-        # New indicators
-        data = add_moving_averages(data)
-        data = add_standard_macd(data)
-        data = calculate_cpr(data)
-        data = add_supertrend(data)
-        data = calculate_fibonacci_levels(data)
-        data = add_price_action(data)
         
     except Exception as e:
         logger.error(f"Error in analyze_stock: {str(e)}")
@@ -329,63 +252,20 @@ def generate_recommendations(data, symbol=None):
     buy_score = 0
     sell_score = 0
 
-    # RSI
     if 'RSI' in data.columns and pd.notnull(data['RSI'].iloc[-1]):
         if data['RSI'].iloc[-1] < 30:
             buy_score += 2
         elif data['RSI'].iloc[-1] > 70:
             sell_score += 2
 
-    # EMA Crossover
-    if 'EMA_5' in data.columns and 'EMA_20' in data.columns:
-        if data['EMA_5'].iloc[-1] > data['EMA_20'].iloc[-1] and data['EMA_5'].iloc[-2] <= data['EMA_20'].iloc[-2]:
-            buy_score += 1.5
-        elif data['EMA_5'].iloc[-1] < data['EMA_20'].iloc[-1] and data['EMA_5'].iloc[-2] >= data['EMA_20'].iloc[-2]:
-            sell_score += 1.5
-
-    # MACD
-    if 'MACD' in data.columns and 'MACD_Signal' in data.columns:
-        if data['MACD'].iloc[-1] > data['MACD_Signal'].iloc[-1] and data['MACD'].iloc[-2] <= data['MACD_Signal'].iloc[-2]:
-            buy_score += 1.5
-        elif data['MACD'].iloc[-1] < data['MACD_Signal'].iloc[-1] and data['MACD'].iloc[-2] >= data['MACD_Signal'].iloc[-2]:
-            sell_score += 1.5
-        if 'MACD_Histogram' in data.columns and data['MACD_Histogram'].iloc[-1] > 0:
-            buy_score += 0.5 * abs(data['MACD_Histogram'].iloc[-1])
-        elif 'MACD_Histogram' in data.columns and data['MACD_Histogram'].iloc[-1] < 0:
-            sell_score += 0.5 * abs(data['MACD_Histogram'].iloc[-1])
-
-    # CPR
-    if 'Pivot' in data.columns and pd.notnull(data['Pivot'].iloc[-1]):
-        if last_close > data['TC'].iloc[-1] and last_close > data['R1'].iloc[-1]:
-            buy_score += 1.5
-        elif last_close < data['BC'].iloc[-1] and last_close < data['S1'].iloc[-1]:
-            sell_score += 1.5
-        elif data['BC'].iloc[-1] <= last_close <= data['TC'].iloc[-1]:
-            buy_score += 0.5
-            sell_score += 0.5
-
-    # Supertrend
-    if 'Supertrend_Direction' in data.columns:
-        if data['Supertrend_Direction'].iloc[-1] == 1 and data['Supertrend_Direction'].iloc[-2] == -1:
-            buy_score += 1.5
-        elif data['Supertrend_Direction'].iloc[-1] == -1 and data['Supertrend_Direction'].iloc[-2] == 1:
-            sell_score += 1.5
-
-    # Fibonacci
-    if 'Fib_61.8' in data.columns:
-        if last_close <= data['Fib_61.8'].iloc[-1] and last_close > data['Fib_50.0'].iloc[-1]:
+    if 'VW_MACD' in data.columns and pd.notnull(data['VW_MACD'].iloc[-1]):
+        if data['VW_MACD'].iloc[-1] > 0:
             buy_score += 1
-        elif last_close >= data['Fib_23.6'].iloc[-1] and last_close < data['Fib_38.2'].iloc[-1]:
+        elif data['VW_MACD'].iloc[-1] < 0:
             sell_score += 1
 
-    # Price Action
-    if 'Higher_High' in data.columns and data['Higher_High'].iloc[-1]:
-        buy_score += 1
-    if 'Lower_Low' in data.columns and data['Lower_Low'].iloc[-1]:
-        sell_score += 1
-
-    # Volume and Breakout
     breakout_signal = detect_volume_confirmed_breakout(data)
+    
     climax_signal = detect_volume_climax(data)
     if climax_signal == "Bullish Climax":
         buy_score += 1.5
@@ -429,7 +309,7 @@ def generate_recommendations(data, symbol=None):
     else:
         recommendations["Intraday"] = "🛑 Hold"
 
-    max_possible_score = 10  # Adjusted for more indicators
+    max_possible_score = 7
     recommendations["Score"] = round(((buy_score - sell_score) / max_possible_score) * 10, 2)
 
     if 'ATR' in data.columns and pd.notnull(data['ATR'].iloc[-1]):
@@ -483,13 +363,13 @@ def show_performance_metrics(data, recommendations):
 def analyze_batch(stock_batch, progress_bar, progress_text, total_stocks, processed_count):
     results = []
     failed_symbols = []
-    max_workers = min(4, os.cpu_count() - 1)
+    max_workers = min(4, os.cpu_count() - 1)  # Dynamic worker count
     with ThreadPoolExecutor(max_workers=max_workers, thread_name_prefix="stock_worker") as executor:
         futures = {executor.submit(analyze_stock_parallel, symbol): symbol for symbol in stock_batch}
-        for future in as_completed(futures, timeout=30):
+        for future in as_completed(futures, timeout=30):  # 30s timeout per batch
             symbol = futures[future]
             try:
-                result = future.result(timeout=10)
+                result = future.result(timeout=10)  # 10s per task
                 if result:
                     results.append(result)
                 else:
@@ -506,6 +386,7 @@ def analyze_batch(stock_batch, progress_bar, progress_text, total_stocks, proces
             progress_text.text(f"Progress: {processed_count[0]}/{total_stocks} stocks analyzed "
                              f"(Failed: {len(failed_symbols)}, Estimated time remaining: {int((total_stocks - processed_count[0]) * 0.5)}s)")
     
+    # Retry failed symbols once
     if failed_symbols:
         logger.info(f"Retrying {len(failed_symbols)} failed symbols")
         with ThreadPoolExecutor(max_workers=max_workers) as executor:
@@ -673,8 +554,7 @@ def display_dashboard(symbol=None, data=None, recommendations=None, NSE_STOCKS=N
                     show_performance_metrics(data, recommendations)
                     if enable_alerts:
                         check_real_time_alerts(symbol)
-                    fig = px.line(data, y=['Close', 'VWAP', 'EMA_5', 'EMA_20', 'Supertrend', 'Pivot', 'TC', 'BC'],
-                                  title=f"{symbol.split('.')[0]} Price and Indicators")
+                    fig = px.line(data, y=['Close', 'VWAP'], title="Price and VWAP")
                     st.plotly_chart(fig)
                 else:
                     st.error(f"❌ Insufficient intraday data for {symbol}.")
@@ -711,8 +591,7 @@ def display_dashboard(symbol=None, data=None, recommendations=None, NSE_STOCKS=N
             st.write(f"Intraday: {recommendations['Intraday']}")
             st.write(f"Position Size: {recommendations['Position_Size']*100:.1f}%")
             show_performance_metrics(data, recommendations)
-            fig = px.line(data, y=['Close', 'VWAP', 'EMA_5', 'EMA_20', 'Supertrend', 'Pivot', 'TC', 'BC'],
-                          title=f"{symbol.split('.')[0]} Price and Indicators (Long-term)")
+            fig = px.line(data, y=['Close', 'VWAP'], title="Price and VWAP (Long-term)")
             st.plotly_chart(fig)
 
 def main():
