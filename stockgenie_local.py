@@ -4,7 +4,7 @@ import pandas as pd
 import ta
 import streamlit as st
 from datetime import datetime
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from concurrent.futures import ThreadPoolExecutor, as_completed, TimeoutError as FuturesTimeoutError
 from functools import lru_cache
 import plotly.express as px
 import time
@@ -14,7 +14,9 @@ import random
 import numpy as np
 import logging
 import warnings
-from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
+import threading
+from tenacity import retry, stop_after_attempt, wait_random_exponential, retry_if_exception_type, before_sleep_log
+from requests.exceptions import RequestException
 
 warnings.filterwarnings("ignore", category=FutureWarning)
 logging.basicConfig(level=logging.DEBUG)
@@ -23,56 +25,78 @@ logger = logging.getLogger(__name__)
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "YOUR_TOKEN")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "YOUR_CHAT_ID")
 
-# Enhanced Yahoo Finance Client with rate-limit handling
+# Enhanced Yahoo Finance Client with thread safety and circuit breaker
 class YahooFinanceClient:
     def __init__(self):
+        self._lock = threading.RLock()  # Reentrant lock for thread safety
         self.last_call = 0
-        self.delay = 0.6  # 600ms base delay
+        self.delay = 0.6  # Base delay in seconds
         self.consecutive_failures = 0
         self.max_failures = 5
-    
+
     def get_history(self, symbol, period="5y", interval="1d"):
-        now = time.time()
-        elapsed = now - self.last_call
-        if elapsed < self.delay:
-            time.sleep(self.delay - elapsed)
-        try:
+        with self._lock:
+            elapsed = time.time() - self.last_call
+            if elapsed < self.delay:
+                time.sleep(self.delay - elapsed)
             self.last_call = time.time()
+            return self._fetch_with_circuit_breaker(symbol, period=period, interval=interval)
+
+    @retry(
+        stop=stop_after_attempt(3),
+        wait=wait_random_exponential(multiplier=1, min=2, max=30),
+        retry=retry_if_exception_type((RequestException, RateLimitError)),
+        before_sleep=before_sleep_log(logger, logging.WARNING)
+    )
+    def _fetch_with_circuit_breaker(self, symbol, period, interval):
+        try:
             ticker = yf.Ticker(symbol)
             data = ticker.history(period=period, interval=interval)
             if data.empty:
                 logger.debug(f"No data fetched for {symbol}")
                 return pd.DataFrame()
-            self.consecutive_failures = 0  # Reset on success
+            self.consecutive_failures = 0
             logger.debug(f"Fetched {len(data)} rows for {symbol}")
             return data
         except Exception as e:
-            if "429" in str(e):  # Rate limit detection
-                self.consecutive_failures += 1
-                if self.consecutive_failures >= self.max_failures:
-                    logger.warning("Rate limit exceeded, pausing for 60s")
-                    time.sleep(60)
-                    self.consecutive_failures = 0
-                else:
-                    time.sleep(10)  # Short pause for initial 429s
-            else:
-                self.consecutive_failures += 1
+            if "429" in str(e):
+                self._adjust_delay(e)
+                raise RateLimitError("API quota exceeded")
             raise
+
+    def _adjust_delay(self, exception):
+        with self._lock:
+            if "429" in str(exception):
+                self.consecutive_failures += 1
+                self.delay = min(5, 0.6 * (2 ** self.consecutive_failures))
+                logger.warning(f"Backoff delay increased to {self.delay}s")
+            else:
+                self.consecutive_failures = max(0, self.consecutive_failures - 1)
 
 yahoo_client = YahooFinanceClient()
 
-@retry(stop=stop_after_attempt(5), wait=wait_exponential(multiplier=1, min=2, max=10), retry=retry_if_exception_type(Exception))
+class RateLimitError(Exception):
+    pass
+
+@retry(
+    stop=stop_after_attempt(3),
+    wait=wait_random_exponential(multiplier=1, min=2, max=30),
+    retry=retry_if_exception_type((RequestException, RateLimitError)),
+    before_sleep=before_sleep_log(logger, logging.WARNING)
+)
 def fetch_stock_data_with_retry(symbol, period="5y", interval="1d"):
     if ".NS" not in symbol:
         symbol += ".NS"
     data = yahoo_client.get_history(symbol, period, interval)
-    time.sleep(0.1)  # Additional small delay for safety
+    time.sleep(0.1)  # Small safety delay
     return data
 
-@lru_cache(maxsize=500)
+@lru_cache(maxsize=2000)
 def fetch_stock_data_cached(symbol, period="5y", interval="1d"):
     try:
         data = fetch_stock_data_with_retry(symbol, period, interval)
+        if len(data) > 1000:  # Cache recent data only
+            return data.iloc[-1000:]
         return data
     except Exception as e:
         logger.warning(f"Failed to fetch data for {symbol} after retries: {str(e)}")
@@ -86,7 +110,7 @@ def calculate_volume_profile(data, bins=50):
     if (len(data) < 2 or 'Volume' not in data.columns or 
         data['Close'].isna().all() or data['High'].equals(data['Low'])):
         logger.debug("Insufficient or invalid data for volume profile calculation")
-        return pd.Series()  # Empty series for invalid data
+        return pd.Series()
     
     try:
         price_min = data['Low'].min()
@@ -99,10 +123,7 @@ def calculate_volume_profile(data, bins=50):
             fill_value=0
         )
         midpoints = (price_bins[:-1] + price_bins[1:]) / 2
-        volume_profile = pd.Series(volume_profile.values, index=midpoints, name='Volume_Profile')
-        logger.debug(f"Volume profile calculated with {bins} bins, total volume: {volume_profile.sum()}")
-        return volume_profile
-    
+        return pd.Series(volume_profile.values, index=midpoints, name='Volume_Profile')
     except Exception as e:
         logger.error(f"Error in volume profile calculation: {str(e)}")
         return pd.Series()
@@ -230,48 +251,40 @@ def generate_recommendations(data, symbol=None):
     buy_score = 0
     sell_score = 0
 
-    # RSI
     if 'RSI' in data.columns and pd.notnull(data['RSI'].iloc[-1]):
         if data['RSI'].iloc[-1] < 30:
             buy_score += 2
         elif data['RSI'].iloc[-1] > 70:
             sell_score += 2
 
-    # VW_MACD
     if 'VW_MACD' in data.columns and pd.notnull(data['VW_MACD'].iloc[-1]):
         if data['VW_MACD'].iloc[-1] > 0:
             buy_score += 1
         elif data['VW_MACD'].iloc[-1] < 0:
             sell_score += 1
 
-    # Breakout (prioritized)
     breakout_signal = detect_volume_confirmed_breakout(data)
     
-    # Climax
     climax_signal = detect_volume_climax(data)
     if climax_signal == "Bullish Climax":
         buy_score += 1.5
     elif climax_signal == "Bearish Climax":
         sell_score += 1.5
 
-    # VWAP Signal
     if 'VWAP_Signal' in data.columns and pd.notnull(data['VWAP_Signal'].iloc[-1]):
         if data['VWAP_Signal'].iloc[-1] == 1:
             sell_score += 1.5
         elif data['VWAP_Signal'].iloc[-1] == -1:
             buy_score += 1.5
 
-    # Volume Boost
     volume_multiplier = get_volume_multiplier(data)
     if data['Volume'].iloc[-1] > data['Avg_Volume'].iloc[-1] * volume_multiplier:
         buy_score *= 1.2
         sell_score *= 1.2
 
-    # Dynamic Thresholds
     base_threshold = 2.0 + (data['ATR'].iloc[-1] / data['Close'].iloc[-1]) if 'ATR' in data.columns and pd.notnull(data['ATR'].iloc[-1]) else 2.0
     strong_threshold = base_threshold + 1.5
 
-    # Decision Logic with Breakout Priority
     if breakout_signal == "Bullish Breakout" and buy_score > sell_score:
         recommendations["Intraday"] = "🚀 Strong Buy" if buy_score >= strong_threshold else "📈 Buy"
         recommendations["Signal"] = 1
@@ -295,7 +308,6 @@ def generate_recommendations(data, symbol=None):
     else:
         recommendations["Intraday"] = "🛑 Hold"
 
-    # Normalized Score
     max_possible_score = 7
     recommendations["Score"] = round(((buy_score - sell_score) / max_possible_score) * 10, 2)
 
@@ -350,16 +362,20 @@ def show_performance_metrics(data, recommendations):
 def analyze_batch(stock_batch, progress_bar, progress_text, total_stocks, processed_count):
     results = []
     failed_symbols = []
-    with ThreadPoolExecutor(max_workers=4) as executor:
+    max_workers = min(4, os.cpu_count() - 1)  # Dynamic worker count
+    with ThreadPoolExecutor(max_workers=max_workers, thread_name_prefix="stock_worker") as executor:
         futures = {executor.submit(analyze_stock_parallel, symbol): symbol for symbol in stock_batch}
-        for future in as_completed(futures):
+        for future in as_completed(futures, timeout=30):  # 30s timeout per batch
             symbol = futures[future]
             try:
-                result = future.result()
+                result = future.result(timeout=10)  # 10s per task
                 if result:
                     results.append(result)
                 else:
                     failed_symbols.append(symbol)
+            except FuturesTimeoutError:
+                logger.warning(f"Timeout processing {symbol}")
+                future.cancel()
             except Exception as e:
                 logger.error(f"Error processing {symbol}: {str(e)}")
                 failed_symbols.append(symbol)
@@ -372,14 +388,16 @@ def analyze_batch(stock_batch, progress_bar, progress_text, total_stocks, proces
     # Retry failed symbols once
     if failed_symbols:
         logger.info(f"Retrying {len(failed_symbols)} failed symbols")
-        with ThreadPoolExecutor(max_workers=4) as executor:
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
             futures = {executor.submit(analyze_stock_parallel, symbol): symbol for symbol in failed_symbols}
-            for future in as_completed(futures):
+            for future in as_completed(futures, timeout=30):
                 symbol = futures[future]
                 try:
-                    result = future.result()
+                    result = future.result(timeout=10)
                     if result:
                         results.append(result)
+                except FuturesTimeoutError:
+                    logger.warning(f"Retry timeout for {symbol}")
                 except Exception as e:
                     logger.error(f"Failed retry for {symbol}: {str(e)}")
     
@@ -417,7 +435,8 @@ def fetch_nse_stock_list():
 
 def filter_stocks_by_price(stock_list, price_range, progress_bar, progress_text, total_stocks, processed_count):
     filtered_stocks = []
-    with ThreadPoolExecutor(max_workers=4) as executor:
+    max_workers = min(4, os.cpu_count() - 1)
+    with ThreadPoolExecutor(max_workers=max_workers) as executor:
         future_to_symbol = {executor.submit(fetch_current_price, symbol): symbol for symbol in stock_list}
         for future in as_completed(future_to_symbol):
             symbol = future_to_symbol[future]
