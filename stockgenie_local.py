@@ -165,133 +165,18 @@ def dynamic_position_size(data, portfolio_size=100000):
     position_size = min(0.2, max_risk / denominator)
     return max(0.01, position_size)
 
-def detect_rectangle_pattern(data, lookback=20):
-    """Detect Bullish/Bearish Rectangle patterns based on consolidation between support and resistance."""
-    try:
-        if len(data) < lookback:
-            return None
-        
-        recent_data = data.tail(lookback)
-        highs = recent_data['High']
-        lows = recent_data['Low']
-        
-        resistance = highs.max()
-        support = lows.min()
-        
-        high_touches = sum(1 for h in highs if abs(h - resistance) / resistance < 0.01)  # Within 1% of resistance
-        low_touches = sum(1 for l in lows if abs(l - support) / support < 0.01)       # Within 1% of support
-        
-        if high_touches >= 3 and low_touches >= 3:
-            last_close = recent_data['Close'].iloc[-1]
-            if last_close > resistance:
-                return "Bullish Rectangle Breakout"
-            elif last_close < support:
-                return "Bearish Rectangle Breakdown"
-        return None
-    except Exception as e:
-        logger.error(f"Error detecting Rectangle pattern: {str(e)}")
-        return None
-
-def detect_triangle_pattern(data, lookback=20):
-    """Detect Ascending, Descending, or Symmetrical Triangle patterns."""
-    try:
-        if len(data) < lookback:
-            return None
-        
-        recent_data = data.tail(lookback)
-        highs = recent_data['High'].rolling(2).max()
-        lows = recent_data['Low'].rolling(2).min()
-        
-        high_slope = np.polyfit(range(len(highs)), highs, 1)[0]
-        low_slope = np.polyfit(range(len(lows)), lows, 1)[0]
-        
-        last_close = recent_data['Close'].iloc[-1]
-        resistance = highs.iloc[-1]
-        support = lows.iloc[-1]
-        
-        if abs(high_slope) < 0.01: high_slope = 0  # Treat small slopes as flat
-        if abs(low_slope) < 0.01: low_slope = 0
-        
-        if high_slope < 0 and low_slope > 0:  # Symmetrical Triangle
-            if last_close > resistance:
-                return "Symmetrical Triangle Breakout"
-            elif last_close < support:
-                return "Symmetrical Triangle Breakdown"
-        elif high_slope == 0 and low_slope > 0:  # Ascending Triangle
-            if last_close > resistance:
-                return "Ascending Triangle Breakout"
-        elif high_slope < 0 and low_slope == 0:  # Descending Triangle
-            if last_close < support:
-                return "Descending Triangle Breakdown"
-        return None
-    except Exception as e:
-        logger.error(f"Error detecting Triangle pattern: {str(e)}")
-        return None
-
-# Placeholder functions for other patterns (to be implemented)
-def detect_double_top_bottom(data, lookback=20):
-    return None  # Implement later
-
-def detect_head_and_shoulders(data, lookback=20):
-    return None  # Implement later
-
-def detect_flag_pattern(data, lookback=20):
-    return None  # Implement later
-
-def detect_cup_and_handle(data, lookback=20):
-    return None  # Implement later
-
-def detect_retest(data, pattern_type="Rectangle", lookback=5):
-    """Check for retest after breakout/breakdown."""
-    try:
-        if len(data) < lookback + 2:
-            return False
-        
-        recent_data = data.tail(lookback + 2)
-        last_close = recent_data['Close'].iloc[-1]
-        
-        if pattern_type == "Rectangle" and 'Rectangle_Pattern' in data.columns:
-            pattern = recent_data['Rectangle_Pattern'].iloc[-2]
-            if pattern == "Bullish Rectangle Breakout":
-                resistance = recent_data['High'].iloc[:-2].max()
-                if (recent_data['Close'].iloc[-2] > resistance and 
-                    last_close < resistance and 
-                    last_close > recent_data['Low'].iloc[:-2].min()):
-                    return True
-            elif pattern == "Bearish Rectangle Breakdown":
-                support = recent_data['Low'].iloc[:-2].min()
-                if (recent_data['Close'].iloc[-2] < support and 
-                    last_close > support and 
-                    last_close < recent_data['High'].iloc[:-2].max()):
-                    return True
-        return False
-    except Exception as e:
-        logger.error(f"Error detecting retest: {str(e)}")
-        return False
-
 def detect_volume_confirmed_breakout(data):
     required_cols = ['Donchian_Upper', 'Donchian_Lower', 'Volume', 'Avg_Volume', 'Close']
     if (not all(col in data.columns for col in required_cols) or 
         data[required_cols].iloc[-1].isna().any() or len(data) < 20):
         logger.debug("Insufficient data for Donchian breakout")
         return "Neutral"
-    
     last_close = data['Close'].iloc[-1]
     upper_band = data['Donchian_Upper'].iloc[-1]
     lower_band = data['Donchian_Lower'].iloc[-1]
     volume = data['Volume'].iloc[-1]
     avg_volume = data['Avg_Volume'].iloc[-1] or 1e-6
     volume_multiplier = get_volume_multiplier(data)
-    
-    if 'Rectangle_Pattern' in data.columns and data['Rectangle_Pattern'].iloc[-1]:
-        pattern = data['Rectangle_Pattern'].iloc[-1]
-        if ("Bullish" in pattern and last_close > upper_band and 
-            volume > avg_volume * volume_multiplier):
-            return "Bullish Rectangle Breakout (Volume Confirmed)"
-        elif ("Bearish" in pattern and last_close < lower_band and 
-              volume > avg_volume * volume_multiplier):
-            return "Bearish Rectangle Breakdown (Volume Confirmed)"
-    
     if last_close > upper_band and volume > avg_volume * volume_multiplier:
         return "Bullish Breakout"
     elif last_close < lower_band and volume > avg_volume * volume_multiplier:
@@ -348,7 +233,7 @@ def calculate_cpr(data):
 def add_supertrend(data):
     supertrend = ta.trend.SuperTrend(data['High'], data['Low'], data['Close'], period=10, multiplier=3)
     data['Supertrend'] = supertrend.supertrend()
-    data['Supertrend_Direction'] = supertrend.supertrend_direction()
+    data['Supertrend_Direction'] = supertrend.supertrend_direction()  # 1 for up, -1 for down
     return data
 
 def calculate_fibonacci_levels(data, lookback=20):
@@ -417,6 +302,7 @@ def analyze_stock(data):
         data['Donchian_Upper'] = donchian.donchian_channel_hband().reindex(data.index, fill_value=0)
         data['Donchian_Lower'] = donchian.donchian_channel_lband().reindex(data.index, fill_value=0)
         
+        # New indicators
         data = add_moving_averages(data)
         data = add_standard_macd(data)
         data = calculate_cpr(data)
@@ -424,17 +310,12 @@ def analyze_stock(data):
         data = calculate_fibonacci_levels(data)
         data = add_price_action(data)
         
-        # Add chart pattern detection
-        data['Rectangle_Pattern'] = data.apply(lambda row: detect_rectangle_pattern(data.loc[:row.name]), axis=1)
-        data['Triangle_Pattern'] = data.apply(lambda row: detect_triangle_pattern(data.loc[:row.name]), axis=1)
-        # Add other patterns here when implemented
-        
     except Exception as e:
         logger.error(f"Error in analyze_stock: {str(e)}")
     
     return data
 
-def generate_recommendations(data, symbol=None, trader_type="Hybrid"):
+def generate_recommendations(data, symbol=None):
     recommendations = {
         "Intraday": "Hold", "Current Price": None, "Buy At": None, "Stop Loss": None, 
         "Target": None, "Score": 0, "Position_Size": 0.1, "Signal": 0
@@ -448,84 +329,60 @@ def generate_recommendations(data, symbol=None, trader_type="Hybrid"):
     buy_score = 0
     sell_score = 0
 
-    if trader_type in ["Hybrid", "Technical Indicators Only"]:
-        # RSI
-        if 'RSI' in data.columns and pd.notnull(data['RSI'].iloc[-1]):
-            if data['RSI'].iloc[-1] < 30:
-                buy_score += 2
-            elif data['RSI'].iloc[-1] > 70:
-                sell_score += 2
+    # RSI
+    if 'RSI' in data.columns and pd.notnull(data['RSI'].iloc[-1]):
+        if data['RSI'].iloc[-1] < 30:
+            buy_score += 2
+        elif data['RSI'].iloc[-1] > 70:
+            sell_score += 2
 
-        # EMA Crossover
-        if 'EMA_5' in data.columns and 'EMA_20' in data.columns:
-            if data['EMA_5'].iloc[-1] > data['EMA_20'].iloc[-1] and data['EMA_5'].iloc[-2] <= data['EMA_20'].iloc[-2]:
-                buy_score += 1.5
-            elif data['EMA_5'].iloc[-1] < data['EMA_20'].iloc[-1] and data['EMA_5'].iloc[-2] >= data['EMA_20'].iloc[-2]:
-                sell_score += 1.5
+    # EMA Crossover
+    if 'EMA_5' in data.columns and 'EMA_20' in data.columns:
+        if data['EMA_5'].iloc[-1] > data['EMA_20'].iloc[-1] and data['EMA_5'].iloc[-2] <= data['EMA_20'].iloc[-2]:
+            buy_score += 1.5
+        elif data['EMA_5'].iloc[-1] < data['EMA_20'].iloc[-1] and data['EMA_5'].iloc[-2] >= data['EMA_20'].iloc[-2]:
+            sell_score += 1.5
 
-        # MACD
-        if 'MACD' in data.columns and 'MACD_Signal' in data.columns:
-            if data['MACD'].iloc[-1] > data['MACD_Signal'].iloc[-1] and data['MACD'].iloc[-2] <= data['MACD_Signal'].iloc[-2]:
-                buy_score += 1.5
-            elif data['MACD'].iloc[-1] < data['MACD_Signal'].iloc[-1] and data['MACD'].iloc[-2] >= data['MACD_Signal'].iloc[-2]:
-                sell_score += 1.5
-            if 'MACD_Histogram' in data.columns and data['MACD_Histogram'].iloc[-1] > 0:
-                buy_score += 0.5 * abs(data['MACD_Histogram'].iloc[-1])
-            elif 'MACD_Histogram' in data.columns and data['MACD_Histogram'].iloc[-1] < 0:
-                sell_score += 0.5 * abs(data['MACD_Histogram'].iloc[-1])
+    # MACD
+    if 'MACD' in data.columns and 'MACD_Signal' in data.columns:
+        if data['MACD'].iloc[-1] > data['MACD_Signal'].iloc[-1] and data['MACD'].iloc[-2] <= data['MACD_Signal'].iloc[-2]:
+            buy_score += 1.5
+        elif data['MACD'].iloc[-1] < data['MACD_Signal'].iloc[-1] and data['MACD'].iloc[-2] >= data['MACD_Signal'].iloc[-2]:
+            sell_score += 1.5
+        if 'MACD_Histogram' in data.columns and data['MACD_Histogram'].iloc[-1] > 0:
+            buy_score += 0.5 * abs(data['MACD_Histogram'].iloc[-1])
+        elif 'MACD_Histogram' in data.columns and data['MACD_Histogram'].iloc[-1] < 0:
+            sell_score += 0.5 * abs(data['MACD_Histogram'].iloc[-1])
 
-        # CPR
-        if 'Pivot' in data.columns and pd.notnull(data['Pivot'].iloc[-1]):
-            if last_close > data['TC'].iloc[-1] and last_close > data['R1'].iloc[-1]:
-                buy_score += 1.5
-            elif last_close < data['BC'].iloc[-1] and last_close < data['S1'].iloc[-1]:
-                sell_score += 1.5
-            elif data['BC'].iloc[-1] <= last_close <= data['TC'].iloc[-1]:
-                buy_score += 0.5
-                sell_score += 0.5
+    # CPR
+    if 'Pivot' in data.columns and pd.notnull(data['Pivot'].iloc[-1]):
+        if last_close > data['TC'].iloc[-1] and last_close > data['R1'].iloc[-1]:
+            buy_score += 1.5
+        elif last_close < data['BC'].iloc[-1] and last_close < data['S1'].iloc[-1]:
+            sell_score += 1.5
+        elif data['BC'].iloc[-1] <= last_close <= data['TC'].iloc[-1]:
+            buy_score += 0.5
+            sell_score += 0.5
 
-        # Supertrend
-        if 'Supertrend_Direction' in data.columns:
-            if data['Supertrend_Direction'].iloc[-1] == 1 and data['Supertrend_Direction'].iloc[-2] == -1:
-                buy_score += 1.5
-            elif data['Supertrend_Direction'].iloc[-1] == -1 and data['Supertrend_Direction'].iloc[-2] == 1:
-                sell_score += 1.5
+    # Supertrend
+    if 'Supertrend_Direction' in data.columns:
+        if data['Supertrend_Direction'].iloc[-1] == 1 and data['Supertrend_Direction'].iloc[-2] == -1:
+            buy_score += 1.5
+        elif data['Supertrend_Direction'].iloc[-1] == -1 and data['Supertrend_Direction'].iloc[-2] == 1:
+            sell_score += 1.5
 
-        # Fibonacci
-        if 'Fib_61.8' in data.columns:
-            if last_close <= data['Fib_61.8'].iloc[-1] and last_close > data['Fib_50.0'].iloc[-1]:
-                buy_score += 1
-            elif last_close >= data['Fib_23.6'].iloc[-1] and last_close < data['Fib_38.2'].iloc[-1]:
-                sell_score += 1
-
-    if trader_type in ["Hybrid", "Price Action Only"]:
-        # Price Action and Chart Patterns
-        if 'Higher_High' in data.columns and data['Higher_High'].iloc[-1]:
+    # Fibonacci
+    if 'Fib_61.8' in data.columns:
+        if last_close <= data['Fib_61.8'].iloc[-1] and last_close > data['Fib_50.0'].iloc[-1]:
             buy_score += 1
-        if 'Lower_Low' in data.columns and data['Lower_Low'].iloc[-1]:
+        elif last_close >= data['Fib_23.6'].iloc[-1] and last_close < data['Fib_38.2'].iloc[-1]:
             sell_score += 1
-        
-        if 'Rectangle_Pattern' in data.columns and data['Rectangle_Pattern'].iloc[-1]:
-            pattern = data['Rectangle_Pattern'].iloc[-1]
-            if "Bullish" in pattern:
-                buy_score += 2.0
-            elif "Bearish" in pattern:
-                sell_score += 2.0
-        if 'Triangle_Pattern' in data.columns and data['Triangle_Pattern'].iloc[-1]:
-            pattern = data['Triangle_Pattern'].iloc[-1]
-            if "Breakout" in pattern:
-                buy_score += 2.0
-            elif "Breakdown" in pattern:
-                sell_score += 2.0
-        
-        # Retest Boost
-        if detect_retest(data, "Rectangle"):
-            if "Bullish" in data['Rectangle_Pattern'].iloc[-2]:
-                buy_score += 1.5
-                recommendations["Buy At"] = round(data['Close'].iloc[-1], 2)
-            elif "Bearish" in data['Rectangle_Pattern'].iloc[-2]:
-                sell_score += 1.5
-                recommendations["Sell At"] = round(data['Close'].iloc[-1], 2)
+
+    # Price Action
+    if 'Higher_High' in data.columns and data['Higher_High'].iloc[-1]:
+        buy_score += 1
+    if 'Lower_Low' in data.columns and data['Lower_Low'].iloc[-1]:
+        sell_score += 1
 
     # Volume and Breakout
     breakout_signal = detect_volume_confirmed_breakout(data)
@@ -549,10 +406,10 @@ def generate_recommendations(data, symbol=None, trader_type="Hybrid"):
     base_threshold = 2.0 + (data['ATR'].iloc[-1] / data['Close'].iloc[-1]) if 'ATR' in data.columns and pd.notnull(data['ATR'].iloc[-1]) else 2.0
     strong_threshold = base_threshold + 1.5
 
-    if breakout_signal in ["Bullish Breakout", "Bullish Rectangle Breakout (Volume Confirmed)"] and buy_score > sell_score:
+    if breakout_signal == "Bullish Breakout" and buy_score > sell_score:
         recommendations["Intraday"] = "🚀 Strong Buy" if buy_score >= strong_threshold else "📈 Buy"
         recommendations["Signal"] = 1
-    elif breakout_signal in ["Bearish Breakout", "Bearish Rectangle Breakdown (Volume Confirmed)"] and sell_score > buy_score:
+    elif breakout_signal == "Bearish Breakout" and sell_score > buy_score:
         recommendations["Intraday"] = "🔥 Strong Sell" if sell_score >= strong_threshold else "📉 Sell"
         recommendations["Signal"] = -1
     elif buy_score >= strong_threshold and sell_score < base_threshold:
@@ -572,11 +429,11 @@ def generate_recommendations(data, symbol=None, trader_type="Hybrid"):
     else:
         recommendations["Intraday"] = "🛑 Hold"
 
-    max_possible_score = 12  # Adjusted for additional pattern logic
+    max_possible_score = 10  # Adjusted for more indicators
     recommendations["Score"] = round(((buy_score - sell_score) / max_possible_score) * 10, 2)
 
     if 'ATR' in data.columns and pd.notnull(data['ATR'].iloc[-1]):
-        recommendations["Buy At"] = round(last_close * 0.99, 2) if recommendations.get("Buy At") is None else recommendations["Buy At"]
+        recommendations["Buy At"] = round(last_close * 0.99, 2)
         recommendations["Stop Loss"] = round(last_close - (data['ATR'].iloc[-1] * 2.5), 2)
         recommendations["Target"] = round(last_close + ((last_close - recommendations["Stop Loss"]) * 3), 2)
     
@@ -766,52 +623,14 @@ def send_telegram_message(message):
     except Exception as e:
         logger.error(f"Failed to send Telegram message: {str(e)}")
 
-def scan_for_patterns(stock_list, pattern_type="Rectangle"):
-    results = []
-    for symbol in stock_list:
-        data = fetch_stock_data_cached(symbol)
-        if not data.empty:
-            data = analyze_stock(data)
-            if pattern_type == "Rectangle" and data['Rectangle_Pattern'].iloc[-1]:
-                results.append({"Symbol": symbol, "Pattern": data['Rectangle_Pattern'].iloc[-1]})
-            elif pattern_type == "Triangle" and data['Triangle_Pattern'].iloc[-1]:
-                results.append({"Symbol": symbol, "Pattern": data['Triangle_Pattern'].iloc[-1]})
-    return pd.DataFrame(results)
-
-def plot_chart_patterns(data, symbol):
-    fig = px.line(data, y=['Close'], title=f"{symbol.split('.')[0]} with Chart Patterns")
-    
-    if 'Rectangle_Pattern' in data.columns and data['Rectangle_Pattern'].notna().any():
-        breakout_idx = data.index[data['Rectangle_Pattern'].notna()][-1]
-        breakout_price = data.loc[breakout_idx, 'Close']
-        fig.add_shape(type="rect",
-                      x0=data.index[-20], y0=data['Low'].tail(20).min(),
-                      x1=breakout_idx, y1=data['High'].tail(20).max(),
-                      line=dict(color="Yellow", width=2), fillcolor="rgba(255,255,0,0.2)")
-        fig.add_annotation(x=breakout_idx, y=breakout_price, text="Rectangle Breakout",
-                           showarrow=True, arrowhead=2)
-    
-    if 'Triangle_Pattern' in data.columns and data['Triangle_Pattern'].notna().any():
-        breakout_idx = data.index[data['Triangle_Pattern'].notna()][-1]
-        breakout_price = data.loc[breakout_idx, 'Close']
-        fig.add_shape(type="rect",
-                      x0=data.index[-20], y0=data['Low'].tail(20).min(),
-                      x1=breakout_idx, y1=data['High'].tail(20).max(),
-                      line=dict(color="Green", width=2), fillcolor="rgba(0,255,0,0.2)")
-        fig.add_annotation(x=breakout_idx, y=breakout_price, text="Triangle Breakout",
-                           showarrow=True, arrowhead=2)
-    
-    st.plotly_chart(fig)
-
 def display_dashboard(symbol=None, data=None, recommendations=None, NSE_STOCKS=None):
     st.title("📊 StockGenie Pro")
     st.sidebar.button("🧹 Clear Cache", on_click=clear_cache, key="clear_cache")
     enable_alerts = st.sidebar.checkbox("Enable Real-time Alerts", False)
-    trader_type = st.sidebar.selectbox("Trader Type", ["Price Action Only", "Technical Indicators Only", "Hybrid"])
     
     price_range = st.sidebar.slider("Price Range (₹)", 0, 10000, (100, 1000))
     
-    col1, col2, col3, col4 = st.columns(4)
+    col1, col2, col3 = st.columns(3)
     with col1:
         if st.button("🚀 Generate Top Picks", key="top_picks"):
             with st.spinner("Analyzing stocks..."):
@@ -838,7 +657,7 @@ def display_dashboard(symbol=None, data=None, recommendations=None, NSE_STOCKS=N
                 data = fetch_stock_data_cached(symbol, period=period, interval=interval)
                 if not data.empty and len(data) >= 10:
                     data = analyze_stock(data)
-                    recommendations = generate_recommendations(data, symbol, trader_type)
+                    recommendations = generate_recommendations(data, symbol)
                     st.subheader(f"📋 {symbol.split('.')[0]} Intraday Analysis")
                     col1, col2, col3, col4 = st.columns(4)
                     with col1:
@@ -854,7 +673,9 @@ def display_dashboard(symbol=None, data=None, recommendations=None, NSE_STOCKS=N
                     show_performance_metrics(data, recommendations)
                     if enable_alerts:
                         check_real_time_alerts(symbol)
-                    plot_chart_patterns(data, symbol)
+                    fig = px.line(data, y=['Close', 'VWAP', 'EMA_5', 'EMA_20', 'Supertrend', 'Pivot', 'TC', 'BC'],
+                                  title=f"{symbol.split('.')[0]} Price and Indicators")
+                    st.plotly_chart(fig)
                 else:
                     st.error(f"❌ Insufficient intraday data for {symbol}.")
     
@@ -874,18 +695,6 @@ def display_dashboard(symbol=None, data=None, recommendations=None, NSE_STOCKS=N
                             st.write(f"Position Size: {row['Position_Size']*100:.1f}%")
                 else:
                     st.write("No short sell recommendations found.")
-    
-    with col4:
-        if st.button("🔍 Scan for Patterns", key="pattern_scan"):
-            with st.spinner("Scanning for patterns..."):
-                pattern_results = scan_for_patterns(NSE_STOCKS, "Rectangle")
-                if not pattern_results.empty:
-                    st.subheader("Detected Rectangle Patterns")
-                    st.dataframe(pattern_results)
-                pattern_results = scan_for_patterns(NSE_STOCKS, "Triangle")
-                if not pattern_results.empty:
-                    st.subheader("Detected Triangle Patterns")
-                    st.dataframe(pattern_results)
 
     if symbol and data is not None and recommendations is not None:
         if 'intraday_clicked' not in st.session_state or not st.session_state.intraday_clicked:
@@ -902,7 +711,9 @@ def display_dashboard(symbol=None, data=None, recommendations=None, NSE_STOCKS=N
             st.write(f"Intraday: {recommendations['Intraday']}")
             st.write(f"Position Size: {recommendations['Position_Size']*100:.1f}%")
             show_performance_metrics(data, recommendations)
-            plot_chart_patterns(data, symbol)
+            fig = px.line(data, y=['Close', 'VWAP', 'EMA_5', 'EMA_20', 'Supertrend', 'Pivot', 'TC', 'BC'],
+                          title=f"{symbol.split('.')[0]} Price and Indicators (Long-term)")
+            st.plotly_chart(fig)
 
 def main():
     if 'cancel_operation' not in st.session_state:
@@ -916,8 +727,7 @@ def main():
         data = fetch_stock_data_cached(symbol)
         if not data.empty and len(data) >= 10:
             data = analyze_stock(data)
-            trader_type = st.sidebar.selectbox("Trader Type", ["Price Action Only", "Technical Indicators Only", "Hybrid"])
-            recommendations = generate_recommendations(data, symbol, trader_type)
+            recommendations = generate_recommendations(data, symbol)
             display_dashboard(symbol, data, recommendations, NSE_STOCKS)
         else:
             st.error(f"❌ Insufficient data for {symbol}.")
