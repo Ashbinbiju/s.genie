@@ -18,15 +18,12 @@ import threading
 from tenacity import retry, stop_after_attempt, wait_random_exponential, retry_if_exception_type, before_sleep_log
 from requests.exceptions import RequestException
 
-# Configuration
 warnings.filterwarnings("ignore", category=FutureWarning)
 logging.basicConfig(level=logging.DEBUG)
 logger = logging.getLogger(__name__)
 
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "YOUR_TOKEN")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "YOUR_CHAT_ID")
-
-DEBUG = False  # Can be set via st.sidebar.checkbox
 
 class RateLimitError(Exception):
     pass
@@ -58,20 +55,16 @@ class YahooFinanceClient:
             ticker = yf.Ticker(symbol)
             data = ticker.history(period=period, interval=interval)
             if data.empty:
-                # Try with shorter period if no data
-                if period == "5y":
-                    logger.debug(f"No data for 5y, trying 2y for {symbol}")
-                    data = ticker.history(period="2y", interval=interval)
-                if data.empty and interval == "1d":
-                    logger.debug(f"No daily data, trying 1m for {symbol}")
-                    data = ticker.history(period="1mo", interval="1h")
+                logger.debug(f"No data fetched for {symbol}")
+                return pd.DataFrame()
+            self.consecutive_failures = 0
+            logger.debug(f"Fetched {len(data)} rows for {symbol}")
             return data
         except Exception as e:
             if "429" in str(e):
                 self._adjust_delay(e)
                 raise RateLimitError("API quota exceeded")
-            logger.error(f"Error fetching {symbol}: {str(e)}")
-            return pd.DataFrame()
+            raise
 
     def _adjust_delay(self, exception):
         with self._lock:
@@ -113,16 +106,14 @@ def clear_cache():
     logger.info("Cache cleared.")
 
 def calculate_volume_profile(data, bins=50):
-    if len(data) < 2 or 'Volume' not in data.columns or data['Close'].isna().all():
-        logger.debug("Insufficient data for volume profile")
+    if (len(data) < 2 or 'Volume' not in data.columns or 
+        data['Close'].isna().all() or data['High'].equals(data['Low'])):
+        logger.debug("Insufficient or invalid data for volume profile calculation")
         return pd.Series()
     
     try:
         price_min = data['Low'].min()
         price_max = data['High'].max()
-        if price_min == price_max:
-            return pd.Series()
-            
         price_bins = np.linspace(price_min, price_max, bins + 1)
         price_categories = pd.cut(data['Close'], bins=price_bins, include_lowest=True)
         volume_profile = data.groupby(price_categories, observed=True)['Volume'].sum()
@@ -133,7 +124,7 @@ def calculate_volume_profile(data, bins=50):
         midpoints = (price_bins[:-1] + price_bins[1:]) / 2
         return pd.Series(volume_profile.values, index=midpoints, name='Volume_Profile')
     except Exception as e:
-        logger.error(f"Volume profile error: {str(e)}")
+        logger.error(f"Error in volume profile calculation: {str(e)}")
         return pd.Series()
 
 def get_volume_multiplier(data, window=14):
@@ -145,12 +136,10 @@ def get_volume_multiplier(data, window=14):
 def detect_volume_climax(data):
     if not all(col in data.columns for col in ['Close', 'High', 'Low', 'Volume_Spike', 'RSI']):
         return None
-        
     last_close = data['Close'].iloc[-1]
     is_high = last_close == data['High'].rolling(5, min_periods=1).max().iloc[-1]
     is_low = last_close == data['Low'].rolling(5, min_periods=1).min().iloc[-1]
     volume_spike = data['Volume_Spike'].iloc[-1]
-    
     if volume_spike and is_high and data['RSI'].iloc[-1] > 70:
         return "Bearish Climax"
     elif volume_spike and is_low and data['RSI'].iloc[-1] < 30:
@@ -160,7 +149,6 @@ def detect_volume_climax(data):
 def add_vwap_indicators(data):
     if 'VWAP' not in data.columns or data['VWAP'].isna().all():
         return data
-        
     data['VWAP_Deviation'] = (data['Close'] - data['VWAP']) / data['VWAP'] * 100
     data['VWAP_Signal'] = np.where(data['VWAP_Deviation'] > 1, 1, 
                                  np.where(data['VWAP_Deviation'] < -1, -1, 0))
@@ -169,24 +157,26 @@ def add_vwap_indicators(data):
 def dynamic_position_size(data, portfolio_size=100000):
     if 'ATR' not in data.columns or pd.isna(data['ATR'].iloc[-1]) or data['Close'].iloc[-1] == 0:
         return 0.01
-        
     risk_per_share = data['ATR'].iloc[-1] * 2
     max_risk = portfolio_size * 0.01
-    position_size = min(0.2, max_risk / (risk_per_share * data['Close'].iloc[-1]))
+    denominator = risk_per_share * data['Close'].iloc[-1]
+    if denominator == 0:
+        return 0.01
+    position_size = min(0.2, max_risk / denominator)
     return max(0.01, position_size)
 
 def detect_volume_confirmed_breakout(data):
     required_cols = ['Donchian_Upper', 'Donchian_Lower', 'Volume', 'Avg_Volume', 'Close']
-    if not all(col in data.columns for col in required_cols):
+    if (not all(col in data.columns for col in required_cols) or 
+        data[required_cols].iloc[-1].isna().any() or len(data) < 20):
+        logger.debug("Insufficient data for Donchian breakout")
         return "Neutral"
-        
     last_close = data['Close'].iloc[-1]
     upper_band = data['Donchian_Upper'].iloc[-1]
     lower_band = data['Donchian_Lower'].iloc[-1]
     volume = data['Volume'].iloc[-1]
     avg_volume = data['Avg_Volume'].iloc[-1] or 1e-6
     volume_multiplier = get_volume_multiplier(data)
-    
     if last_close > upper_band and volume > avg_volume * volume_multiplier:
         return "Bullish Breakout"
     elif last_close < lower_band and volume > avg_volume * volume_multiplier:
@@ -194,136 +184,125 @@ def detect_volume_confirmed_breakout(data):
     return "Neutral"
 
 def add_moving_averages(data):
-    for window in [5, 10, 20, 50, 200]:
-        try:
-            data[f'EMA_{window}'] = ta.trend.EMAIndicator(data['Close'], window=window).ema_indicator()
-        except:
-            data[f'EMA_{window}'] = np.nan
+    data['SMA_200'] = ta.trend.SMAIndicator(data['Close'], window=200).sma_indicator()
+    data['EMA_5'] = ta.trend.EMAIndicator(data['Close'], window=5).ema_indicator()
+    data['EMA_10'] = ta.trend.EMAIndicator(data['Close'], window=10).ema_indicator()
+    data['EMA_20'] = ta.trend.EMAIndicator(data['Close'], window=20).ema_indicator()
+    data['EMA_50'] = ta.trend.EMAIndicator(data['Close'], window=50).ema_indicator()
+    data['EMA_200'] = ta.trend.EMAIndicator(data['Close'], window=200).ema_indicator()
     return data
 
 def add_standard_macd(data):
-    try:
-        macd = ta.trend.MACD(data['Close'], window_slow=26, window_fast=12, window_sign=9)
-        data['MACD'] = macd.macd()
-        data['MACD_Signal'] = macd.macd_signal()
-        data['MACD_Histogram'] = macd.macd_diff()
-    except:
-        data['MACD'] = data['MACD_Signal'] = data['MACD_Histogram'] = np.nan
+    macd = ta.trend.MACD(data['Close'], window_slow=26, window_fast=12, window_sign=9)
+    data['MACD'] = macd.macd()
+    data['MACD_Signal'] = macd.macd_signal()
+    data['MACD_Histogram'] = macd.macd_diff()
     return data
 
 def calculate_cpr(data):
     if len(data) < 2:
         return data
-        
-    try:
-        prev_day = data.iloc[-2]
-        high = prev_day['High']
-        low = prev_day['Low']
-        close = prev_day['Close']
-        
-        pivot = (high + low + close) / 3
-        bc = (high + low) / 2
-        tc = (pivot - bc) + pivot
-        
-        data['Pivot'] = pivot
-        data['TC'] = tc
-        data['BC'] = bc
-        data['R1'] = 2 * pivot - low
-        data['S1'] = 2 * pivot - high
-        data['R2'] = pivot + (high - low)
-        data['S2'] = pivot - (high - low)
-    except:
-        pass
-        
+    
+    prev_day = data.iloc[-2]
+    high = prev_day['High']
+    low = prev_day['Low']
+    close = prev_day['Close']
+    
+    pivot = (high + low + close) / 3
+    bc = (high + low) / 2
+    tc = (pivot - bc) + pivot if pivot > bc else (bc - pivot) + bc
+    
+    r1 = 2 * pivot - low
+    s1 = 2 * pivot - high
+    r2 = pivot + (high - low)
+    s2 = pivot - (high - low)
+    r3 = high + 2 * (pivot - low)
+    s3 = low - 2 * (high - pivot)
+    
+    data['Pivot'] = pivot
+    data['TC'] = tc
+    data['BC'] = bc
+    data['R1'] = r1
+    data['S1'] = s1
+    data['R2'] = r2
+    data['S2'] = s2
+    data['R3'] = r3
+    data['S3'] = s3
     return data
 
 def add_supertrend(data):
-    try:
-        supertrend = ta.trend.SuperTrend(data['High'], data['Low'], data['Close'], period=10, multiplier=3)
-        data['Supertrend'] = supertrend.supertrend()
-        data['Supertrend_Direction'] = supertrend.supertrend_direction()
-    except:
-        data['Supertrend'] = data['Supertrend_Direction'] = np.nan
+    supertrend = ta.trend.SuperTrend(data['High'], data['Low'], data['Close'], period=10, multiplier=3)
+    data['Supertrend'] = supertrend.supertrend()
+    data['Supertrend_Direction'] = supertrend.supertrend_direction()  # 1 for up, -1 for down
     return data
 
 def calculate_fibonacci_levels(data, lookback=20):
     if len(data) < lookback:
         return data
-        
-    try:
-        recent_data = data.tail(lookback)
-        swing_high = recent_data['High'].max()
-        swing_low = recent_data['Low'].min()
-        diff = swing_high - swing_low
-        
-        levels = {
-            'Fib_23.6': swing_high - (diff * 0.236),
-            'Fib_38.2': swing_high - (diff * 0.382),
-            'Fib_50.0': swing_high - (diff * 0.50),
-            'Fib_61.8': swing_high - (diff * 0.618),
-            'Swing_High': swing_high,
-            'Swing_Low': swing_low
-        }
-        
-        for key, value in levels.items():
-            data[key] = value
-    except:
-        pass
-        
+    
+    recent_data = data.tail(lookback)
+    swing_high = recent_data['High'].max()
+    swing_low = recent_data['Low'].min()
+    diff = swing_high - swing_low
+    
+    levels = {
+        'Fib_23.6': swing_high - (diff * 0.236),
+        'Fib_38.2': swing_high - (diff * 0.382),
+        'Fib_50.0': swing_high - (diff * 0.50),
+        'Fib_61.8': swing_high - (diff * 0.618),
+        'Swing_High': swing_high,
+        'Swing_Low': swing_low
+    }
+    
+    for key, value in levels.items():
+        data[key] = value
     return data
 
 def add_price_action(data, lookback=5):
-    try:
-        data['Higher_High'] = data['High'] > data['High'].shift(1).rolling(lookback).max()
-        data['Lower_Low'] = data['Low'] < data['Low'].shift(1).rolling(lookback).min()
-    except:
-        data['Higher_High'] = data['Lower_Low'] = False
+    data['Higher_High'] = data['High'] > data['High'].shift(1).rolling(lookback).max()
+    data['Lower_Low'] = data['Low'] < data['Low'].shift(1).rolling(lookback).min()
     return data
 
 def analyze_stock(data):
-    if data.empty:
+    if data.empty or len(data) < 10:
+        logger.warning(f"Insufficient data: only {len(data)} rows.")
         return data
-        
-    # Ensure required columns exist
-    for col in ['Close', 'High', 'Low', 'Volume']:
-        if col not in data.columns:
-            data[col] = np.nan
-            
-    if len(data) < 10:
-        logger.warning(f"Insufficient data: {len(data)} rows")
-        return data
-        
+    
     try:
-        # Basic indicators
-        data['RSI'] = ta.momentum.RSIIndicator(data['Close'], window=14).rsi()
-        data['ATR'] = ta.volatility.AverageTrueRange(data['High'], data['Low'], data['Close'], window=14).average_true_range()
+        required_cols = ['Close', 'High', 'Low', 'Volume']
+        if not all(col in data.columns for col in required_cols):
+            logger.error(f"Missing required columns: {set(required_cols) - set(data.columns)}")
+            return data
         
-        # Volume analysis
+        rsi = ta.momentum.RSIIndicator(data['Close'], window=14).rsi()
+        data['RSI'] = rsi.reindex(data.index, fill_value=0)
+        
+        atr = ta.volatility.AverageTrueRange(data['High'], data['Low'], data['Close'], window=14).average_true_range()
+        data['ATR'] = atr.reindex(data.index, fill_value=0)
+        
         data['Cumulative_TP'] = ((data['High'] + data['Low'] + data['Close']) / 3) * data['Volume']
         data['Cumulative_Volume'] = data['Volume'].cumsum()
         data['VWAP'] = data['Cumulative_TP'].cumsum() / data['Cumulative_Volume']
         data = add_vwap_indicators(data)
         
-        data['Avg_Volume'] = data['Volume'].rolling(window=10, min_periods=1).mean()
+        avg_volume = data['Volume'].rolling(window=10, min_periods=1).mean()
+        data['Avg_Volume'] = avg_volume.reindex(data.index, fill_value=0)
         data['Volume_Spike'] = data['Volume'] > (data['Avg_Volume'] * get_volume_multiplier(data))
         
-        # Volume profile
         vol_profile = calculate_volume_profile(data)
-        if not vol_profile.empty:
-            data['Volume_Profile'] = data['Close'].map(vol_profile)
-            data['POC'] = vol_profile.idxmax()
+        data['Volume_Profile'] = data['Close'].map(vol_profile) if not vol_profile.empty else 0
+        data['POC'] = vol_profile.idxmax() if not vol_profile.empty else np.nan
+        data['HVN'] = vol_profile[vol_profile > np.percentile(vol_profile.dropna(), 70)].index.tolist() if not vol_profile.empty else []
         
-        # Bollinger Bands
         bollinger = ta.volatility.BollingerBands(data['Close'], window=20, window_dev=2)
-        data['Upper_Band'] = bollinger.bollinger_hband()
-        data['Lower_Band'] = bollinger.bollinger_lband()
+        data['Upper_Band'] = bollinger.bollinger_hband().reindex(data.index, fill_value=0)
+        data['Lower_Band'] = bollinger.bollinger_lband().reindex(data.index, fill_value=0)
         
-        # Donchian Channel
         donchian = ta.volatility.DonchianChannel(data['High'], data['Low'], data['Close'], window=20)
-        data['Donchian_Upper'] = donchian.donchian_channel_hband()
-        data['Donchian_Lower'] = donchian.donchian_channel_lband()
+        data['Donchian_Upper'] = donchian.donchian_channel_hband().reindex(data.index, fill_value=0)
+        data['Donchian_Lower'] = donchian.donchian_channel_lband().reindex(data.index, fill_value=0)
         
-        # Additional indicators
+        # New indicators
         data = add_moving_averages(data)
         data = add_standard_macd(data)
         data = calculate_cpr(data)
@@ -332,88 +311,108 @@ def analyze_stock(data):
         data = add_price_action(data)
         
     except Exception as e:
-        logger.error(f"Analysis error: {str(e)}")
+        logger.error(f"Error in analyze_stock: {str(e)}")
     
     return data
 
 def generate_recommendations(data, symbol=None):
     recommendations = {
-        "Intraday": "Hold", "Current Price": None, "Buy At": None, 
-        "Stop Loss": None, "Target": None, "Score": 0, 
-        "Position_Size": 0.1, "Signal": 0
+        "Intraday": "Hold", "Current Price": None, "Buy At": None, "Stop Loss": None, 
+        "Target": None, "Score": 0, "Position_Size": 0.1, "Signal": 0
     }
-    
     if data.empty or 'Close' not in data.columns or pd.isna(data['Close'].iloc[-1]):
+        logger.debug(f"No valid close price for {symbol}")
         return recommendations
-        
+    
     last_close = data['Close'].iloc[-1]
     recommendations["Current Price"] = round(float(last_close), 2)
     buy_score = 0
     sell_score = 0
 
-    # RSI scoring
+    # RSI
     if 'RSI' in data.columns and pd.notnull(data['RSI'].iloc[-1]):
-        rsi = data['RSI'].iloc[-1]
-        if rsi < 30:
+        if data['RSI'].iloc[-1] < 30:
             buy_score += 2
-        elif rsi > 70:
+        elif data['RSI'].iloc[-1] > 70:
             sell_score += 2
 
     # EMA Crossover
     if 'EMA_5' in data.columns and 'EMA_20' in data.columns:
-        ema5 = data['EMA_5'].iloc[-1]
-        ema20 = data['EMA_20'].iloc[-1]
-        ema5_prev = data['EMA_5'].iloc[-2] if len(data) > 1 else ema5
-        ema20_prev = data['EMA_20'].iloc[-2] if len(data) > 1 else ema20
-        
-        if ema5 > ema20 and ema5_prev <= ema20_prev:
+        if data['EMA_5'].iloc[-1] > data['EMA_20'].iloc[-1] and data['EMA_5'].iloc[-2] <= data['EMA_20'].iloc[-2]:
             buy_score += 1.5
-        elif ema5 < ema20 and ema5_prev >= ema20_prev:
+        elif data['EMA_5'].iloc[-1] < data['EMA_20'].iloc[-1] and data['EMA_5'].iloc[-2] >= data['EMA_20'].iloc[-2]:
             sell_score += 1.5
 
-    # MACD scoring
+    # MACD
     if 'MACD' in data.columns and 'MACD_Signal' in data.columns:
-        macd = data['MACD'].iloc[-1]
-        macd_signal = data['MACD_Signal'].iloc[-1]
-        macd_prev = data['MACD'].iloc[-2] if len(data) > 1 else macd
-        signal_prev = data['MACD_Signal'].iloc[-2] if len(data) > 1 else macd_signal
-        
-        if macd > macd_signal and macd_prev <= signal_prev:
+        if data['MACD'].iloc[-1] > data['MACD_Signal'].iloc[-1] and data['MACD'].iloc[-2] <= data['MACD_Signal'].iloc[-2]:
             buy_score += 1.5
-        elif macd < macd_signal and macd_prev >= signal_prev:
+        elif data['MACD'].iloc[-1] < data['MACD_Signal'].iloc[-1] and data['MACD'].iloc[-2] >= data['MACD_Signal'].iloc[-2]:
             sell_score += 1.5
-            
-        if 'MACD_Histogram' in data.columns:
-            hist = data['MACD_Histogram'].iloc[-1]
-            if hist > 0:
-                buy_score += 0.5 * abs(hist)
-            elif hist < 0:
-                sell_score += 0.5 * abs(hist)
+        if 'MACD_Histogram' in data.columns and data['MACD_Histogram'].iloc[-1] > 0:
+            buy_score += 0.5 * abs(data['MACD_Histogram'].iloc[-1])
+        elif 'MACD_Histogram' in data.columns and data['MACD_Histogram'].iloc[-1] < 0:
+            sell_score += 0.5 * abs(data['MACD_Histogram'].iloc[-1])
 
-    # Volume breakout scoring
+    # CPR
+    if 'Pivot' in data.columns and pd.notnull(data['Pivot'].iloc[-1]):
+        if last_close > data['TC'].iloc[-1] and last_close > data['R1'].iloc[-1]:
+            buy_score += 1.5
+        elif last_close < data['BC'].iloc[-1] and last_close < data['S1'].iloc[-1]:
+            sell_score += 1.5
+        elif data['BC'].iloc[-1] <= last_close <= data['TC'].iloc[-1]:
+            buy_score += 0.5
+            sell_score += 0.5
+
+    # Supertrend
+    if 'Supertrend_Direction' in data.columns:
+        if data['Supertrend_Direction'].iloc[-1] == 1 and data['Supertrend_Direction'].iloc[-2] == -1:
+            buy_score += 1.5
+        elif data['Supertrend_Direction'].iloc[-1] == -1 and data['Supertrend_Direction'].iloc[-2] == 1:
+            sell_score += 1.5
+
+    # Fibonacci
+    if 'Fib_61.8' in data.columns:
+        if last_close <= data['Fib_61.8'].iloc[-1] and last_close > data['Fib_50.0'].iloc[-1]:
+            buy_score += 1
+        elif last_close >= data['Fib_23.6'].iloc[-1] and last_close < data['Fib_38.2'].iloc[-1]:
+            sell_score += 1
+
+    # Price Action
+    if 'Higher_High' in data.columns and data['Higher_High'].iloc[-1]:
+        buy_score += 1
+    if 'Lower_Low' in data.columns and data['Lower_Low'].iloc[-1]:
+        sell_score += 1
+
+    # Volume and Breakout
     breakout_signal = detect_volume_confirmed_breakout(data)
-    if breakout_signal == "Bullish Breakout":
-        buy_score += 2
-    elif breakout_signal == "Bearish Breakout":
-        sell_score += 2
-        
     climax_signal = detect_volume_climax(data)
     if climax_signal == "Bullish Climax":
         buy_score += 1.5
     elif climax_signal == "Bearish Climax":
         sell_score += 1.5
 
-    # Volume multiplier
+    if 'VWAP_Signal' in data.columns and pd.notnull(data['VWAP_Signal'].iloc[-1]):
+        if data['VWAP_Signal'].iloc[-1] == 1:
+            sell_score += 1.5
+        elif data['VWAP_Signal'].iloc[-1] == -1:
+            buy_score += 1.5
+
     volume_multiplier = get_volume_multiplier(data)
     if data['Volume'].iloc[-1] > data['Avg_Volume'].iloc[-1] * volume_multiplier:
         buy_score *= 1.2
         sell_score *= 1.2
 
-    # Determine recommendation
-    base_threshold = 1.5  # Reduced threshold
-    strong_threshold = 2.5
-    
-    if buy_score >= strong_threshold and sell_score < base_threshold:
+    base_threshold = 2.0 + (data['ATR'].iloc[-1] / data['Close'].iloc[-1]) if 'ATR' in data.columns and pd.notnull(data['ATR'].iloc[-1]) else 2.0
+    strong_threshold = base_threshold + 1.5
+
+    if breakout_signal == "Bullish Breakout" and buy_score > sell_score:
+        recommendations["Intraday"] = "🚀 Strong Buy" if buy_score >= strong_threshold else "📈 Buy"
+        recommendations["Signal"] = 1
+    elif breakout_signal == "Bearish Breakout" and sell_score > buy_score:
+        recommendations["Intraday"] = "🔥 Strong Sell" if sell_score >= strong_threshold else "📉 Sell"
+        recommendations["Signal"] = -1
+    elif buy_score >= strong_threshold and sell_score < base_threshold:
         recommendations["Intraday"] = "🚀 Strong Buy"
         recommendations["Signal"] = 1
     elif buy_score >= base_threshold and sell_score < base_threshold:
@@ -430,33 +429,106 @@ def generate_recommendations(data, symbol=None):
     else:
         recommendations["Intraday"] = "🛑 Hold"
 
-    # Calculate score (-10 to 10 scale)
-    max_possible_score = 10
+    max_possible_score = 10  # Adjusted for more indicators
     recommendations["Score"] = round(((buy_score - sell_score) / max_possible_score) * 10, 2)
 
-    # Calculate trade parameters
     if 'ATR' in data.columns and pd.notnull(data['ATR'].iloc[-1]):
-        atr = data['ATR'].iloc[-1]
         recommendations["Buy At"] = round(last_close * 0.99, 2)
-        recommendations["Stop Loss"] = round(last_close - (atr * 2.5), 2)
+        recommendations["Stop Loss"] = round(last_close - (data['ATR'].iloc[-1] * 2.5), 2)
         recommendations["Target"] = round(last_close + ((last_close - recommendations["Stop Loss"]) * 3), 2)
     
     recommendations["Position_Size"] = dynamic_position_size(data)
-    
-    if DEBUG:
-        logger.info(f"{symbol}: Buy={buy_score:.1f}, Sell={sell_score:.1f}, Rec={recommendations['Intraday']}")
-    
+    logger.debug(f"{symbol}: Buy Score={buy_score:.2f}, Sell Score={sell_score:.2f}, Recommendation={recommendations['Intraday']}")
     return recommendations
 
+def check_real_time_alerts(symbol):
+    data = fetch_stock_data_cached(symbol, period='1d', interval='5m')
+    if len(data) < 10:
+        return
+    data = analyze_stock(data)
+    current = data.iloc[-1]
+    if current['Volume'] > 2 * data['Volume'].rolling(20, min_periods=1).mean().iloc[-1]:
+        send_telegram_message(f"🚨 Volume spike in {symbol}: {current['Volume']/1000:.0f}K shares")
+    if current['Close'] > data['Upper_Band'].iloc[-1]:
+        send_telegram_message(f"🚀 Breakout in {symbol} at ₹{current['Close']:.2f}")
+
+def show_performance_metrics(data, recommendations):
+    st.subheader("📊 Strategy Performance")
+    signals = []
+    for i in range(len(data)):
+        temp_data = data.iloc[:i+1]
+        rec = generate_recommendations(temp_data)
+        signals.append(rec["Signal"])
+    data['Signal'] = signals
+    
+    returns = data['Close'].pct_change()
+    strategy_returns = returns * data['Signal'].shift(1).fillna(0)
+    strategy_returns = strategy_returns.dropna()
+    
+    if len(strategy_returns) == 0:
+        st.write("No trades executed.")
+        return
+    
+    col1, col2, col3 = st.columns(3)
+    with col1:
+        win_rate = len(strategy_returns[strategy_returns > 0]) / len(strategy_returns) * 100
+        st.metric("Win Rate", f"{win_rate:.1f}%")
+    with col2:
+        avg_return = strategy_returns.mean() * 100 if not pd.isna(strategy_returns.mean()) else 0
+        st.metric("Avg Win/Loss", f"{avg_return:.2f}%")
+    with col3:
+        sharpe = strategy_returns.mean() / strategy_returns.std() if strategy_returns.std() != 0 else 0
+        st.metric("Sharpe Ratio", f"{sharpe:.2f}")
+
+def analyze_batch(stock_batch, progress_bar, progress_text, total_stocks, processed_count):
+    results = []
+    failed_symbols = []
+    max_workers = min(4, os.cpu_count() - 1)
+    with ThreadPoolExecutor(max_workers=max_workers, thread_name_prefix="stock_worker") as executor:
+        futures = {executor.submit(analyze_stock_parallel, symbol): symbol for symbol in stock_batch}
+        for future in as_completed(futures, timeout=30):
+            symbol = futures[future]
+            try:
+                result = future.result(timeout=10)
+                if result:
+                    results.append(result)
+                else:
+                    failed_symbols.append(symbol)
+            except FuturesTimeoutError:
+                logger.warning(f"Timeout processing {symbol}")
+                future.cancel()
+            except Exception as e:
+                logger.error(f"Error processing {symbol}: {str(e)}")
+                failed_symbols.append(symbol)
+            processed_count[0] += 1
+            progress = min(1.0, processed_count[0] / total_stocks)
+            progress_bar.progress(progress)
+            progress_text.text(f"Progress: {processed_count[0]}/{total_stocks} stocks analyzed "
+                             f"(Failed: {len(failed_symbols)}, Estimated time remaining: {int((total_stocks - processed_count[0]) * 0.5)}s)")
+    
+    if failed_symbols:
+        logger.info(f"Retrying {len(failed_symbols)} failed symbols")
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            futures = {executor.submit(analyze_stock_parallel, symbol): symbol for symbol in failed_symbols}
+            for future in as_completed(futures, timeout=30):
+                symbol = futures[future]
+                try:
+                    result = future.result(timeout=10)
+                    if result:
+                        results.append(result)
+                except FuturesTimeoutError:
+                    logger.warning(f"Retry timeout for {symbol}")
+                except Exception as e:
+                    logger.error(f"Failed retry for {symbol}: {str(e)}")
+    
+    clear_cache()
+    return results
+
 def analyze_stock_parallel(symbol):
-    try:
-        data = fetch_stock_data_cached(symbol)
-        if data.empty or len(data) < 10:
-            return None
-            
+    data = fetch_stock_data_cached(symbol)
+    if not data.empty and len(data) >= 10:
         data = analyze_stock(data)
         recommendations = generate_recommendations(data, symbol)
-        
         return {
             "Symbol": symbol,
             "Current Price": recommendations["Current Price"],
@@ -467,165 +539,200 @@ def analyze_stock_parallel(symbol):
             "Score": recommendations["Score"],
             "Position_Size": recommendations["Position_Size"]
         }
-    except Exception as e:
-        logger.error(f"Error analyzing {symbol}: {str(e)}")
-        return None
+    logger.debug(f"Skipping {symbol}: insufficient data ({len(data)} rows)")
+    return None
 
 def fetch_nse_stock_list():
+    url = "https://archives.nseindia.com/content/equities/EQUITY_L.csv"
     try:
-        url = "https://archives.nseindia.com/content/equities/EQUITY_L.csv"
         response = requests.get(url, timeout=10)
         response.raise_for_status()
         nse_data = pd.read_csv(io.StringIO(response.text))
         return [f"{symbol}.NS" for symbol in nse_data['SYMBOL']]
-    except Exception as e:
-        logger.error(f"Failed to fetch NSE list: {str(e)}")
+    except Exception:
+        st.warning("⚠️ Failed to fetch NSE stock list; using fallback.")
         return ["RELIANCE.NS", "TCS.NS", "HDFCBANK.NS", "INFY.NS", "SBIN.NS"]
 
-def filter_stocks_by_price(stock_list, price_range):
-    filtered = []
-    for symbol in stock_list[:200]:  # Limit to first 200 for performance
-        price = fetch_current_price(symbol)
-        if price and price_range[0] <= price <= price_range[1]:
-            filtered.append(symbol)
-    return filtered
+def filter_stocks_by_price(stock_list, price_range, progress_bar, progress_text, total_stocks, processed_count):
+    filtered_stocks = []
+    max_workers = min(4, os.cpu_count() - 1)
+    with ThreadPoolExecutor(max_workers=max_workers) as executor:
+        future_to_symbol = {executor.submit(fetch_current_price, symbol): symbol for symbol in stock_list}
+        for future in as_completed(future_to_symbol):
+            symbol = future_to_symbol[future]
+            try:
+                current_price = future.result()
+                if current_price is not None and price_range[0] <= current_price <= price_range[1]:
+                    filtered_stocks.append(symbol)
+                processed_count[0] += 1
+                progress = min(1.0, processed_count[0] / total_stocks)
+                progress_bar.progress(progress)
+                progress_text.text(f"Filtering: {processed_count[0]}/{total_stocks} stocks processed "
+                                 f"(Estimated time remaining: {int((total_stocks - processed_count[0]) * 0.5)}s)")
+            except Exception as e:
+                logger.error(f"Error filtering {symbol}: {str(e)}")
+    return filtered_stocks
 
 @lru_cache(maxsize=2000)
 def fetch_current_price(symbol):
     try:
+        if ".NS" not in symbol:
+            symbol += ".NS"
         data = yahoo_client.get_history(symbol, period="1d", interval="1d")
-        return data['Close'].iloc[-1] if not data.empty and 'Close' in data.columns else None
-    except:
+        if not data.empty and 'Close' in data.columns:
+            return data['Close'].iloc[-1]
+        logger.debug(f"No current price data for {symbol}")
+        return None
+    except Exception as e:
+        logger.warning(f"Error fetching current price for {symbol}: {str(e)}")
         return None
 
-def analyze_all_stocks(stock_list, price_range=None, short_sell=False):
+def analyze_all_stocks(stock_list, batch_size=10, price_range=None, short_sell=False):
     progress_bar = st.progress(0)
     progress_text = st.empty()
+    processed_count = [0]
     
-    # Filter by price if range specified
     if price_range:
-        stock_list = filter_stocks_by_price(stock_list, price_range)
+        total_stocks = len(stock_list)
+        stock_list = filter_stocks_by_price(stock_list, price_range, progress_bar, progress_text, total_stocks, processed_count)
+        processed_count[0] = 0
     
-    # Process stocks in batches
     results = []
-    batch_size = 10
     total_stocks = len(stock_list)
-    
-    for i in range(0, total_stocks, batch_size):
-        batch = stock_list[i:i+batch_size]
-        batch_results = []
-        
-        for symbol in batch:
-            result = analyze_stock_parallel(symbol)
-            if result:
-                batch_results.append(result)
-            
-            # Update progress
-            progress = min(1.0, (i + len(batch_results)) / total_stocks)
-            progress_bar.progress(progress)
-            progress_text.text(f"Analyzed {i + len(batch_results)}/{total_stocks} stocks")
-        
-        results.extend(batch_results)
+    for i in range(0, len(stock_list), batch_size):
+        batch = stock_list[i:i + batch_size]
+        results.extend(analyze_batch(batch, progress_bar, progress_text, total_stocks, processed_count))
     
     progress_bar.empty()
     progress_text.empty()
     
-    # Convert to DataFrame and filter recommendations
     results_df = pd.DataFrame([r for r in results if r is not None])
-    
     if results_df.empty:
-        return pd.DataFrame()
+        logger.debug("No valid stock analysis results returned.")
+        return pd.DataFrame(columns=["Symbol", "Current Price", "Buy At", "Stop Loss", "Target", "Intraday", "Score", "Position_Size"])
     
     if short_sell:
-        return results_df[results_df['Intraday'].str.contains("Sell")].sort_values("Score").head(5)
-    else:
-        return results_df[results_df['Intraday'].str.contains("Buy")].sort_values("Score", ascending=False).head(5)
+        return results_df[results_df['Intraday'].isin(["📉 Sell", "🔥 Strong Sell"])].sort_values(by="Score").head(5)
+    return results_df[results_df['Intraday'].isin(["📈 Buy", "🚀 Strong Buy"])].sort_values(by="Score", ascending=False).head(5)
+
+def send_telegram_message(message):
+    url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
+    payload = {"chat_id": TELEGRAM_CHAT_ID, "text": message}
+    try:
+        requests.post(url, json=payload, timeout=5)
+    except Exception as e:
+        logger.error(f"Failed to send Telegram message: {str(e)}")
 
 def display_dashboard(symbol=None, data=None, recommendations=None, NSE_STOCKS=None):
     st.title("📊 StockGenie Pro")
+    st.sidebar.button("🧹 Clear Cache", on_click=clear_cache, key="clear_cache")
+    enable_alerts = st.sidebar.checkbox("Enable Real-time Alerts", False)
     
-    # Sidebar controls
-    st.sidebar.button("🧹 Clear Cache", on_click=clear_cache)
-    global DEBUG
-    DEBUG = st.sidebar.checkbox("Debug Mode", False)
-    enable_alerts = st.sidebar.checkbox("Enable Alerts", False)
     price_range = st.sidebar.slider("Price Range (₹)", 0, 10000, (100, 1000))
     
-    # Main columns for actions
     col1, col2, col3 = st.columns(3)
-    
     with col1:
-        if st.button("🚀 Top Buy Picks"):
-            with st.spinner("Finding best opportunities..."):
-                results_df = analyze_all_stocks(NSE_STOCKS, price_range=price_range)
+        if st.button("🚀 Generate Top Picks", key="top_picks"):
+            with st.spinner("Analyzing stocks..."):
+                results_df = analyze_all_stocks(NSE_STOCKS, price_range=price_range, short_sell=False)
                 if not results_df.empty:
-                    st.subheader("🏆 Top 5 Buy Opportunities")
+                    st.subheader("🏆 Top 5 Buy Picks")
                     for _, row in results_df.iterrows():
-                        with st.expander(f"{row['Symbol']} - Score: {row['Score']:.1f}"):
-                            st.write(f"**Price:** ₹{row['Current Price']:.2f}")
-                            st.write(f"**Signal:** {row['Intraday']}")
-                            st.write(f"**Buy At:** ₹{row['Buy At']:.2f}" if row['Buy At'] else "N/A")
-                            st.write(f"**Stop Loss:** ₹{row['Stop Loss']:.2f}" if row['Stop Loss'] else "N/A")
-                            st.write(f"**Target:** ₹{row['Target']:.2f}" if row['Target'] else "N/A")
-                            st.write(f"**Position Size:** {row['Position_Size']*100:.1f}%")
+                        with st.expander(f"{row['Symbol']} - Score: {row['Score']}"):
+                            st.write(f"Current Price: ₹{row['Current Price']:.2f}")
+                            st.write(f"Buy At: ₹{row['Buy At']:.2f}" if row['Buy At'] else "Buy At: N/A")
+                            st.write(f"Stop Loss: ₹{row['Stop Loss']:.2f}" if row['Stop Loss'] else "Stop Loss: N/A")
+                            st.write(f"Target: ₹{row['Target']:.2f}" if row['Target'] else "Target: N/A")
+                            st.write(f"Intraday: {row['Intraday']}")
+                            st.write(f"Position Size: {row['Position_Size']*100:.1f}%")
                 else:
-                    st.warning("No strong buy opportunities found")
+                    st.write("No buy recommendations found.")
     
     with col2:
-        if symbol and st.button("📈 Analyze Selected"):
-            with st.spinner(f"Analyzing {symbol}..."):
-                data = fetch_stock_data_cached(symbol)
-                if not data.empty:
+        if st.button("📈 Intraday Analysis", key="intraday_analysis") and symbol:
+            with st.spinner("Fetching intraday data..."):
+                st.session_state.intraday_clicked = True
+                period = '1d' if enable_alerts else '5y'
+                interval = '5m' if enable_alerts else '1d'
+                data = fetch_stock_data_cached(symbol, period=period, interval=interval)
+                if not data.empty and len(data) >= 10:
                     data = analyze_stock(data)
                     recommendations = generate_recommendations(data, symbol)
-                    
-                    st.subheader(f"📋 {symbol.split('.')[0]} Analysis")
-                    cols = st.columns(4)
-                    cols[0].metric("Price", f"₹{data['Close'].iloc[-1]:.2f}")
-                    cols[1].metric("RSI", f"{data['RSI'].iloc[-1]:.1f}" if 'RSI' in data.columns else "N/A")
-                    cols[2].metric("Volume", f"{data['Volume'].iloc[-1]/1000:.0f}K")
-                    cols[3].metric("ATR", f"{data['ATR'].iloc[-1]:.2f}" if 'ATR' in data.columns else "N/A")
-                    
-                    if recommendations:
-                        st.write(f"**Recommendation:** {recommendations['Intraday']}")
-                        st.write(f"**Score:** {recommendations['Score']:.1f}/10")
-                    
-                    # Show chart
-                    fig = px.line(data.tail(100), y=['Close', 'EMA_20', 'VWAP'], 
-                                  title=f"{symbol.split('.')[0]} Price Action")
+                    st.subheader(f"📋 {symbol.split('.')[0]} Intraday Analysis")
+                    col1, col2, col3, col4 = st.columns(4)
+                    with col1:
+                        st.metric("Current Price", f"₹{recommendations['Current Price']:.2f}")
+                    with col2:
+                        st.metric("Buy At", f"₹{recommendations['Buy At']:.2f}" if recommendations['Buy At'] else "N/A")
+                    with col3:
+                        st.metric("Stop Loss", f"₹{recommendations['Stop Loss']:.2f}" if recommendations['Stop Loss'] else "N/A")
+                    with col4:
+                        st.metric("Target", f"₹{recommendations['Target']:.2f}" if recommendations['Target'] else "N/A")
+                    st.write(f"Intraday: {recommendations['Intraday']}")
+                    st.write(f"Position Size: {recommendations['Position_Size']*100:.1f}%")
+                    show_performance_metrics(data, recommendations)
+                    if enable_alerts:
+                        check_real_time_alerts(symbol)
+                    fig = px.line(data, y=['Close', 'VWAP', 'EMA_5', 'EMA_20', 'Supertrend', 'Pivot', 'TC', 'BC'],
+                                  title=f"{symbol.split('.')[0]} Price and Indicators")
                     st.plotly_chart(fig)
                 else:
-                    st.error(f"Could not fetch data for {symbol}")
+                    st.error(f"❌ Insufficient intraday data for {symbol}.")
     
     with col3:
-        if st.button("📉 Short Sell Picks"):
-            with st.spinner("Finding short opportunities..."):
+        if st.button("📉 Short Sell Picks", key="short_sell_picks"):
+            with st.spinner("Analyzing short sell opportunities..."):
                 results_df = analyze_all_stocks(NSE_STOCKS, price_range=price_range, short_sell=True)
                 if not results_df.empty:
-                    st.subheader("🏆 Top 5 Short Opportunities")
+                    st.subheader("🏆 Top 5 Short Sell Picks")
                     for _, row in results_df.iterrows():
-                        with st.expander(f"{row['Symbol']} - Score: {row['Score']:.1f}"):
-                            st.write(f"**Price:** ₹{row['Current Price']:.2f}")
-                            st.write(f"**Signal:** {row['Intraday']}")
-                            st.write(f"**Stop Loss:** ₹{row['Buy At']:.2f}" if row['Buy At'] else "N/A")
-                            st.write(f"**Target:** ₹{row['Stop Loss']:.2f}" if row['Stop Loss'] else "N/A")
-                            st.write(f"**Position Size:** {row['Position_Size']*100:.1f}%")
+                        with st.expander(f"{row['Symbol']} - Score: {row['Score']}"):
+                            st.write(f"Current Price: ₹{row['Current Price']:.2f}")
+                            st.write(f"Sell At: ₹{row['Current Price']:.2f}")
+                            st.write(f"Stop Loss: ₹{row['Current Price'] + (row['Current Price'] - row['Buy At']) if row['Buy At'] else row['Current Price']:.2f}")
+                            st.write(f"Target: ₹{row['Buy At']:.2f}" if row['Buy At'] else "N/A")
+                            st.write(f"Intraday: {row['Intraday']}")
+                            st.write(f"Position Size: {row['Position_Size']*100:.1f}%")
                 else:
-                    st.warning("No strong short opportunities found")
+                    st.write("No short sell recommendations found.")
+
+    if symbol and data is not None and recommendations is not None:
+        if 'intraday_clicked' not in st.session_state or not st.session_state.intraday_clicked:
+            st.subheader(f"📋 {symbol.split('.')[0]} Long-term Analysis")
+            col1, col2, col3, col4 = st.columns(4)
+            with col1:
+                st.metric("Current Price", f"₹{recommendations['Current Price']:.2f}")
+            with col2:
+                st.metric("Buy At", f"₹{recommendations['Buy At']:.2f}" if recommendations['Buy At'] else "N/A")
+            with col3:
+                st.metric("Stop Loss", f"₹{recommendations['Stop Loss']:.2f}" if recommendations['Stop Loss'] else "N/A")
+            with col4:
+                st.metric("Target", f"₹{recommendations['Target']:.2f}" if recommendations['Target'] else "N/A")
+            st.write(f"Intraday: {recommendations['Intraday']}")
+            st.write(f"Position Size: {recommendations['Position_Size']*100:.1f}%")
+            show_performance_metrics(data, recommendations)
+            fig = px.line(data, y=['Close', 'VWAP', 'EMA_5', 'EMA_20', 'Supertrend', 'Pivot', 'TC', 'BC'],
+                          title=f"{symbol.split('.')[0]} Price and Indicators (Long-term)")
+            st.plotly_chart(fig)
 
 def main():
-    # Initialize session state
     if 'cancel_operation' not in st.session_state:
         st.session_state.cancel_operation = False
+    if 'intraday_clicked' not in st.session_state:
+        st.session_state.intraday_clicked = False
     
-    # Get stock list
     NSE_STOCKS = fetch_nse_stock_list()
-    
-    # Stock selector
-    symbol = st.sidebar.selectbox("Select Stock:", [""] + NSE_STOCKS[:200])  # Limit to 200 for performance
-    
-    # Display dashboard
-    display_dashboard(symbol=symbol if symbol else None, NSE_STOCKS=NSE_STOCKS)
+    symbol = st.sidebar.selectbox("Choose stock:", [""] + NSE_STOCKS)
+    if symbol:
+        data = fetch_stock_data_cached(symbol)
+        if not data.empty and len(data) >= 10:
+            data = analyze_stock(data)
+            recommendations = generate_recommendations(data, symbol)
+            display_dashboard(symbol, data, recommendations, NSE_STOCKS)
+        else:
+            st.error(f"❌ Insufficient data for {symbol}.")
+    else:
+        display_dashboard(None, None, None, NSE_STOCKS)
 
 if __name__ == "__main__":
     main()
