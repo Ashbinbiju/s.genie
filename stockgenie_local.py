@@ -27,7 +27,7 @@ TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "YOUR_CHAT_ID")
 class YahooFinanceClient:
     def __init__(self):
         self.last_call = 0
-        self.delay = 0.6  # 600ms base delay
+        self.delay = 1.0  # Increased to 1s base delay
         self.consecutive_failures = 0
         self.max_failures = 5
     
@@ -66,7 +66,7 @@ def fetch_stock_data_with_retry(symbol, period="5y", interval="1d"):
     if ".NS" not in symbol:
         symbol += ".NS"
     data = yahoo_client.get_history(symbol, period, interval)
-    time.sleep(0.1)  # Additional small delay for safety
+    time.sleep(0.2)  # Increased small delay for safety
     return data
 
 @lru_cache(maxsize=500)
@@ -86,7 +86,7 @@ def calculate_volume_profile(data, bins=50):
     if (len(data) < 2 or 'Volume' not in data.columns or 
         data['Close'].isna().all() or data['High'].equals(data['Low'])):
         logger.debug("Insufficient or invalid data for volume profile calculation")
-        return pd.Series()  # Empty series for invalid data
+        return pd.Series()
     
     try:
         price_min = data['Low'].min()
@@ -230,48 +230,40 @@ def generate_recommendations(data, symbol=None):
     buy_score = 0
     sell_score = 0
 
-    # RSI
     if 'RSI' in data.columns and pd.notnull(data['RSI'].iloc[-1]):
         if data['RSI'].iloc[-1] < 30:
             buy_score += 2
         elif data['RSI'].iloc[-1] > 70:
             sell_score += 2
 
-    # VW_MACD
     if 'VW_MACD' in data.columns and pd.notnull(data['VW_MACD'].iloc[-1]):
         if data['VW_MACD'].iloc[-1] > 0:
             buy_score += 1
         elif data['VW_MACD'].iloc[-1] < 0:
             sell_score += 1
 
-    # Breakout (prioritized)
     breakout_signal = detect_volume_confirmed_breakout(data)
     
-    # Climax
     climax_signal = detect_volume_climax(data)
     if climax_signal == "Bullish Climax":
         buy_score += 1.5
     elif climax_signal == "Bearish Climax":
         sell_score += 1.5
 
-    # VWAP Signal
     if 'VWAP_Signal' in data.columns and pd.notnull(data['VWAP_Signal'].iloc[-1]):
         if data['VWAP_Signal'].iloc[-1] == 1:
             sell_score += 1.5
         elif data['VWAP_Signal'].iloc[-1] == -1:
             buy_score += 1.5
 
-    # Volume Boost
     volume_multiplier = get_volume_multiplier(data)
     if data['Volume'].iloc[-1] > data['Avg_Volume'].iloc[-1] * volume_multiplier:
         buy_score *= 1.2
         sell_score *= 1.2
 
-    # Dynamic Thresholds
     base_threshold = 2.0 + (data['ATR'].iloc[-1] / data['Close'].iloc[-1]) if 'ATR' in data.columns and pd.notnull(data['ATR'].iloc[-1]) else 2.0
     strong_threshold = base_threshold + 1.5
 
-    # Decision Logic with Breakout Priority
     if breakout_signal == "Bullish Breakout" and buy_score > sell_score:
         recommendations["Intraday"] = "🚀 Strong Buy" if buy_score >= strong_threshold else "📈 Buy"
         recommendations["Signal"] = 1
@@ -295,7 +287,6 @@ def generate_recommendations(data, symbol=None):
     else:
         recommendations["Intraday"] = "🛑 Hold"
 
-    # Normalized Score
     max_possible_score = 7
     recommendations["Score"] = round(((buy_score - sell_score) / max_possible_score) * 10, 2)
 
@@ -350,7 +341,7 @@ def show_performance_metrics(data, recommendations):
 def analyze_batch(stock_batch, progress_bar, progress_text, total_stocks, processed_count):
     results = []
     failed_symbols = []
-    with ThreadPoolExecutor(max_workers=4) as executor:
+    with ThreadPoolExecutor(max_workers=2) as executor:  # Reduced to 2 workers
         futures = {executor.submit(analyze_stock_parallel, symbol): symbol for symbol in stock_batch}
         for future in as_completed(futures):
             symbol = futures[future]
@@ -369,10 +360,9 @@ def analyze_batch(stock_batch, progress_bar, progress_text, total_stocks, proces
             progress_text.text(f"Progress: {processed_count[0]}/{total_stocks} stocks analyzed "
                              f"(Failed: {len(failed_symbols)}, Estimated time remaining: {int((total_stocks - processed_count[0]) * 0.5)}s)")
     
-    # Retry failed symbols once
     if failed_symbols:
         logger.info(f"Retrying {len(failed_symbols)} failed symbols")
-        with ThreadPoolExecutor(max_workers=4) as executor:
+        with ThreadPoolExecutor(max_workers=2) as executor:
             futures = {executor.submit(analyze_stock_parallel, symbol): symbol for symbol in failed_symbols}
             for future in as_completed(futures):
                 symbol = futures[future]
@@ -404,42 +394,13 @@ def analyze_stock_parallel(symbol):
     logger.debug(f"Skipping {symbol}: insufficient data ({len(data)} rows)")
     return None
 
-def fetch_nse_stock_list():
-    url = "https://archives.nseindia.com/content/equities/EQUITY_L.csv"
-    try:
-        response = requests.get(url, timeout=10)
-        response.raise_for_status()
-        nse_data = pd.read_csv(io.StringIO(response.text))
-        return [f"{symbol}.NS" for symbol in nse_data['SYMBOL']]
-    except Exception:
-        st.warning("⚠️ Failed to fetch NSE stock list; using fallback.")
-        return ["RELIANCE.NS", "TCS.NS", "HDFCBANK.NS", "INFY.NS", "SBIN.NS"]
-
-def filter_stocks_by_price(stock_list, price_range, progress_bar, progress_text, total_stocks, processed_count):
-    filtered_stocks = []
-    with ThreadPoolExecutor(max_workers=4) as executor:
-        future_to_symbol = {executor.submit(fetch_current_price, symbol): symbol for symbol in stock_list}
-        for future in as_completed(future_to_symbol):
-            symbol = future_to_symbol[future]
-            try:
-                current_price = future.result()
-                if current_price is not None and price_range[0] <= current_price <= price_range[1]:
-                    filtered_stocks.append(symbol)
-                processed_count[0] += 1
-                progress = min(1.0, processed_count[0] / total_stocks)
-                progress_bar.progress(progress)
-                progress_text.text(f"Filtering: {processed_count[0]}/{total_stocks} stocks processed "
-                                 f"(Estimated time remaining: {int((total_stocks - processed_count[0]) * 0.5)}s)")
-            except Exception as e:
-                logger.error(f"Error filtering {symbol}: {str(e)}")
-    return filtered_stocks
-
 @lru_cache(maxsize=2000)
 def fetch_current_price(symbol):
     try:
         if ".NS" not in symbol:
             symbol += ".NS"
         data = yahoo_client.get_history(symbol, period="1d", interval="1d")
+        time.sleep(random.uniform(0.1, 0.3))  # Added random delay
         if not data.empty and 'Close' in data.columns:
             return data['Close'].iloc[-1]
         logger.debug(f"No current price data for {symbol}")
@@ -448,18 +409,49 @@ def fetch_current_price(symbol):
         logger.warning(f"Error fetching current price for {symbol}: {str(e)}")
         return None
 
-def analyze_all_stocks(stock_list, batch_size=10, price_range=None, short_sell=False):
+def fetch_nse_stock_list_with_prices(price_range):
+    url = "https://archives.nseindia.com/content/equities/EQUITY_L.csv"
+    try:
+        response = requests.get(url, timeout=10)
+        response.raise_for_status()
+        nse_data = pd.read_csv(io.StringIO(response.text))
+        symbols = [f"{symbol}.NS" for symbol in nse_data['SYMBOL']]
+        
+        filtered_stocks = []
+        progress_bar = st.progress(0)
+        progress_text = st.empty()
+        processed_count = [0]
+        total_stocks = len(symbols)
+        
+        with ThreadPoolExecutor(max_workers=2) as executor:  # Reduced to 2 workers
+            future_to_symbol = {executor.submit(fetch_current_price, symbol): symbol for symbol in symbols}
+            for future in as_completed(future_to_symbol):
+                symbol = future_to_symbol[future]
+                try:
+                    current_price = future.result()
+                    if current_price is not None and price_range[0] <= current_price <= price_range[1]:
+                        filtered_stocks.append(symbol)
+                    processed_count[0] += 1
+                    progress = min(1.0, processed_count[0] / total_stocks)
+                    progress_bar.progress(progress)
+                    progress_text.text(f"Initial Filtering: {processed_count[0]}/{total_stocks} stocks processed")
+                except Exception as e:
+                    logger.error(f"Error fetching price for {symbol}: {str(e)}")
+        
+        progress_bar.empty()
+        progress_text.empty()
+        return filtered_stocks
+    except Exception:
+        st.warning("⚠️ Failed to fetch NSE stock list; using fallback.")
+        return ["RELIANCE.NS", "TCS.NS", "HDFCBANK.NS", "INFY.NS", "SBIN.NS"]
+
+def analyze_all_stocks(stock_list, batch_size=10, short_sell=False):
     progress_bar = st.progress(0)
     progress_text = st.empty()
     processed_count = [0]
-    
-    if price_range:
-        total_stocks = len(stock_list)
-        stock_list = filter_stocks_by_price(stock_list, price_range, progress_bar, progress_text, total_stocks, processed_count)
-        processed_count[0] = 0
+    total_stocks = len(stock_list)
     
     results = []
-    total_stocks = len(stock_list)
     for i in range(0, len(stock_list), batch_size):
         batch = stock_list[i:i + batch_size]
         results.extend(analyze_batch(batch, progress_bar, progress_text, total_stocks, processed_count))
@@ -491,11 +483,16 @@ def display_dashboard(symbol=None, data=None, recommendations=None, NSE_STOCKS=N
     
     price_range = st.sidebar.slider("Price Range (₹)", 0, 10000, (100, 1000))
     
+    if 'filtered_stocks' not in st.session_state or st.session_state.price_range != price_range:
+        with st.spinner("Fetching and filtering stocks by price range..."):
+            st.session_state.filtered_stocks = fetch_nse_stock_list_with_prices(price_range)
+            st.session_state.price_range = price_range
+    
     col1, col2, col3 = st.columns(3)
     with col1:
         if st.button("🚀 Generate Top Picks", key="top_picks"):
             with st.spinner("Analyzing stocks..."):
-                results_df = analyze_all_stocks(NSE_STOCKS, price_range=price_range, short_sell=False)
+                results_df = analyze_all_stocks(st.session_state.filtered_stocks, short_sell=False)
                 if not results_df.empty:
                     st.subheader("🏆 Top 5 Buy Picks")
                     for _, row in results_df.iterrows():
@@ -530,7 +527,7 @@ def display_dashboard(symbol=None, data=None, recommendations=None, NSE_STOCKS=N
                     with col4:
                         st.metric("Target", f"₹{recommendations['Target']:.2f}" if recommendations['Target'] else "N/A")
                     st.write(f"Intraday: {recommendations['Intraday']}")
-                    st.write(f"Position Size: {recommendations['Position_Size']*100:.1f}%")
+                    st.write(f"Position Size: {recommendations['Position_Size']*100:.1f}%  %")
                     show_performance_metrics(data, recommendations)
                     if enable_alerts:
                         check_real_time_alerts(symbol)
@@ -542,7 +539,7 @@ def display_dashboard(symbol=None, data=None, recommendations=None, NSE_STOCKS=N
     with col3:
         if st.button("📉 Short Sell Picks", key="short_sell_picks"):
             with st.spinner("Analyzing short sell opportunities..."):
-                results_df = analyze_all_stocks(NSE_STOCKS, price_range=price_range, short_sell=True)
+                results_df = analyze_all_stocks(st.session_state.filtered_stocks, short_sell=True)
                 if not results_df.empty:
                     st.subheader("🏆 Top 5 Short Sell Picks")
                     for _, row in results_df.iterrows():
@@ -580,18 +577,17 @@ def main():
     if 'intraday_clicked' not in st.session_state:
         st.session_state.intraday_clicked = False
     
-    NSE_STOCKS = fetch_nse_stock_list()
-    symbol = st.sidebar.selectbox("Choose stock:", [""] + NSE_STOCKS)
+    symbol = st.sidebar.selectbox("Choose stock:", [""] + (st.session_state.get('filtered_stocks', fetch_nse_stock_list_with_prices((100, 1000)))))
     if symbol:
         data = fetch_stock_data_cached(symbol)
         if not data.empty and len(data) >= 10:
             data = analyze_stock(data)
             recommendations = generate_recommendations(data, symbol)
-            display_dashboard(symbol, data, recommendations, NSE_STOCKS)
+            display_dashboard(symbol, data, recommendations, st.session_state.get('filtered_stocks'))
         else:
             st.error(f"❌ Insufficient data for {symbol}.")
     else:
-        display_dashboard(None, None, None, NSE_STOCKS)
+        display_dashboard(None, None, None, st.session_state.get('filtered_stocks'))
 
 if __name__ == "__main__":
     main()
