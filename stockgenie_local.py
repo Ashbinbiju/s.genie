@@ -23,11 +23,10 @@ logger = logging.getLogger(__name__)
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "YOUR_TOKEN")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "YOUR_CHAT_ID")
 
-# Enhanced Yahoo Finance Client with rate-limit handling
 class YahooFinanceClient:
     def __init__(self):
         self.last_call = 0
-        self.delay = 1.0  # Increased to 1s base delay
+        self.delay = 1.0
         self.consecutive_failures = 0
         self.max_failures = 5
     
@@ -43,18 +42,18 @@ class YahooFinanceClient:
             if data.empty:
                 logger.debug(f"No data fetched for {symbol}")
                 return pd.DataFrame()
-            self.consecutive_failures = 0  # Reset on success
+            self.consecutive_failures = 0
             logger.debug(f"Fetched {len(data)} rows for {symbol}")
             return data
         except Exception as e:
-            if "429" in str(e):  # Rate limit detection
+            if "429" in str(e):
                 self.consecutive_failures += 1
                 if self.consecutive_failures >= self.max_failures:
                     logger.warning("Rate limit exceeded, pausing for 60s")
                     time.sleep(60)
                     self.consecutive_failures = 0
                 else:
-                    time.sleep(10)  # Short pause for initial 429s
+                    time.sleep(10)
             else:
                 self.consecutive_failures += 1
             raise
@@ -66,7 +65,7 @@ def fetch_stock_data_with_retry(symbol, period="5y", interval="1d"):
     if ".NS" not in symbol:
         symbol += ".NS"
     data = yahoo_client.get_history(symbol, period, interval)
-    time.sleep(0.2)  # Increased small delay for safety
+    time.sleep(0.2)
     return data
 
 @lru_cache(maxsize=500)
@@ -80,6 +79,7 @@ def fetch_stock_data_cached(symbol, period="5y", interval="1d"):
 
 def clear_cache():
     fetch_stock_data_cached.cache_clear()
+    fetch_current_price.cache_clear()
     logger.info("Cache cleared.")
 
 def calculate_volume_profile(data, bins=50):
@@ -341,7 +341,7 @@ def show_performance_metrics(data, recommendations):
 def analyze_batch(stock_batch, progress_bar, progress_text, total_stocks, processed_count):
     results = []
     failed_symbols = []
-    with ThreadPoolExecutor(max_workers=2) as executor:  # Reduced to 2 workers
+    with ThreadPoolExecutor(max_workers=2) as executor:
         futures = {executor.submit(analyze_stock_parallel, symbol): symbol for symbol in stock_batch}
         for future in as_completed(futures):
             symbol = futures[future]
@@ -395,21 +395,25 @@ def analyze_stock_parallel(symbol):
     return None
 
 @lru_cache(maxsize=2000)
+@retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=2, min=2, max=60))
 def fetch_current_price(symbol):
     try:
         if ".NS" not in symbol:
             symbol += ".NS"
         data = yahoo_client.get_history(symbol, period="1d", interval="1d")
-        time.sleep(random.uniform(0.1, 0.3))  # Added random delay
+        time.sleep(random.uniform(0.5, 1.0))  # Increased random delay
         if not data.empty and 'Close' in data.columns:
             return data['Close'].iloc[-1]
         logger.debug(f"No current price data for {symbol}")
         return None
     except Exception as e:
+        if "429" in str(e):
+            logger.warning(f"Rate limit hit for {symbol}")
+            raise
         logger.warning(f"Error fetching current price for {symbol}: {str(e)}")
         return None
 
-def fetch_nse_stock_list_with_prices(price_range):
+def fetch_nse_stock_list_with_prices(price_range, batch_size=50):
     url = "https://archives.nseindia.com/content/equities/EQUITY_L.csv"
     try:
         response = requests.get(url, timeout=10)
@@ -423,20 +427,24 @@ def fetch_nse_stock_list_with_prices(price_range):
         processed_count = [0]
         total_stocks = len(symbols)
         
-        with ThreadPoolExecutor(max_workers=2) as executor:  # Reduced to 2 workers
-            future_to_symbol = {executor.submit(fetch_current_price, symbol): symbol for symbol in symbols}
-            for future in as_completed(future_to_symbol):
-                symbol = future_to_symbol[future]
-                try:
-                    current_price = future.result()
-                    if current_price is not None and price_range[0] <= current_price <= price_range[1]:
-                        filtered_stocks.append(symbol)
+        for i in range(0, len(symbols), batch_size):
+            batch = symbols[i:i + batch_size]
+            with ThreadPoolExecutor(max_workers=2) as executor:
+                future_to_symbol = {executor.submit(fetch_current_price, symbol): symbol for symbol in batch}
+                for future in as_completed(future_to_symbol):
+                    symbol = future_to_symbol[future]
+                    try:
+                        current_price = future.result()
+                        if current_price is not None and price_range[0] <= current_price <= price_range[1]:
+                            filtered_stocks.append(symbol)
+                    except Exception as e:
+                        logger.error(f"Error fetching price for {symbol}: {str(e)}")
                     processed_count[0] += 1
                     progress = min(1.0, processed_count[0] / total_stocks)
                     progress_bar.progress(progress)
-                    progress_text.text(f"Initial Filtering: {processed_count[0]}/{total_stocks} stocks processed")
-                except Exception as e:
-                    logger.error(f"Error fetching price for {symbol}: {str(e)}")
+                    progress_text.text(f"Initial Filtering: {processed_count[0]}/{total_stocks} stocks processed "
+                                     f"(Filtered: {len(filtered_stocks)})")
+            time.sleep(2)  # Pause between batches
         
         progress_bar.empty()
         progress_text.empty()
@@ -527,7 +535,7 @@ def display_dashboard(symbol=None, data=None, recommendations=None, NSE_STOCKS=N
                     with col4:
                         st.metric("Target", f"₹{recommendations['Target']:.2f}" if recommendations['Target'] else "N/A")
                     st.write(f"Intraday: {recommendations['Intraday']}")
-                    st.write(f"Position Size: {recommendations['Position_Size']*100:.1f}%  %")
+                    st.write(f"Position Size: {recommendations['Position_Size']*100:.1f}%")
                     show_performance_metrics(data, recommendations)
                     if enable_alerts:
                         check_real_time_alerts(symbol)
