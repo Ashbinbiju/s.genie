@@ -36,6 +36,55 @@ TOOLTIPS = {
     "Donchian": "Donchian Channels - Breakout detection",
 }
 
+# Define sectors and their stocks
+SECTORS = {
+    "Bank": [
+        "HDFCBANK.NS", "ICICIBANK.NS", "SBIN.NS", "KOTAKBANK.NS", "AXISBANK.NS", 
+        "INDUSINDBK.NS", "PNB.NS", "BANKBARODA.NS", "CANBK.NS", "UNIONBANK.NS", 
+        "IDFCFIRSTB.NS", "FEDERALBNK.NS", "RBLBANK.NS", "BANDHANBNK.NS", "INDIANB.NS", 
+        "BANKINDIA.NS", "KARURVYSYA.NS", "CUB.NS", "J&KBANK.NS", "LAKSHVILAS.NS", 
+        "DCBBANK.NS", "SYNDIBANK.NS", "ALBK.NS", "ANDHRABANK.NS", "CORPBANK.NS", 
+        "ORIENTBANK.NS", "UNITEDBNK.NS", "AUBANK.NS"
+    ],
+    "Software & IT Services": [],  # Add relevant stocks here
+    "Finance": [],
+    "Automobile & Ancillaries": [],
+    "Healthcare": [],
+    "Metals & Mining": [],
+    "FMCG": [],
+    "Power": [],
+    "Capital Goods": [],
+    "Chemicals": [],
+    "Telecom": [],
+    "Infrastructure": [],
+    "Insurance": [],
+    "Diversified": [],
+    "Construction Materials": [],
+    "Real Estate": [],
+    "Aviation": [],
+    "Retailing": [],
+    "Miscellaneous": [],
+    "Diamond & Jewellery": [],
+    "Consumer Durables": [],
+    "Trading": [],
+    "Hospitality": [],
+    "Agri": [],
+    "Textiles": [],
+    "Industrial Gases & Fuels": [],
+    "Electricals": [],
+    "Alcohol": [],
+    "Logistics": [],
+    "Plastic Products": [],
+    "Ship Building": [],
+    "Media & Entertainment": [],
+    "ETF": [],
+    "Footwear": [],
+    "Manufacturing": [],
+    "Containers & Packaging": [],
+    "Paper": [],
+    "Photographic Products": []
+}
+
 def tooltip(label, explanation):
     return f"{label} 📌 ({explanation})"
 
@@ -65,13 +114,7 @@ def fetch_nse_stock_list():
         stock_list = [f"{symbol}.NS" for symbol in nse_data['SYMBOL']]
         return stock_list
     except Exception:
-        return [
-            "20MICRONS.NS", "21STCENMGM.NS", "360ONE.NS", "3IINFOLTD.NS", "3MINDIA.NS", "5PAISA.NS", "63MOONS.NS",
-            "A2ZINFRA.NS", "AAATECH.NS", "AADHARHFC.NS", "AAKASH.NS", "AAREYDRUGS.NS", "AARON.NS", "AARTECH.NS",
-            "AARTIDRUGS.NS", "AARTIIND.NS", "AARTIPHARM.NS", "AARTISURF.NS", "AARVEEDEN.NS", "AARVI.NS",
-            "AATMAJ.NS", "AAVAS.NS", "ABAN.NS", "ABB.NS", "ABBOTINDIA.NS", "ABCAPITAL.NS", "ABCOTS.NS", "ABDL.NS",
-            "ABFRL.NS",
-        ]
+        return list(set([stock for sector in SECTORS.values() for stock in sector]))
 
 @lru_cache(maxsize=100)
 def fetch_stock_data_cached(symbol, period="5y", interval="1d"):
@@ -537,7 +580,7 @@ def analyze_stock_parallel(symbol):
         }
     return None
 
-def analyze_all_stocks(stock_list, batch_size=50, price_range=None, progress_callback=None):
+def analyze_all_stocks(stock_list, batch_size=50, progress_callback=None):
     results = []
     total_batches = (len(stock_list) // batch_size) + (1 if len(stock_list) % batch_size != 0 else 0)
     for i in range(0, len(stock_list), batch_size):
@@ -555,10 +598,6 @@ def analyze_all_stocks(stock_list, batch_size=50, price_range=None, progress_cal
         results_df["Score"] = 0
     if "Current Price" not in results_df.columns:
         results_df["Current Price"] = None
-    if price_range:
-        results_df = results_df[results_df['Current Price'].notnull() & 
-                                (results_df['Current Price'] >= price_range[0]) & 
-                                (results_df['Current Price'] <= price_range[1])]
     return results_df.sort_values(by="Score", ascending=False).head(10)
 
 def colored_recommendation(recommendation):
@@ -571,11 +610,9 @@ def colored_recommendation(recommendation):
     else:
         return recommendation
 
-def display_dashboard(symbol=None, data=None, recommendations=None, NSE_STOCKS=None):
+def display_dashboard(symbol=None, data=None, recommendations=None, selected_stocks=None):
     st.title("📊 StockGenie Pro - NSE Analysis")
     st.subheader(f"📅 Analysis for {datetime.now().strftime('%d %b %Y')}")
-    
-    price_range = st.sidebar.slider("Select Price Range (₹)", min_value=0, max_value=10000, value=(100, 1000))
     
     if st.button("🚀 Generate Daily Top Picks"):
         progress_bar = st.progress(0)
@@ -585,8 +622,7 @@ def display_dashboard(symbol=None, data=None, recommendations=None, NSE_STOCKS=N
             "Evaluating indicators...", "Finalizing results..."
         ])
         results_df = analyze_all_stocks(
-            NSE_STOCKS,
-            price_range=price_range,
+            selected_stocks,
             progress_callback=lambda x: update_progress(progress_bar, loading_text, x, loading_messages)
         )
         progress_bar.empty()
@@ -622,8 +658,7 @@ def display_dashboard(symbol=None, data=None, recommendations=None, NSE_STOCKS=N
             "Optimizing targets...", "Finalizing top picks..."
         ])
         intraday_results = analyze_intraday_stocks(
-            NSE_STOCKS,
-            price_range=price_range,
+            selected_stocks,
             progress_callback=lambda x: update_progress(progress_bar, loading_text, x, loading_messages)
         )
         progress_bar.empty()
@@ -722,7 +757,7 @@ def update_progress(progress_bar, loading_text, progress_value, loading_messages
     dots = "." * int((progress_value * 10) % 4)
     loading_text.text(f"{loading_message}{dots}")
 
-def analyze_intraday_stocks(stock_list, batch_size=50, price_range=None, progress_callback=None):
+def analyze_intraday_stocks(stock_list, batch_size=50, progress_callback=None):
     results = []
     total_batches = (len(stock_list) // batch_size) + (1 if len(stock_list) % batch_size != 0 else 0)
     for i in range(0, len(stock_list), batch_size):
@@ -739,21 +774,28 @@ def analyze_intraday_stocks(stock_list, batch_size=50, price_range=None, progres
         results_df["Score"] = 0
     if "Current Price" not in results_df.columns:
         results_df["Current Price"] = None
-    if price_range:
-        results_df = results_df[results_df['Current Price'].notnull() & 
-                                (results_df['Current Price'] >= price_range[0]) & 
-                                (results_df['Current Price'] <= price_range[1])]
     intraday_df = results_df[results_df["Intraday"].str.contains("Buy", na=False)]
     return intraday_df.sort_values(by="Score", ascending=False).head(5)
 
 def main():
-    st.sidebar.title("🔍 Stock Search")
+    st.sidebar.title("🔍 Stock Search & Sector Selection")
     NSE_STOCKS = fetch_nse_stock_list()
+    
+    # Sector selection with all selected by default
+    all_sectors = list(SECTORS.keys())
+    selected_sectors = st.sidebar.multiselect(
+        "Select Sectors",
+        options=all_sectors,
+        default=all_sectors
+    )
+    
+    # Filter stocks based on selected sectors
+    selected_stocks = list(set([stock for sector in selected_sectors for stock in SECTORS[sector] if stock in NSE_STOCKS]))
     
     symbol = None
     selected_option = st.sidebar.selectbox(
         "Choose or enter stock:",
-        options=[""] + NSE_STOCKS + ["Custom"],
+        options=[""] + selected_stocks + ["Custom"],
         format_func=lambda x: x.split('.')[0] if x != "Custom" and x != "" else x
     )
     
@@ -773,11 +815,11 @@ def main():
         if not data.empty:
             data = analyze_stock(data)
             recommendations = generate_recommendations(data, symbol)
-            display_dashboard(symbol, data, recommendations, NSE_STOCKS)
+            display_dashboard(symbol, data, recommendations, selected_stocks)
         else:
             st.error("❌ Failed to load data for this symbol")
     else:
-        display_dashboard(None, None, None, NSE_STOCKS)
+        display_dashboard(None, None, None, selected_stocks)
 
 if __name__ == "__main__":
     main()
