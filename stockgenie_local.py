@@ -11,7 +11,6 @@ import time
 import requests
 import io
 import random
-from vaderSentiment.vaderSentiment import SentimentIntensityAnalyzer
 import spacy
 from pytrends.request import TrendReq
 import numpy as np
@@ -19,8 +18,6 @@ import itertools
 from arch import arch_model
 
 # API Keys (Consider moving to environment variables)
-NEWSAPI_KEY = "ed58659895e84dfb8162a8bb47d8525e"
-GNEWS_KEY = "e4f5f1442641400694645433a8f98b94"
 ALPHA_VANTAGE_KEY = "TCAUKYUCIDZ6PI57"
 
 # Tooltip explanations
@@ -129,42 +126,6 @@ def monte_carlo_simulation(data, simulations=1000, days=30):
         simulation_results.append(price_series)
     return simulation_results
 
-def fetch_news_sentiment_vader(query, api_key, source="newsapi"):
-    analyzer = SentimentIntensityAnalyzer()
-    try:
-        if source == "newsapi":
-            url = f"https://newsapi.org/v2/everything?q={query}&apiKey=ed58659895e84dfb8162a8bb47d8525e&language=en&sortBy=publishedAt&pageSize=5"
-        elif source == "gnews":
-            url = f"https://gnews.io/api/v4/search?q={query}&token=e4f5f1442641400694645433a8f98b94&lang=en&max=5"
-        response = requests.get(url)
-        response.raise_for_status()
-        articles = response.json().get("articles", [])
-        sentiment_scores = []
-        for article in articles:
-            title = article.get("title", "")
-            description = article.get("description", "")
-            text = f"{title} {description}"
-            sentiment = analyzer.polarity_scores(text)['compound']
-            sentiment_scores.append(sentiment)
-        avg_sentiment = sum(sentiment_scores) / len(sentiment_scores) if sentiment_scores else 0
-        return avg_sentiment
-    except Exception:
-        return 0
-
-def analyze_sentiment_finbert(text):
-    from transformers import BertTokenizer, BertForSequenceClassification
-    import torch
-    try:
-        tokenizer = BertTokenizer.from_pretrained('yiyanghkust/finbert-tone')
-        model = BertForSequenceClassification.from_pretrained('yiyanghkust/finbert-tone')
-        inputs = tokenizer(text, return_tensors="pt", truncation=True, padding=True)
-        with torch.no_grad():
-            outputs = model(**inputs)
-        probs = torch.nn.functional.softmax(outputs.logits, dim=-1)
-        return probs.argmax().item()
-    except Exception:
-        return 1
-
 def extract_entities(text):
     nlp = spacy.load("en_core_web_sm")
     doc = nlp(text)
@@ -175,11 +136,6 @@ def get_trending_stocks():
     pytrends = TrendReq(hl='en-US', tz=360)
     trending = pytrends.trending_searches(pn='india')
     return trending
-
-def create_sentiment_heatmap(sentiment_data):
-    fig = px.imshow(sentiment_data, labels=dict(x="Stocks", y="Sentiment", color="Sentiment Score"),
-                    x=sentiment_data.columns, y=sentiment_data.index)
-    st.plotly_chart(fig)
 
 def calculate_confidence_score(data):
     score = 0
@@ -757,11 +713,6 @@ def display_dashboard(symbol=None, data=None, recommendations=None, NSE_STOCKS=N
                 st.plotly_chart(fig)
             else:
                 st.warning("⚠️ No valid new indicators available for plotting.")
-        if st.button("Analyze News Sentiment"):
-            news_sentiment = fetch_news_sentiment_vader(symbol.split('.')[0], NEWSAPI_KEY)
-            finbert_sentiment = analyze_sentiment_finbert(f"Latest news about {symbol.split('.')[0]}")
-            st.write(f"VADER Sentiment: {news_sentiment}")
-            st.write(f"FinBERT Sentiment: {finbert_sentiment} (0=Negative, 1=Neutral, 2=Positive)")
     elif symbol:
         st.warning("⚠️ No data available for the selected stock.")
 
@@ -830,7 +781,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
-
-
-Any suggestions to.improve
