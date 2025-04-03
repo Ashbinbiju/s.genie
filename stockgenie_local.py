@@ -81,8 +81,18 @@ SECTORS = {
     "Footwear": ["BATAINDIA.NS", "RELAXO.NS"],
     "Manufacturing": ["ASIANPAINT.NS", "BERGEPAINT.NS"],
     "Containers & Packaging": ["UFLEX.NS"],
-    "Paper": ["JKPAPER.NS"],
-    "Photographic Products": []
+    "Paper": ["JKPAPER.NS", "WSTCSTPAPR.NS",
+
+"SESHAPAPER.NS", "PDMJEPAPER.NS",
+
+"NRAGRINDQ.NS", "RUCHIRA.NS",
+
+"SANGALPAPR.NS", "SVJENTERPR.NS", "METROGLOBL.NS", "SHREYANIND.NS",
+
+"SUBAMPAPER.NS", "STARPAPER.NS",
+
+"PAKKA.NS", "TNPL.NS", "KUANTUM.NS"],
+    "Photographic Products": ["JINDALPHOT.NS"]
 }
 
 def tooltip(label, explanation):
