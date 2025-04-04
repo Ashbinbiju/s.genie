@@ -34,6 +34,11 @@ TOOLTIPS = {
     "Ichimoku": "Ichimoku Cloud - Comprehensive trend indicator",
     "CMF": "Chaikin Money Flow - Buying/selling pressure",
     "Donchian": "Donchian Channels - Breakout detection",
+    "Keltner": "Keltner Channels - Volatility bands based on EMA and ATR",
+    "TRIX": "Triple Exponential Average - Momentum oscillator with triple smoothing",
+    "Ultimate_Osc": "Ultimate Oscillator - Combines short, medium, and long-term momentum",
+    "CMO": "Chande Momentum Oscillator - Measures raw momentum (-100 to 100)",
+    "VPT": "Volume Price Trend - Tracks trend strength with price and volume",
 }
 
 # Define sectors and their stocks
@@ -51,10 +56,7 @@ SECTORS = {
     "Automobile & Ancillaries": ["MARUTI.NS", "TATAMOTORS.NS", "BAJAJ-AUTO.NS", "HEROMOTOCO.NS"],
     "Healthcare": ["SUNPHARMA.NS", "DRREDDY.NS", "CIPLA.NS", "DIVISLAB.NS"],
     "Metals & Mining": ["TATASTEEL.NS", "JSWSTEEL.NS", "HINDALCO.NS", "VEDL.NS"],
-
-
-"Oil&Gas": ["RELIANCE.NS", "ONGC.NS", "IOC.NS", "BPCL.NS", "HINDPETRO.NS", "OIL.NS", "PETRONET.NS", "MRPL.NS", "CHENNPETRO.NS"],
-
+    "Oil&Gas": ["RELIANCE.NS", "ONGC.NS", "IOC.NS", "BPCL.NS", "HINDPETRO.NS", "OIL.NS", "PETRONET.NS", "MRPL.NS", "CHENNPETRO.NS"],
     "FMCG": ["HINDUNILVR.NS", "ITC.NS", "NESTLEIND.NS", "BRITANNIA.NS"],
     "Power": ["NTPC.NS", "POWERGRID.NS", "TATAPOWER.NS"],
     "Capital Goods": ["LT.NS", "BHEL.NS", "SIEMENS.NS"],
@@ -85,17 +87,10 @@ SECTORS = {
     "Footwear": ["BATAINDIA.NS", "RELAXO.NS"],
     "Manufacturing": ["ASIANPAINT.NS", "BERGEPAINT.NS"],
     "Containers & Packaging": ["UFLEX.NS"],
-    "Paper": ["JKPAPER.NS", "WSTCSTPAPR.NS",
-
-"SESHAPAPER.NS", "PDMJEPAPER.NS",
-
-"NRAGRINDQ.NS", "RUCHIRA.NS",
-
-"SANGALPAPR.NS", "SVJENTERPR.NS", "METROGLOBL.NS", "SHREYANIND.NS",
-
-"SUBAMPAPER.NS", "STARPAPER.NS",
-
-"PAKKA.NS", "TNPL.NS", "KUANTUM.NS"],
+    "Paper": ["JKPAPER.NS", "WSTCSTPAPR.NS", "SESHAPAPER.NS", "PDMJEPAPER.NS",
+              "NRAGRINDQ.NS", "RUCHIRA.NS", "SANGALPAPR.NS", "SVJENTERPR.NS",
+              "METROGLOBL.NS", "SHREYANIND.NS", "SUBAMPAPER.NS", "STARPAPER.NS",
+              "PAKKA.NS", "TNPL.NS", "KUANTUM.NS"],
     "Photographic Products": ["JINDALPHOT.NS"]
 }
 
@@ -374,6 +369,39 @@ def analyze_stock(data):
         data['Donchian_Upper'] = None
         data['Donchian_Lower'] = None
         data['Donchian_Middle'] = None
+    # New Indicators
+    try:
+        keltner = ta.volatility.KeltnerChannel(data['High'], data['Low'], data['Close'], window=20, window_atr=10)
+        data['Keltner_Upper'] = keltner.keltner_channel_hband()
+        data['Keltner_Middle'] = keltner.keltner_channel_mband()
+        data['Keltner_Lower'] = keltner.keltner_channel_lband()
+    except Exception as e:
+        st.warning(f"⚠️ Failed to compute Keltner Channels: {str(e)}")
+        data['Keltner_Upper'] = None
+        data['Keltner_Middle'] = None
+        data['Keltner_Lower'] = None
+    try:
+        data['TRIX'] = ta.trend.TRIXIndicator(data['Close'], window=15).trix()
+    except Exception as e:
+        st.warning(f"⚠️ Failed to compute TRIX: {str(e)}")
+        data['TRIX'] = None
+    try:
+        data['Ultimate_Osc'] = ta.momentum.UltimateOscillator(
+            data['High'], data['Low'], data['Close'], window1=7, window2=14, window3=28
+        ).ultimate_oscillator()
+    except Exception as e:
+        st.warning(f"⚠️ Failed to compute Ultimate Oscillator: {str(e)}")
+        data['Ultimate_Osc'] = None
+    try:
+        data['CMO'] = ta.momentum.ChandeMomentumOscillator(data['Close'], window=14).chande_momentum_oscillator()
+    except Exception as e:
+        st.warning(f"⚠️ Failed to compute Chande Momentum Oscillator: {str(e)}")
+        data['CMO'] = None
+    try:
+        data['VPT'] = ta.volume.VolumePriceTrendIndicator(data['Close'], data['Volume']).volume_price_trend()
+    except Exception as e:
+        st.warning(f"⚠️ Failed to compute Volume Price Trend: {str(e)}")
+        data['VPT'] = None
     return data
 
 def calculate_buy_at(data):
@@ -503,7 +531,6 @@ def generate_recommendations(data, symbol=None):
                 elif data['Close'].iloc[-1] < data['Donchian_Lower'].iloc[-1]:
                     sell_score += 1
                     recommendations["Breakout"] = "Sell"
-
         if 'RSI' in data.columns and 'Lower_Band' in data.columns and data['Close'].iloc[-1] is not None:
             if (isinstance(data['RSI'].iloc[-1], (int, float)) and 
                 isinstance(data['Lower_Band'].iloc[-1], (int, float)) and 
@@ -527,6 +554,41 @@ def generate_recommendations(data, symbol=None):
                       data['Close'].iloc[-1] < data['Ichimoku_Span_B'].iloc[-1]):
                     sell_score += 1
                     recommendations["Ichimoku_Trend"] = "Strong Sell"
+
+        # New Indicators
+        if ('Keltner_Upper' in data.columns and 'Keltner_Lower' in data.columns and 
+            data['Close'].iloc[-1] is not None):
+            if (isinstance(data['Keltner_Upper'].iloc[-1], (int, float)) and 
+                isinstance(data['Keltner_Lower'].iloc[-1], (int, float)) and 
+                isinstance(data['Close'].iloc[-1], (int, float))):
+                if data['Close'].iloc[-1] < data['Keltner_Lower'].iloc[-1]:
+                    buy_score += 1
+                elif data['Close'].iloc[-1] > data['Keltner_Upper'].iloc[-1]:
+                    sell_score += 1
+        if 'TRIX' in data.columns and data['TRIX'].iloc[-1] is not None:
+            if isinstance(data['TRIX'].iloc[-1], (int, float)):
+                if data['TRIX'].iloc[-1] > 0 and data['TRIX'].iloc[-1] > data['TRIX'].iloc[-2]:
+                    buy_score += 1
+                elif data['TRIX'].iloc[-1] < 0 and data['TRIX'].iloc[-1] < data['TRIX'].iloc[-2]:
+                    sell_score += 1
+        if 'Ultimate_Osc' in data.columns and data['Ultimate_Osc'].iloc[-1] is not None:
+            if isinstance(data['Ultimate_Osc'].iloc[-1], (int, float)):
+                if data['Ultimate_Osc'].iloc[-1] < 30:
+                    buy_score += 1
+                elif data['Ultimate_Osc'].iloc[-1] > 70:
+                    sell_score += 1
+        if 'CMO' in data.columns and data['CMO'].iloc[-1] is not None:
+            if isinstance(data['CMO'].iloc[-1], (int, float)):
+                if data['CMO'].iloc[-1] < -50:
+                    buy_score += 1
+                elif data['CMO'].iloc[-1] > 50:
+                    sell_score += 1
+        if 'VPT' in data.columns and data['VPT'].iloc[-1] is not None:
+            if isinstance(data['VPT'].iloc[-1], (int, float)):
+                if data['VPT'].iloc[-1] > data['VPT'].iloc[-2]:
+                    buy_score += 1
+                elif data['VPT'].iloc[-1] < data['VPT'].iloc[-2]:
+                    sell_score += 1
 
         if symbol:
             fundamentals = fetch_fundamentals(symbol)
@@ -733,7 +795,7 @@ def display_dashboard(symbol=None, data=None, recommendations=None, selected_sto
             else:
                 st.warning("⚠️ No valid price action data available for plotting.")
         with tab2:
-            momentum_cols = ['RSI', 'MACD', 'MACD_signal']
+            momentum_cols = ['RSI', 'MACD', 'MACD_signal', 'TRIX', 'Ultimate_Osc', 'CMO']
             valid_momentum_cols = [col for col in momentum_cols if col in data.columns and pd.api.types.is_numeric_dtype(data[col])]
             if valid_momentum_cols:
                 fig = px.line(data, y=valid_momentum_cols, title="Momentum Indicators")
@@ -741,7 +803,7 @@ def display_dashboard(symbol=None, data=None, recommendations=None, selected_sto
             else:
                 st.warning("⚠️ No valid momentum indicators available for plotting.")
         with tab3:
-            volatility_cols = ['ATR', 'Upper_Band', 'Lower_Band', 'Donchian_Upper', 'Donchian_Lower']
+            volatility_cols = ['ATR', 'Upper_Band', 'Lower_Band', 'Donchian_Upper', 'Donchian_Lower', 'Keltner_Upper', 'Keltner_Lower']
             valid_volatility_cols = [col for col in volatility_cols if col in data.columns and pd.api.types.is_numeric_dtype(data[col])]
             if valid_volatility_cols:
                 fig = px.line(data, y=valid_volatility_cols, title="Volatility Analysis")
@@ -755,10 +817,10 @@ def display_dashboard(symbol=None, data=None, recommendations=None, selected_sto
             fig = px.line(mc_df, title="Monte Carlo Price Simulations (30 Days)")
             st.plotly_chart(fig)
         with tab5:
-            new_cols = ['Ichimoku_Span_A', 'Ichimoku_Span_B', 'Ichimoku_Tenkan', 'Ichimoku_Kijun', 'CMF']
+            new_cols = ['Ichimoku_Span_A', 'Ichimoku_Span_B', 'Ichimoku_Tenkan', 'Ichimoku_Kijun', 'CMF', 'VPT']
             valid_new_cols = [col for col in new_cols if col in data.columns and pd.api.types.is_numeric_dtype(data[col])]
             if valid_new_cols:
-                fig = px.line(data, y=valid_new_cols, title="New Indicators (Ichimoku & CMF)")
+                fig = px.line(data, y=valid_new_cols, title="New Indicators (Ichimoku, CMF, VPT)")
                 st.plotly_chart(fig)
             else:
                 st.warning("⚠️ No valid new indicators available for plotting.")
@@ -795,7 +857,6 @@ def main():
     st.sidebar.title("🔍 Stock Search & Sector Selection")
     NSE_STOCKS = fetch_nse_stock_list()
     
-    # Sector selection with all selected by default
     all_sectors = list(SECTORS.keys())
     selected_sectors = st.sidebar.multiselect(
         "Select Sectors",
@@ -803,7 +864,6 @@ def main():
         default=all_sectors
     )
     
-    # Filter stocks based on selected sectors
     selected_stocks = list(set([stock for sector in selected_sectors for stock in SECTORS[sector] if stock in NSE_STOCKS]))
     
     symbol = None
