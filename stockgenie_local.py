@@ -58,7 +58,9 @@ SECTORS = {
     "Metals & Mining": ["TATASTEEL.NS", "JSWSTEEL.NS", "HINDALCO.NS", "VEDL.NS"],
     "Oil&Gas": ["RELIANCE.NS", "ONGC.NS", "IOC.NS", "BPCL.NS", "HINDPETRO.NS", "OIL.NS", "PETRONET.NS", "MRPL.NS", "CHENNPETRO.NS"],
     "FMCG": ["HINDUNILVR.NS", "ITC.NS", "NESTLEIND.NS", "BRITANNIA.NS"],
-    "Power": ["NTPC.NS", "POWERGRID.NS", "TATAPOWER.NS"],
+
+    "Power": ["NTPC.NS", "POWERGRID.NS", "ADANIPOWER.NS", "TATAPOWER.NS", "ADANIENSOL.NS", "JSWENERGY.NS", "INDIANREN.NS", "NLCINDIA.NS", "CESC.NS", "RPOWER.NS", "IEX.NS", "NAVA.NS", "INDIGRID.NS", "ACMESOLAR.NS", "RELINFRA.NS", "GMRP&UI.NS", "SWSOLAR.NS", "PTC.NS", "GIPCL.NS", "BFUTILITIE.NS", "RAVINDRA.NS", "DANISH.NS", "APSINDIA.NS", "SUNGARNER.NS"],
+
     "Capital Goods": ["LT.NS", "BHEL.NS", "SIEMENS.NS"],
     "Chemicals": ["PIDILITIND.NS", "SRF.NS", "UPL.NS"],
     "Telecom": ["BHARTIARTL.NS", "IDEA.NS", "RELIANCE.NS"],
@@ -78,21 +80,39 @@ SECTORS = {
     "Textiles": ["PAGEIND.NS", "RAYMOND.NS"],
     "Industrial Gases & Fuels": ["LINDEINDIA.NS"],
     "Electricals": ["POLYCAB.NS", "KEI.NS"],
-    "Alcohol": ["UNITDSPR.NS", "RADICO.NS"],
+
+
+    "Alcohol": ["SDBL.NS", "GLOBUSSPR.NS", "TI.NS", "PICCADIL.NS", "ABDL.NS", "RADICO.NS", "UBL.NS", "UNITDSPR.NS"],
+
+
     "Logistics": ["CONCOR.NS", "BLUEDART.NS"],
     "Plastic Products": ["SUPREMEIND.NS"],
-    "Ship Building": ["COCHINSHIP.NS"],
+
+
+    "Ship Building": ["ABSMARINE.NS", "GRSE.NS", "COCHINSHIP.NS"],
+
+
     "Media & Entertainment": ["ZEEL.NS", "SUNTV.NS"],
     "ETF": ["NIFTYBEES.NS"],
     "Footwear": ["BATAINDIA.NS", "RELAXO.NS"],
     "Manufacturing": ["ASIANPAINT.NS", "BERGEPAINT.NS"],
-    "Containers & Packaging": ["UFLEX.NS"],
+
+
+    "Containers & Packaging": ["AGI.NS", "UFLEX.NS", "JINDALPOLY.NS", "COSMOFIRST.NS", "HUHTAMAKI.NS", "ESTER.NS", "TIRUPATI.NS", "PYRAMID.NS", "BBTCL.NS", "RAJESHCAN.NS", "IDEALTECHO.NS", "PERFECTPAC.NS", "GUJCON.NS", "HCP.NS", "SHETRON.NS"],
+
+
+
+
     "Paper": ["JKPAPER.NS", "WSTCSTPAPR.NS", "SESHAPAPER.NS", "PDMJEPAPER.NS",
               "NRAGRINDQ.NS", "RUCHIRA.NS", "SANGALPAPR.NS", "SVJENTERPR.NS",
               "METROGLOBL.NS", "SHREYANIND.NS", "SUBAMPAPER.NS", "STARPAPER.NS",
               "PAKKA.NS", "TNPL.NS", "KUANTUM.NS"],
+
+
     "Photographic Products": ["JINDALPHOT.NS"]
 }
+
+
 
 def tooltip(label, explanation):
     return f"{label} 📌 ({explanation})"
