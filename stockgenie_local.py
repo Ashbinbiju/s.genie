@@ -66,7 +66,7 @@ SECTORS = {
     "Telecom": ["BHARTIARTL.NS", "IDEA.NS", "RELIANCE.NS"],
     "Infrastructure": ["ADANIPORTS.NS", "GMRINFRA.NS"],
     "Insurance": ["ICICIGI.NS", "NIACL.NS"],
-    "Diversified": ["RODIUM.BO", "FRANKLIN.BO", "ANSALBU.NS", "SHERVANI.BO"S"],
+    "Diversified": ["RODIUM.BO", "FRANKLIN.BO", "ANSALBU.NS", "SHERVANI.BO"],
     "Construction Materials": ["ULTRACEMCO.NS", "ACC.NS", "AMBUJACEM.NS"],
     "Real Estate": ["DLF.NS", "GODREJPROP.NS"],
     "Aviation": ["INDIGO.NS", "SPICEJET.NS"],
