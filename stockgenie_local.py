@@ -76,7 +76,10 @@ SECTORS = {
     "Consumer Durables": ["HAVELLS.NS", "CROMPTON.NS"],
     "Trading": ["ADANIPOWER.NS"],
     "Hospitality": ["INDHOTEL.NS", "EIHOTEL.NS"],
-    "Agri": ["UPL.NS", "PIIND.NS"],
+
+    "Agri": ["UPL.NS", "PIIND.NS","IPL.NS","INSECTICID.NS","MANGCHEFER.NS","BHAGCHEM.NS","NACLIND.NS","RALLIS.NS","SHARDACROP.NS","FACT.NS","CHAMBLFERT.NS","PARADEEP.NS","KSCL.NS","GSFC.NS","RCF.NS"],
+
+
     "Textiles": ["PAGEIND.NS", "RAYMOND.NS"],
     "Industrial Gases & Fuels": ["LINDEINDIA.NS"],
     "Electricals": ["POLYCAB.NS", "KEI.NS"],
