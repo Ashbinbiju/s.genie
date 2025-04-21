@@ -80,7 +80,11 @@ SECTORS = {
 
 
     "Capital Goods": ["LT.NS", "BHEL.NS", "SIEMENS.NS"],
-    "Chemicals": ["PIDILITIND.NS", "SRF.NS", "UPL.NS"],
+
+
+    "Chemicals": ["PIDILITIND.NS", "SRF.NS", "UPL.NS","GHCL.NS","CHEMPLASTS.NS","GNFC.NS","ACI.NS","ANURAS.NS","JUBLINGREA.NS","AETHER.NS","SPLPETRO.NS","AARTIIND.NS","TATACHEM.NS","HSCL.NS",],
+
+
     "Telecom": ["BHARTIARTL.NS", "IDEA.NS", "RELIANCE.NS"],
     "Infrastructure": ["ADANIPORTS.NS", "GMRINFRA.NS"],
     "Insurance": ["ICICIGI.NS", "NIACL.NS"],
