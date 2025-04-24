@@ -43,113 +43,161 @@ TOOLTIPS = {
 
 # Define sectors and their stocks
 SECTORS = {
+    "Agri": [
+        "BHAGCHEM.NS", "CHAMBLFERT.NS", "FACT.NS", "GSFC.NS", "INSECTICID.NS",
+        "IPL.NS", "KSCL.NS", "MANGCHEFER.NS", "NACLIND.NS", "PARADEEP.NS",
+        "PIIND.NS", "RALLIS.NS", "RCF.NS", "SHARDACROP.NS", "UPL.NS"
+    ],
+    "Alcohol": [
+        "ABDL.NS", "GLOBUSSPR.NS", "PICCADIL.NS", "RADICO.NS", "SDBL.NS",
+        "TI.NS", "UBL.NS", "UNITDSPR.NS"
+    ],
+    "Automobile & Ancillaries": [
+        "APOLLOTYRE.NS", "ASHOKLEY.NS", "CIEINDIA.NS", "JBMA.NS", "MINDACORP.NS",
+        "SONACOMS.NS", "TATAMOTORS.NS", "UNOMINDA.NS"
+    ],
+    "Aviation": [
+        "INDIGO.NS", "SPICEJET.NS"
+    ],
     "Bank": [
-        "FINOPB.NS", "CAPITALSFB.NS", "TMB.NS", "KTKBANK.NS", "RBLBANK.NS", "CUB.NS", "KARURVYSYA.NS", "BANDHANBNK.NS", "AUBANK.NS", "FEDERALBNK.NS", "INDUSINDBK.NS", "INDIANB.NS", "BANKBARODA.NS", "SBIN.NS"  ],
-
-
-    "Software & IT Services": ["TCS.NS", "INFY.NS", "WIPRO.NS", "HCLTECH.NS", "TECHM.NS" "HEXT.NS","TATATECH.NS","FSL.NS","ZENSARTECH.NS","CYIENT.NS","NEWGEN.NS","INTELLECT.NS" "BSOFT.NS","SONATSOFTW.NS","HAPPSTMNDS.NS","NAZARA.NS","EMUDHRA.NS","TANLA.NS","RATEGAIN.NS","NIITMTS.NS","QUESS.NS","ZAGGLE.NS","RSYSTEMS.NS"],
-
-
-    "Finance": ["BAJFINANCE.NS", "HDFCLIFE.NS", "SBILIFE.NS", "ICICIPRULI.NS"],
-
-
-    "Automobile & Ancillaries": ["TATAMOTORS.NS", "ASHOKLEY.NS", "UNOMINDA.NS", "APOLLOTYRE.NS", "SONACOMS.NS", "JBMA.NS", "CIEINDIA.NS", "MINDACORP.NS"],
-
-
-    "Healthcare": ["SUNPHARMA.NS", "DRREDDY.NS", "CIPLA.NS", "DIVISLAB.NS"],
-
-
-    "Metals & Mining": ["TATASTEEL.NS", "JSWSTEEL.NS", "HINDALCO.NS", "VEDL.NS"],
-
-
-    "Oil&Gas": ["RELIANCE.NS", "ONGC.NS", "IOC.NS", "BPCL.NS", "HINDPETRO.NS", "OIL.NS", "PETRONET.NS", "MRPL.NS", "CHENNPETRO.NS"],
-
-
-    "FMCG": ["HINDUNILVR.NS", "ITC.NS", "NESTLEIND.NS", "BRITANNIA.NS"],
-
-
-
-    "Power": ["NTPC.NS", "POWERGRID.NS", "ADANIPOWER.NS", "TATAPOWER.NS", "ADANIENSOL.NS", "JSWENERGY.NS", "INDIANREN.NS", "NLCINDIA.NS", "CESC.NS", "RPOWER.NS", "IEX.NS", "NAVA.NS", "INDIGRID.NS", "ACMESOLAR.NS", "RELINFRA.NS", "GMRP&UI.NS", "SWSOLAR.NS", "PTC.NS", "GIPCL.NS", "BFUTILITIE.NS", "RAVINDRA.NS", "DANISH.NS", "APSINDIA.NS", "SUNGARNER.NS"],
-
-
-
-    "Capital Goods": ["LT.NS", "BHEL.NS", "SIEMENS.NS"],
-
-
-    "Chemicals": ["PIDILITIND.NS", "SRF.NS", "UPL.NS","GHCL.NS","CHEMPLASTS.NS","GNFC.NS","ACI.NS","ANURAS.NS","JUBLINGREA.NS","AETHER.NS","SPLPETRO.NS","AARTIIND.NS","TATACHEM.NS","HSCL.NS",],
-
-
-    "Telecom": ["BHARTIARTL.NS", "IDEA.NS", "RELIANCE.NS"],
-
-
-    "Infrastructure": ["ADANIPORTS.NS", "GMRINFRA.NS"],
-
-    "Insurance": ["ICICIGI.NS", "NIACL.NS"],
-    "Diversified": ["RODIUM.BO", "FRANKLIN.BO", "ANSALBU.NS", "SHERVANI.BO"],
-
-
-    "Construction Materials": ["ULTRACEMCO.NS", "ACC.NS", "AMBUJACEM.NS","RAMCOCEM.NS","NCLIND.NS","DECCANCE.NS","EVERESTIND.NS", "JKLAKSHMI.NS","NUVOCO.NS","STARCEMENT.NS","INDIACEM.NS","ORIENTCEM.NS","HEIDELBERG.NS","SAGCEM.NS","MANGLMCEM.NS""RAMCOIND.NS"],
-
-
-    "Real Estate": ["DLF.NS", "GODREJPROP.NS"],
-    "Aviation": ["INDIGO.NS", "SPICEJET.NS"],
-    "Retailing": ["DMART.NS", "TRENT.NS"],
-    "Miscellaneous": ["ADANIENT.NS", "ADANIGREEN.NS"],
-    "Diamond & Jewellery": ["TITAN.NS", "PCJEWELLER.NS"],
-    "Consumer Durables": ["HAVELLS.NS", "CROMPTON.NS"],
-    "Trading": ["ADANIPOWER.NS"],
-    "Hospitality": ["INDHOTEL.NS", "EIHOTEL.NS"],
-
-    "Agri": ["UPL.NS", "PIIND.NS","IPL.NS","INSECTICID.NS","MANGCHEFER.NS","BHAGCHEM.NS","NACLIND.NS","RALLIS.NS","SHARDACROP.NS","FACT.NS","CHAMBLFERT.NS","PARADEEP.NS","KSCL.NS","GSFC.NS","RCF.NS"],
-
-
-    "Textiles": ["PAGEIND.NS", "RAYMOND.NS"],
-    "Industrial Gases & Fuels": ["LINDEINDIA.NS"],
-
-
-    "Electricals": ["POLYCAB.NS", "KEI.NS"],
-
-
-    "Alcohol": ["SDBL.NS", "GLOBUSSPR.NS", "TI.NS", "PICCADIL.NS", "ABDL.NS", "RADICO.NS", "UBL.NS", "UNITDSPR.NS"],
-
-
-    "Logistics": ["CONCOR.NS", "BLUEDART.NS"],
-    "Plastic Products": ["SUPREMEIND.NS"],
-
-
-    "Ship Building": ["ABSMARINE.NS", "GRSE.NS", "COCHINSHIP.NS"],
-
-
-    "Media & Entertainment": ["ZEEL.NS", "SUNTV.NS"],
-    "ETF": ["NIFTYBEES.NS"],
-
-    "Footwear&Accesories": ["KALYANKJIL.NS", "BATAINDIA.NS", "RELAXO.NS", "CAMPUS.NS", "SENCO.NS", "RAJESHEXPO.NS", "SKYGOLD.NS", "GOLDIAM.NS", "TIMEXWATCH.NS", "TBZ.NS", "LIBERTSHOE.NS", "KHADIM.NS", "LEHA.NS"],
-
-
-    "Manufacturing": ["ASIANPAINT.NS", "BERGEPAINT.NS"],
-
-
-
-
-"Diversified": ["RKFORGE.NS", "CENTURYPLY.NS", "ASAHIINDIA.NS", "SARDAEN.NS", "JINDALSAW.NS", "SUNDRMFAST.NS", "CASTROLIND.NS", "WELCORP.NS", "SHYAMMETL.NS", "JSL.NS"],
-
-
-    "Paper": ["JKPAPER.NS", "WSTCSTPAPR.NS", "SESHAPAPER.NS", "PDMJEPAPER.NS",
-              "NRAGRINDQ.NS", "RUCHIRA.NS", "SANGALPAPR.NS", "SVJENTERPR.NS",
-              "METROGLOBL.NS", "SHREYANIND.NS", "SUBAMPAPER.NS", "STARPAPER.NS",
-              "PAKKA.NS", "TNPL.NS", "KUANTUM.NS"],
-
-
-"Consumer Durables": ["ETERNAL.NS", "SWIGGY.NS", "NYKAA.NS", "ABFRL.NS", "PGEL.NS", "CROMPTON.NS", "FIRSTCRY.NS", "VERANDA.NS", "TTKPRESTIG.NS", "TTKPRESTIG.NS", "BAJAJELEC.NS", "SHOPERSTOP.NS", "AVL.NS", "ORIENTELEC.NS", "BOROLTD.NS", "GOCOLORS.NS", "EPACK.NS", "VAIBHAVGBL.NS", "STOVEKRAFT.NS", "STYLEBAAZA.NS", "WEL.NS"
-],
-
-
-
-    "Photographic Products": ["JINDALPHOT.NS"]
-
+        "AUBANK.NS", "BANDHANBNK.NS", "BANKBARODA.NS", "CAPITALSFB.NS", "CUB.NS",
+        "FEDERALBNK.NS", "FINOPB.NS", "INDIANB.NS", "INDUSINDBK.NS", "KARURVYSYA.NS",
+        "KTKBANK.NS", "RBLBANK.NS", "SBIN.NS", "TMB.NS"
+    ],
+    "Capital Goods": [
+        "BHEL.NS", "LT.NS", "SIEMENS.NS"
+    ],
+    "Chemicals": [
+        "AARTIIND.NS", "ACI.NS", "AETHER.NS", "ANURAS.NS", "CHEMPLASTS.NS",
+        "GHCL.NS", "GNFC.NS", "HSCL.NS", "JUBLINGREA.NS", "PIDILITIND.NS",
+        "SPLPETRO.NS", "SRF.NS", "TATACHEM.NS", "UPL.NS"
+    ],
+    "Construction Materials": [
+        "ACC.NS", "AMBUJACEM.NS", "DECCANCE.NS", "EVERESTIND.NS", "HEIDELBERG.NS",
+        "INDIACEM.NS", "JKLAKSHMI.NS", "MANGLMCEM.NS", "NCLIND.NS", "NUVOCO.NS",
+        "ORIENTCEM.NS", "RAMCOCEM.NS", "RAMCOIND.NS", "SAGCEM.NS", "STARCEMENT.NS",
+        "ULTRACEMCO.NS"
+    ],
+    "Consumer Durables": [
+        "ABFRL.NS", "AVL.NS", "BAJAJELEC.NS", "BOROLTD.NS", "CROMPTON.NS",
+        "EPACK.NS", "ETERNAL.NS", "FIRSTCRY.NS", "GOCOLORS.NS", "NYKAA.NS",
+        "ORIENTELEC.NS", "PGEL.NS", "SHOPERSTOP.NS", "STOVEKRAFT.NS", "STYLEBAAZA.NS",
+        "SWIGGY.NS", "TTKPRESTIG.NS", "VAIBHAVGBL.NS", "VERANDA.NS", "WEL.NS",
+        "WHIRLPOOL.NS"
+    ],
+    "Diamond & Jewellery": [
+        "PCJEWELLER.NS", "TITAN.NS"
+    ],
+    "Diversified": [
+        "ANSALBU.NS", "ASAHIINDIA.NS", "CASTROLIND.NS", "CENTURYPLY.NS",
+        "FRANKLIN.BO", "JINDALSAW.NS", "JSL.NS", "RKFORGE.NS", "RODIUM.BO",
+        "SARDAEN.NS", "SHERVANI.BO", "SHYAMMETL.NS", "SUNDRMFAST.NS", "WELCORP.NS"
+    ],
+    "Electricals": [
+        "KEI.NS", "POLYCAB.NS"
+    ],
+    "ETF": [
+        "NIFTYBEES.NS"
+    ],
+    "Finance": [
+        "ABCAPITAL.NS", "GICRE.NS", "HDFCLIFE.NS", "HUDCO.NS", "ICICIPRULI.NS",
+        "JIOFIN.NS", "LICI.NS", "MOTILALOFS.NS", "NAM_INDIA.NS", "PFC.NS",
+        "RECLTD.NS", "SBICARD.NS", "SBILIFE.NS", "SHRIRAMFIN.NS"
+    ],
+    "FMCG": [
+        "AVANTIFEED.NS", "BALRAMCHIN.NS", "BIKAJI.NS", "CCL.NS", "DABUR.NS",
+        "DEVYANI.NS", "EIDPARRY.NS", "EMAMILTD.NS", "GODREJCP.NS", "ITC.NS",
+        "JUBLFOOD.NS", "JYOTHYLAB.NS", "KRBL.NS", "LTFOODS.NS", "MARICO.NS",
+        "SAPPHIRE.NS", "TATACONSUM.NS", "TI.NS", "TRIVENI.NS", "UNITDSPR.NS",
+        "VBL.NS"
+    ],
+    "Footwear & Accessories": [
+        "BATAINDIA.NS", "CAMPUS.NS", "GOLDIAM.NS", "KALYANKJIL.NS", "KHADIM.NS",
+        "LEHA.NS", "LIBERTSHOE.NS", "RAJESHEXPO.NS", "RELAXO.NS", "SENCO.NS",
+        "SKYGOLD.NS", "TBZ.NS", "TIMEXWATCH.NS"
+    ],
+    "Healthcare": [
+        "ASTERDM.NS", "AUROPHARMA.NS", "BIOCON.NS", "FORTIS.NS", "KIMS.NS",
+        "LAURUSLABS.NS", "NATCOPHARM.NS", "ZYDUSLIFE.NS"
+    ],
+    "Hospitality": [
+        "EIHOTEL.NS", "INDHOTEL.NS"
+    ],
+    "Industrial Gases & Fuels": [
+        "LINDEINDIA.NS"
+    ],
+    "Infrastructure": [
+        "ADANIPORTS.NS", "GMRINFRA.NS"
+    ],
+    "Insurance": [
+        "ICICIGI.NS", "NIACL.NS"
+    ],
+    "Logistics": [
+        "BLUEDART.NS", "CONCOR.NS"
+    ],
+    "Manufacturing": [
+        "ASIANPAINT.NS", "BERGEPAINT.NS"
+    ],
+    "Media & Entertainment": [
+        "SUNTV.NS", "ZEEL.NS"
+    ],
+    "Metals & Mining (DerivedMS)": [
+        "ASAHIINDIA.NS", "BERGEPAINT.NS", "CASTROLIND.NS", "CENTURYPLY.NS",
+        "GPIL.NS", "JINDALSAW.NS", "JSL.NS", "JSWSTEEL.NS", "KANSAINER.NS",
+        "SHYAMMETL.NS", "SUNDRMFAST.NS", "TATASTEEL.NS", "WELCORP.NS"
+    ],
+    "Miscellaneous": [
+        "ADANIENT.NS", "ADANIGREEN.NS"
+    ],
+    "Oil & Gas": [
+        "BPCL.NS", "CHENNPETRO.NS", "HINDPETRO.NS", "IOC.NS", "MRPL.NS",
+        "OIL.NS", "ONGC.NS", "PETRONET.NS", "RELIANCE.NS"
+    ],
+    "Paper": [
+        "JKPAPER.NS", "KUANTUM.NS", "METROGLOBL.NS", "NRAGRINDQ.NS", "PAKKA.NS",
+        "PDMJEPAPER.NS", "RUCHIRA.NS", "SANGALPAPR.NS", "SESHAPAPER.NS",
+        "SHREYANIND.NS", "STARPAPER.NS", "SUBAMPAPER.NS", "SVJENTERPR.NS",
+        "TNPL.NS", "WSTCSTPAPR.NS"
+    ],
+    "Photographic Products": [
+        "JINDALPHOT.NS"
+    ],
+    "Plastic Products": [
+        "SUPREMEIND.NS"
+    ],
+    "Power": [
+        "ACMESOLAR.NS", "ADANIGREEN.NS", "ADANIENSOL.NS", "ADANIPOWER.NS",
+        "ATGL.NS", "BPCL.NS", "CHENNPETRO.NS", "EXIDEIND.NS", "GAIL.NS",
+        "GSPL.NS", "HBLENGINE.NS", "HINDPETRO.NS", "IEX.NS", "NLCINDIA.NS",
+        "NTPC.NS", "OIL.NS", "ONGC.NS", "PETRONET.NS", "POWERGRID.NS",
+        "REFEX.NS", "RELINFRA.NS", "TATAPOWER.NS"
+    ],
+    "Real Estate": [
+        "DLF.NS", "GODREJPROP.NS"
+    ],
+    "Retailing": [
+        "DMART.NS", "TRENT.NS"
+    ],
+    "Ship Building": [
+        "ABSMARINE.NS", "COCHINSHIP.NS", "GRSE.NS"
+    ],
+    "Software & IT Services": [
+        "BSOFT.NS", "CYIENT.NS", "EMUDHRA.NS", "FSL.NS", "HAPPSTMNDS.NS",
+        "HCLTECH.NS", "HEXT.NS", "INFY.NS", "INTELLECT.NS", "NAZARA.NS",
+        "NEWGEN.NS", "NIITMTS.NS", "QUESS.NS", "RATEGAIN.NS", "RSYSTEMS.NS",
+        "SONATSOFTW.NS", "TANLA.NS", "TATATECH.NS", "TCS.NS", "TECHM.NS",
+        "WIPRO.NS", "ZAGGLE.NS", "ZENSARTECH.NS"
+    ],
+    "Telecom": [
+        "BHARTIARTL.NS", "IDEA.NS", "RELIANCE.NS"
+    ],
+    "Textiles": [
+        "PAGEIND.NS", "RAYMOND.NS"
+    ],
+    "Trading": [
+        "ADANIPOWER.NS"
+    ]
 }
-
-
 
 def tooltip(label, explanation):
     return f"{label} 📌 ({explanation})"
