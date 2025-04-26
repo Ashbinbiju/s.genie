@@ -21,4 +21,3 @@ transformers==4.49.0
 vaderSentiment==3.3.2
 yfinance==0.2.55
 arch==7.0.0
-requests>=2.32.3
