@@ -557,164 +557,6 @@ def fetch_fundamentals(symbol):
     except Exception:
         return {'P/E': float('inf'), 'EPS': 0, 'RevenueGrowth': 0}
 
-def backtest_strategy(symbol, data, strategy="Intraday", lookback_period="1y", risk_reward_ratio=3):
-    """
-    Backtest a trading strategy for a given stock.
-    
-    Parameters:
-    - symbol: Stock symbol (e.g., "RELIANCE.NS")
-    - data: Historical OHLCV data (pandas DataFrame)
-    - strategy: Strategy to backtest ("Intraday", "Mean_Reversion", "Breakout", "Ichimoku_Trend")
-    - lookback_period: Period for backtesting (e.g., "1y")
-    - risk_reward_ratio: Risk/reward ratio for target calculation
-    
-    Returns:
-    - Dictionary with backtest metrics (returns, win rate, Sharpe ratio, max drawdown, trades)
-    """
-    if data.empty or len(data) < 50:
-        return {
-            "Total Return": 0,
-            "Win Rate": 0,
-            "Sharpe Ratio": 0,
-            "Max Drawdown": 0,
-            "Number of Trades": 0,
-            "Equity Curve": [],
-            "Error": "Insufficient data for backtesting"
-        }
-
-    # Filter data to lookback period
-    end_date = data.index[-1]
-    start_date = end_date - pd.Timedelta(days=365 if lookback_period == "1y" else 1825)
-    data = data.loc[start_date:end_date].copy()
-
-    # Initialize variables
-    trades = []
-    portfolio_value = 100000  # Initial capital in INR
-    equity_curve = [portfolio_value]
-    position = None
-    entry_price = 0
-    stop_loss = 0
-    target = 0
-
-    # Simulate trades day by day
-    for i in range(1, len(data)):
-        # Get subset of data up to current day
-        current_data = data.iloc[:i+1]
-        recommendations = generate_recommendations(current_data, symbol)
-
-        current_price = current_data['Close'].iloc[-1]
-        buy_signal = recommendations[strategy] in ["Buy", "Strong Buy"]
-        sell_signal = recommendations[strategy] in ["Sell", "Strong Sell"]
-
-        # Check for exit conditions if in a position
-        if position == "Long":
-            if current_price <= stop_loss:
-                # Hit stop loss
-                trade_return = (stop_loss - entry_price) / entry_price
-                portfolio_value *= (1 + trade_return)
-                trades.append({
-                    "Entry Date": current_data.index[-2],
-                    "Exit Date": current_data.index[-1],
-                    "Entry Price": entry_price,
-                    "Exit Price": stop_loss,
-                    "Return": trade_return,
-                    "Outcome": "Loss"
-                })
-                position = None
-            elif current_price >= target:
-                # Hit target
-                trade_return = (target - entry_price) / entry_price
-                portfolio_value *= (1 + trade_return)
-                trades.append({
-                    "Entry Date": current_data.index[-2],
-                    "Exit Date": current_data.index[-1],
-                    "Entry Price": entry_price,
-                    "Exit Price": target,
-                    "Return": trade_return,
-                    "Outcome": "Win"
-                })
-                position = None
-            elif sell_signal:
-                # Exit on sell signal
-                trade_return = (current_price - entry_price) / entry_price
-                portfolio_value *= (1 + trade_return)
-                outcome = "Win" if trade_return > 0 else "Loss"
-                trades.append({
-                    "Entry Date": current_data.index[-2],
-                    "Exit Date": current_data.index[-1],
-                    "Entry Price": entry_price,
-                    "Exit Price": current_price,
-                    "Return": trade_return,
-                    "Outcome": outcome
-                })
-                position = None
-
-        # Check for entry conditions
-        if position is None and buy_signal and recommendations["Buy At"] is not None:
-            entry_price = recommendations["Buy At"]
-            stop_loss = recommendations["Stop Loss"]
-            target = recommendations["Target"]
-            if stop_loss is not None and target is not None and entry_price > stop_loss:
-                position = "Long"
-
-        equity_curve.append(portfolio_value)
-
-    # Calculate metrics
-    total_return = (portfolio_value - 100000) / 100000
-    trade_returns = [trade["Return"] for trade in trades] if trades else [0]
-    wins = sum(1 for trade in trades if trade["Outcome"] == "Win")
-    win_rate = wins / len(trades) if trades else 0
-    sharpe_ratio = np.mean(trade_returns) / np.std(trade_returns) * np.sqrt(252) if trade_returns and np.std(trade_returns) != 0 else 0
-
-    # Calculate maximum drawdown
-    equity_series = pd.Series(equity_curve)
-    rolling_max = equity_series.cummax()
-    drawdowns = (rolling_max - equity_series) / rolling_max
-    max_drawdown = drawdowns.max() if not drawdowns.empty else 0
-
-    return {
-        "Total Return": round(total_return * 100, 2),  # As percentage
-        "Win Rate": round(win_rate * 100, 2),  # As percentage
-        "Sharpe Ratio": round(sharpe_ratio, 2),
-        "Max Drawdown": round(max_drawdown * 100, 2),  # As percentage
-        "Number of Trades": len(trades),
-        "Equity Curve": equity_curve,
-        "Trades": trades,
-        "Error": None
-    }
-
-def backtest_batch(stocks, strategy="Intraday", lookback_period="1y", progress_callback=None):
-    """
-    Backtest a strategy across multiple stocks.
-    
-    Parameters:
-    - stocks: List of stock symbols
-    - strategy: Strategy to backtest
-    - lookback_period: Period for backtesting
-    - progress_callback: Function to update progress
-    
-    Returns:
-    - DataFrame with backtest results for each stock
-    """
-    results = []
-    with ThreadPoolExecutor(max_workers=10) as executor:
-        futures = {executor.submit(backtest_strategy, symbol, fetch_stock_data_cached(symbol), strategy, lookback_period): symbol for symbol in stocks}
-        for i, future in enumerate(as_completed(futures)):
-            symbol = futures[future]
-            try:
-                result = future.result()
-                result["Symbol"] = symbol
-                results.append(result)
-            except Exception as e:
-                st.warning(f"⚠️ Error backtesting {symbol}: {str(e)}")
-            if progress_callback:
-                progress_callback((i + 1) / len(stocks))
-    
-    results_df = pd.DataFrame([r for r in results if r["Error"] is None])
-    if results_df.empty:
-        return pd.DataFrame()
-    return results_df.sort_values(by="Total Return", ascending=False)
-    
 
 def generate_recommendations(data, symbol=None):
     recommendations = {
@@ -759,7 +601,7 @@ def generate_recommendations(data, symbol=None):
         if 'Volume' in data.columns and data['Volume'].iloc[-1] is not None:
             avg_volume = data['Volume'].rolling(window=10).mean().iloc[-1]
             if isinstance(data['Volume'].iloc[-1], (int, float)) and isinstance(avg_volume, (int, float)):
-                if data['Volume'].iloc[-1] > avg_volume * 1.5:
+                if data['Volume'].iloc[-1] > avg_volume * 1.2:  # Relaxed condition for volume
                     buy_score += 1
                 elif data['Volume'].iloc[-1] < avg_volume * 0.5:
                     sell_score += 1
@@ -861,9 +703,10 @@ def generate_recommendations(data, symbol=None):
             if fundamentals['RevenueGrowth'] > 0.1:
                 buy_score += 0.5
         
-        if buy_score >= 4:
+        # Relaxed threshold for buy/sell signals
+        if buy_score >= 3:  # Lowered from 4 to 3
             recommendations["Intraday"] = "Strong Buy"
-        elif sell_score >= 4:
+        elif sell_score >= 3:  # Lowered from 4 to 3
             recommendations["Intraday"] = "Strong Sell"
         
         recommendations["Buy At"] = calculate_buy_at(data)
@@ -881,6 +724,183 @@ def generate_recommendations(data, symbol=None):
         st.warning(f"⚠️ Error generating recommendations: {str(e)}")
     return recommendations
 
+def backtest_strategy(symbol, data, strategy="Intraday", lookback_period="1y", risk_reward_ratio=3):
+    """
+    Backtest a trading strategy for a given stock.
+    
+    Parameters:
+    - symbol: Stock symbol (e.g., "RELIANCE.NS")
+    - data: Historical OHLCV data (pandas DataFrame)
+    - strategy: Strategy to backtest ("Intraday", "Mean_Reversion", "Breakout", "Ichimoku_Trend")
+    - lookback_period: Period for backtesting (e.g., "1y")
+    - risk_reward_ratio: Risk/reward ratio for target calculation
+    
+    Returns:
+    - Dictionary with backtest metrics (returns, win rate, Sharpe ratio, max drawdown, trades)
+    """
+    if data.empty or len(data) < 50:
+        return {
+            "Total Return": 0,
+            "Win Rate": 0,
+            "Sharpe Ratio": 0,
+            "Max Drawdown": 0,
+            "Number of Trades": 0,
+            "Equity Curve": [],
+            "Equity Dates": [],
+            "Trades": [],
+            "Error": "Insufficient data for backtesting"
+        }
+
+    # Filter data to lookback period
+    end_date = data.index[-1]
+    days = {"1y": 365, "3y": 1095, "5y": 1825}
+    start_date = end_date - pd.Timedelta(days=days.get(lookback_period, 365))
+    data = data.loc[start_date:end_date].copy()
+
+    # Initialize variables
+    trades = []
+    portfolio_value = 100000  # Initial capital in INR
+    equity_curve = [portfolio_value]
+    equity_dates = [data.index[0]]
+    position = None
+    entry_price = 0
+    stop_loss = 0
+    target = 0
+    transaction_cost = 0.001  # 0.1% per trade (buy + sell = 0.2% total)
+
+    # Simulate trades day by day
+    for i in range(1, len(data)):
+        # Get subset of data up to current day
+        current_data = data.iloc[:i+1]
+        recommendations = generate_recommendations(current_data, symbol)
+
+        current_price = current_data['Close'].iloc[-1]
+        buy_signal = recommendations[strategy] in ["Buy", "Strong Buy"]
+        sell_signal = recommendations[strategy] in ["Sell", "Strong Sell"]
+
+        # Check for exit conditions if in a position
+        if position == "Long":
+            if current_price <= stop_loss:
+                # Hit stop loss
+                trade_return = (stop_loss - entry_price) / entry_price
+                trade_return -= transaction_cost  # Apply transaction cost on exit
+                portfolio_value *= (1 + trade_return)
+                trades.append({
+                    "Entry Date": current_data.index[-2],
+                    "Exit Date": current_data.index[-1],
+                    "Entry Price": entry_price,
+                    "Exit Price": stop_loss,
+                    "Return": trade_return,
+                    "Outcome": "Loss"
+                })
+                position = None
+            elif current_price >= target:
+                # Hit target
+                trade_return = (target - entry_price) / entry_price
+                trade_return -= transaction_cost  # Apply transaction cost on exit
+                portfolio_value *= (1 + trade_return)
+                trades.append({
+                    "Entry Date": current_data.index[-2],
+                    "Exit Date": current_data.index[-1],
+                    "Entry Price": entry_price,
+                    "Exit Price": target,
+                    "Return": trade_return,
+                    "Outcome": "Win"
+                })
+                position = None
+            elif sell_signal:
+                # Exit on sell signal
+                trade_return = (current_price - entry_price) / entry_price
+                trade_return -= transaction_cost  # Apply transaction cost on exit
+                portfolio_value *= (1 + trade_return)
+                outcome = "Win" if trade_return > 0 else "Loss"
+                trades.append({
+                    "Entry Date": current_data.index[-2],
+                    "Exit Date": current_data.index[-1],
+                    "Entry Price": entry_price,
+                    "Exit Price": current_price,
+                    "Return": trade_return,
+                    "Outcome": outcome
+                })
+                position = None
+
+        # Check for entry conditions
+        if position is None and buy_signal and recommendations["Buy At"] is not None:
+            entry_price = recommendations["Buy At"]
+            stop_loss = recommendations["Stop Loss"]
+            target = recommendations["Target"]
+            if stop_loss is not None and target is not None and entry_price > stop_loss:
+                # Calculate risk-reward ratio
+                risk = entry_price - stop_loss
+                reward = target - entry_price
+                risk_reward = reward / risk if risk > 0 else 0
+                if risk_reward >= 1:  # Minimum risk-reward ratio of 1:1
+                    portfolio_value *= (1 - transaction_cost)  # Apply transaction cost on entry
+                    position = "Long"
+
+        equity_curve.append(portfolio_value)
+        equity_dates.append(data.index[i])
+
+    # Calculate metrics
+    total_return = (portfolio_value - 100000) / 100000
+    trade_returns = [trade["Return"] for trade in trades] if trades else [0]
+    wins = sum(1 for trade in trades if trade["Outcome"] == "Win")
+    win_rate = wins / len(trades) if trades else 0
+
+    # Adjust Sharpe ratio for actual trading days
+    trading_days = len(data)
+    annualization_factor = (252 / trading_days) if trading_days > 0 else 1
+    sharpe_ratio = np.mean(trade_returns) / np.std(trade_returns) * np.sqrt(252 * annualization_factor) if trade_returns and np.std(trade_returns) != 0 else 0
+
+    # Calculate maximum drawdown
+    equity_series = pd.Series(equity_curve)
+    rolling_max = equity_series.cummax()
+    drawdowns = (rolling_max - equity_series) / rolling_max
+    max_drawdown = drawdowns.max() if not drawdowns.empty else 0
+
+    return {
+        "Total Return": round(total_return * 100, 2),
+        "Win Rate": round(win_rate * 100, 2),
+        "Sharpe Ratio": round(sharpe_ratio, 2),
+        "Max Drawdown": round(max_drawdown * 100, 2),
+        "Number of Trades": len(trades),
+        "Equity Curve": equity_curve,
+        "Equity Dates": equity_dates,
+        "Trades": trades,
+        "Error": None
+    }
+def backtest_batch(stocks, strategy="Intraday", lookback_period="1y", progress_callback=None):
+    """
+    Backtest a strategy across multiple stocks.
+    
+    Parameters:
+    - stocks: List of stock symbols
+    - strategy: Strategy to backtest
+    - lookback_period: Period for backtesting
+    - progress_callback: Function to update progress
+    
+    Returns:
+    - DataFrame with backtest results for each stock
+    """
+    results = []
+    with ThreadPoolExecutor(max_workers=10) as executor:
+        futures = {executor.submit(backtest_strategy, symbol, fetch_stock_data_cached(symbol), strategy, lookback_period): symbol for symbol in stocks}
+        for i, future in enumerate(as_completed(futures)):
+            symbol = futures[future]
+            try:
+                result = future.result()
+                result["Symbol"] = symbol
+                results.append(result)
+            except Exception as e:
+                st.warning(f"⚠️ Error backtesting {symbol}: {str(e)}")
+            if progress_callback:
+                progress_callback((i + 1) / len(stocks))
+    
+    results_df = pd.DataFrame([r for r in results if r["Error"] is None])
+    if results_df.empty:
+        return pd.DataFrame()
+    return results_df.sort_values(by="Total Return", ascending=False)
+    
 def analyze_batch(stock_batch):
     results = []
     errors = []
@@ -972,15 +992,18 @@ def display_backtest_results(backtest_results, symbol=None, batch_results=None):
             st.metric("Max Drawdown", f"{backtest_results['Max Drawdown']}%")
         st.write(f"Number of Trades: {backtest_results['Number of Trades']}")
         
-        # Plot equity curve
+        # Plot equity curve using actual dates
         equity_curve = backtest_results["Equity Curve"]
-        if equity_curve:
+        equity_dates = backtest_results["Equity Dates"]
+        if equity_curve and equity_dates:
             equity_df = pd.DataFrame({
-                "Date": pd.date_range(start=pd.Timestamp.now() - pd.Timedelta(days=len(equity_curve)-1), periods=len(equity_curve)),
+                "Date": equity_dates,
                 "Portfolio Value": equity_curve
             })
             fig = px.line(equity_df, x="Date", y="Portfolio Value", title="Equity Curve")
             st.plotly_chart(fig)
+        else:
+            st.warning("⚠️ No equity curve data available for plotting.")
         
         # Display trade log
         if backtest_results["Trades"]:
