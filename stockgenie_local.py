@@ -557,6 +557,165 @@ def fetch_fundamentals(symbol):
     except Exception:
         return {'P/E': float('inf'), 'EPS': 0, 'RevenueGrowth': 0}
 
+def backtest_strategy(symbol, data, strategy="Intraday", lookback_period="1y", risk_reward_ratio=3):
+    """
+    Backtest a trading strategy for a given stock.
+    
+    Parameters:
+    - symbol: Stock symbol (e.g., "RELIANCE.NS")
+    - data: Historical OHLCV data (pandas DataFrame)
+    - strategy: Strategy to backtest ("Intraday", "Mean_Reversion", "Breakout", "Ichimoku_Trend")
+    - lookback_period: Period for backtesting (e.g., "1y")
+    - risk_reward_ratio: Risk/reward ratio for target calculation
+    
+    Returns:
+    - Dictionary with backtest metrics (returns, win rate, Sharpe ratio, max drawdown, trades)
+    """
+    if data.empty or len(data) < 50:
+        return {
+            "Total Return": 0,
+            "Win Rate": 0,
+            "Sharpe Ratio": 0,
+            "Max Drawdown": 0,
+            "Number of Trades": 0,
+            "Equity Curve": [],
+            "Error": "Insufficient data for backtesting"
+        }
+
+    # Filter data to lookback period
+    end_date = data.index[-1]
+    start_date = end_date - pd.Timedelta(days=365 if lookback_period == "1y" else 1825)
+    data = data.loc[start_date:end_date].copy()
+
+    # Initialize variables
+    trades = []
+    portfolio_value = 100000  # Initial capital in INR
+    equity_curve = [portfolio_value]
+    position = None
+    entry_price = 0
+    stop_loss = 0
+    target = 0
+
+    # Simulate trades day by day
+    for i in range(1, len(data)):
+        # Get subset of data up to current day
+        current_data = data.iloc[:i+1]
+        recommendations = generate_recommendations(current_data, symbol)
+
+        current_price = current_data['Close'].iloc[-1]
+        buy_signal = recommendations[strategy] in ["Buy", "Strong Buy"]
+        sell_signal = recommendations[strategy] in ["Sell", "Strong Sell"]
+
+        # Check for exit conditions if in a position
+        if position == "Long":
+            if current_price <= stop_loss:
+                # Hit stop loss
+                trade_return = (stop_loss - entry_price) / entry_price
+                portfolio_value *= (1 + trade_return)
+                trades.append({
+                    "Entry Date": current_data.index[-2],
+                    "Exit Date": current_data.index[-1],
+                    "Entry Price": entry_price,
+                    "Exit Price": stop_loss,
+                    "Return": trade_return,
+                    "Outcome": "Loss"
+                })
+                position = None
+            elif current_price >= target:
+                # Hit target
+                trade_return = (target - entry_price) / entry_price
+                portfolio_value *= (1 + trade_return)
+                trades.append({
+                    "Entry Date": current_data.index[-2],
+                    "Exit Date": current_data.index[-1],
+                    "Entry Price": entry_price,
+                    "Exit Price": target,
+                    "Return": trade_return,
+                    "Outcome": "Win"
+                })
+                position = None
+            elif sell_signal:
+                # Exit on sell signal
+                trade_return = (current_price - entry_price) / entry_price
+                portfolio_value *= (1 + trade_return)
+                outcome = "Win" if trade_return > 0 else "Loss"
+                trades.append({
+                    "Entry Date": current_data.index[-2],
+                    "Exit Date": current_data.index[-1],
+                    "Entry Price": entry_price,
+                    "Exit Price": current_price,
+                    "Return": trade_return,
+                    "Outcome": outcome
+                })
+                position = None
+
+        # Check for entry conditions
+        if position is None and buy_signal and recommendations["Buy At"] is not None:
+            entry_price = recommendations["Buy At"]
+            stop_loss = recommendations["Stop Loss"]
+            target = recommendations["Target"]
+            if stop_loss is not None and target is not None and entry_price > stop_loss:
+                position = "Long"
+
+        equity_curve.append(portfolio_value)
+
+    # Calculate metrics
+    total_return = (portfolio_value - 100000) / 100000
+    trade_returns = [trade["Return"] for trade in trades] if trades else [0]
+    wins = sum(1 for trade in trades if trade["Outcome"] == "Win")
+    win_rate = wins / len(trades) if trades else 0
+    sharpe_ratio = np.mean(trade_returns) / np.std(trade_returns) * np.sqrt(252) if trade_returns and np.std(trade_returns) != 0 else 0
+
+    # Calculate maximum drawdown
+    equity_series = pd.Series(equity_curve)
+    rolling_max = equity_series.cummax()
+    drawdowns = (rolling_max - equity_series) / rolling_max
+    max_drawdown = drawdowns.max() if not drawdowns.empty else 0
+
+    return {
+        "Total Return": round(total_return * 100, 2),  # As percentage
+        "Win Rate": round(win_rate * 100, 2),  # As percentage
+        "Sharpe Ratio": round(sharpe_ratio, 2),
+        "Max Drawdown": round(max_drawdown * 100, 2),  # As percentage
+        "Number of Trades": len(trades),
+        "Equity Curve": equity_curve,
+        "Trades": trades,
+        "Error": None
+    }
+
+def backtest_batch(stocks, strategy="Intraday", lookback_period="1y", progress_callback=None):
+    """
+    Backtest a strategy across multiple stocks.
+    
+    Parameters:
+    - stocks: List of stock symbols
+    - strategy: Strategy to backtest
+    - lookback_period: Period for backtesting
+    - progress_callback: Function to update progress
+    
+    Returns:
+    - DataFrame with backtest results for each stock
+    """
+    results = []
+    with ThreadPoolExecutor(max_workers=10) as executor:
+        futures = {executor.submit(backtest_strategy, symbol, fetch_stock_data_cached(symbol), strategy, lookback_period): symbol for symbol in stocks}
+        for i, future in enumerate(as_completed(futures)):
+            symbol = futures[future]
+            try:
+                result = future.result()
+                result["Symbol"] = symbol
+                results.append(result)
+            except Exception as e:
+                st.warning(f"⚠️ Error backtesting {symbol}: {str(e)}")
+            if progress_callback:
+                progress_callback((i + 1) / len(stocks))
+    
+    results_df = pd.DataFrame([r for r in results if r["Error"] is None])
+    if results_df.empty:
+        return pd.DataFrame()
+    return results_df.sort_values(by="Total Return", ascending=False)
+    
+
 def generate_recommendations(data, symbol=None):
     recommendations = {
         "Intraday": "Hold", "Swing": "Hold",
@@ -790,11 +949,63 @@ def colored_recommendation(recommendation):
         return f"🟡 {recommendation}"
     else:
         return recommendation
+        
+def display_backtest_results(backtest_results, symbol=None, batch_results=None):
+    """
+    Display backtest results in the Streamlit dashboard.
+    
+    Parameters:
+    - backtest_results: Dictionary with backtest metrics for a single stock
+    - symbol: Stock symbol (optional, for single stock display)
+    - batch_results: DataFrame with backtest results for multiple stocks (optional)
+    """
+    if symbol and backtest_results and backtest_results["Error"] is None:
+        st.subheader(f"📉 Backtest Results for {symbol.split('.')[0]}")
+        col1, col2, col3, col4 = st.columns(4)
+        with col1:
+            st.metric("Total Return", f"{backtest_results['Total Return']}%")
+        with col2:
+            st.metric("Win Rate", f"{backtest_results['Win Rate']}%")
+        with col3:
+            st.metric("Sharpe Ratio", f"{backtest_results['Sharpe Ratio']}")
+        with col4:
+            st.metric("Max Drawdown", f"{backtest_results['Max Drawdown']}%")
+        st.write(f"Number of Trades: {backtest_results['Number of Trades']}")
+        
+        # Plot equity curve
+        equity_curve = backtest_results["Equity Curve"]
+        if equity_curve:
+            equity_df = pd.DataFrame({
+                "Date": pd.date_range(start=pd.Timestamp.now() - pd.Timedelta(days=len(equity_curve)-1), periods=len(equity_curve)),
+                "Portfolio Value": equity_curve
+            })
+            fig = px.line(equity_df, x="Date", y="Portfolio Value", title="Equity Curve")
+            st.plotly_chart(fig)
+        
+        # Display trade log
+        if backtest_results["Trades"]:
+            st.subheader("📋 Trade Log")
+            trade_df = pd.DataFrame(backtest_results["Trades"])
+            trade_df["Return"] = trade_df["Return"].apply(lambda x: f"{x*100:.2f}%")
+            st.dataframe(trade_df[["Entry Date", "Exit Date", "Entry Price", "Exit Price", "Return", "Outcome"]])
+    
+    if batch_results is not None and not batch_results.empty:
+        st.subheader("🏆 Batch Backtest Results")
+        st.dataframe(
+            batch_results[["Symbol", "Total Return", "Win Rate", "Sharpe Ratio", "Max Drawdown", "Number of Trades"]]
+            .style.format({
+                "Total Return": "{:.2f}%",
+                "Win Rate": "{:.2f}%",
+                "Sharpe Ratio": "{:.2f}",
+                "Max Drawdown": "{:.2f}%"
+            })
+        )
 
 def display_dashboard(symbol=None, data=None, recommendations=None, selected_stocks=None):
     st.title("📊 StockGenie Pro - NSE Analysis")
     st.subheader(f"📅 Analysis for {datetime.now().strftime('%d %b %Y')}")
     
+    # Existing code for top picks and intraday picks
     if st.button("🚀 Generate Daily Top Picks"):
         progress_bar = st.progress(0)
         loading_text = st.empty()
@@ -828,6 +1039,23 @@ def display_dashboard(symbol=None, data=None, recommendations=None, selected_sto
                     Breakout: {colored_recommendation(row['Breakout'])}  
                     Ichimoku Trend: {colored_recommendation(row['Ichimoku_Trend'])}
                     """, unsafe_allow_html=True)
+            # Batch backtest for top picks
+            if st.button("📉 Backtest Top Picks"):
+                progress_bar = st.progress(0)
+                loading_text = st.empty()
+                loading_messages = itertools.cycle([
+                    "Running backtests...", "Simulating trades...", "Calculating metrics...",
+                    "Analyzing performance...", "Finalizing results..."
+                ])
+                top_stocks = results_df["Symbol"].tolist()
+                batch_results = backtest_batch(
+                    top_stocks,
+                    strategy="Intraday",
+                    progress_callback=lambda x: update_progress(progress_bar, loading_text, x, loading_messages)
+                )
+                progress_bar.empty()
+                loading_text.empty()
+                display_backtest_results(None, batch_results=batch_results)
         else:
             st.warning("⚠️ No top picks available due to data issues.")
     
@@ -890,6 +1118,37 @@ def display_dashboard(symbol=None, data=None, recommendations=None, selected_sto
             with col:
                 st.markdown(f"**{strategy.replace('_', ' ')}**", unsafe_allow_html=True)
                 st.markdown(colored_recommendation(recommendations[strategy]), unsafe_allow_html=True)
+        
+        # Backtest single stock
+        st.subheader("📉 Backtest Strategy")
+        strategy_to_backtest = st.selectbox(
+            "Select Strategy to Backtest",
+            options=["Intraday", "Mean_Reversion", "Breakout", "Ichimoku_Trend"],
+            key="backtest_strategy"
+        )
+        lookback_period = st.selectbox(
+            "Select Lookback Period",
+            options=["1y", "3y", "5y"],
+            key="backtest_period"
+        )
+        if st.button("Run Backtest"):
+            progress_bar = st.progress(0)
+            loading_text = st.empty()
+            loading_messages = itertools.cycle([
+                "Running backtest...", "Simulating trades...", "Calculating metrics...",
+                "Analyzing performance...", "Finalizing results..."
+            ])
+            backtest_results = backtest_strategy(
+                symbol,
+                data,
+                strategy=strategy_to_backtest,
+                lookback_period=lookback_period
+            )
+            progress_bar.progress(1.0)
+            loading_text.empty()
+            display_backtest_results(backtest_results, symbol)
+        
+        # Existing tabs for price action, momentum, etc.
         tab1, tab2, tab3, tab4, tab5 = st.tabs(["📊 Price Action", "📉 Momentum", "📊 Volatility", "📈 Monte Carlo", "📉 New Indicators"])
         with tab1:
             price_cols = ['Close', 'SMA_50', 'SMA_200', 'EMA_20', 'EMA_50']
@@ -931,7 +1190,7 @@ def display_dashboard(symbol=None, data=None, recommendations=None, selected_sto
                 st.warning("⚠️ No valid new indicators available for plotting.")
     elif symbol:
         st.warning("⚠️ No data available for the selected stock.")
-
+        
 def update_progress(progress_bar, loading_text, progress_value, loading_messages):
     progress_bar.progress(progress_value)
     loading_message = next(loading_messages)
