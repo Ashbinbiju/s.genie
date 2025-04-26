@@ -20,9 +20,6 @@ from sklearn.ensemble import RandomForestClassifier
 from sklearn.model_selection import train_test_split
 from sklearn.metrics import accuracy_score
 
-# API Keys (Consider moving to environment variables)
-ALPHA_VANTAGE_KEY = "TCAUKYUCIDZ6PI57"
-
 # Tooltip explanations
 TOOLTIPS = {
     "RSI": "Relative Strength Index (30=Oversold, 70=Overbought)",
@@ -838,7 +835,7 @@ def generate_recommendations(data, symbol=None):
             keltner_weight = feature_importance.get('Keltner_Upper', 1.0 / len(features))
             if (isinstance(data['Keltner_Upper'].iloc[-1], (int, float)) and 
                 isinstance(data['Keltner_Lower'].iloc[-1], (int, float)) and 
-                isinstance(data['Close'].ilocKILL[-1], (int, float))):
+                isinstance(data['Close'].iloc[-1], (int, float))):
                 if data['Close'].iloc[-1] < data['Keltner_Lower'].iloc[-1]:
                     buy_score += 1 * keltner_weight
                 elif data['Close'].iloc[-1] > data['Keltner_Upper'].iloc[-1]:
