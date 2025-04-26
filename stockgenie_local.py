@@ -1172,6 +1172,13 @@ def colored_recommendation(recommendation):
         return recommendation
         
 def display_backtest_results(backtest_results, symbol=None, batch_results=None):
+    """
+    Display backtest results with benchmark comparison.
+    Parameters:
+    - backtest_results: Dict with backtest metrics
+    - symbol: Stock ticker
+    - batch_results: List of batch backtest results
+    """
     import streamlit as st
     import pandas as pd
     import yfinance as yf
@@ -1185,8 +1192,8 @@ def display_backtest_results(backtest_results, symbol=None, batch_results=None):
         st.dataframe(batch_df)
     elif backtest_results:
         st.write(f"Backtest for {symbol}")
-        st.write(f"Total Return: {backtest_results.get('Total Return', 0):.2%}")
-        st.write(f"Win Rate: {backtest_results.get('Win Rate', 0):.2%}")
+        st.write(f"Total Return: {backtest_results.get('Total Return', 0.0):.2%}")
+        st.write(f"Win Rate: {backtest_results.get('Win Rate', 0.0):.2%}")
         st.write(f"Number of Trades: {backtest_results.get('Trades', 0)}")
         
         # Benchmark Comparison
@@ -1198,14 +1205,14 @@ def display_backtest_results(backtest_results, symbol=None, batch_results=None):
         try:
             period = backtest_results.get('period', '1y')
             nifty_data = fetch_nifty_data(period=period)
-            if not nifty_data.empty:
+            if not nifty_data.empty and len(nifty_data) > 1:
                 nifty_returns = (nifty_data['Close'].iloc[-1] / nifty_data['Close'].iloc[0] - 1) * 100
-                strategy_returns = backtest_results.get('Total Return', 0) * 100
+                strategy_returns = backtest_results.get('Total Return', 0.0) * 100
                 st.write(f"Strategy Return: {strategy_returns:.2f}%")
                 st.write(f"NIFTY 50 Return: {nifty_returns:.2f}%")
                 st.write(f"Alpha: {strategy_returns - nifty_returns:.2f}%")
             else:
-                st.warning("⚠️ NIFTY 50 data is empty.")
+                st.warning("⚠️ NIFTY 50 data is empty or insufficient.")
         except Exception as e:
             st.warning(f"⚠️ Unable to fetch NIFTY 50 data for comparison: {str(e)}")
     else:
