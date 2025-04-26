@@ -361,13 +361,16 @@ def analyze_stock(data):
         data['MACD'] = None
         data['MACD_signal'] = None
         data['MACD_hist'] = None
+    # Updated Moving Average Section
     try:
+        data['SMA_20'] = ta.trend.SMAIndicator(data['Close'], window=20).sma_indicator()
         data['SMA_50'] = ta.trend.SMAIndicator(data['Close'], window=50).sma_indicator()
         data['SMA_200'] = ta.trend.SMAIndicator(data['Close'], window=200).sma_indicator()
         data['EMA_20'] = ta.trend.EMAIndicator(data['Close'], window=20).ema_indicator()
         data['EMA_50'] = ta.trend.EMAIndicator(data['Close'], window=50).ema_indicator()
     except Exception as e:
         st.warning(f"⚠️ Failed to compute Moving Averages: {str(e)}")
+        data['SMA_20'] = None
         data['SMA_50'] = None
         data['SMA_200'] = None
         data['EMA_20'] = None
@@ -601,7 +604,7 @@ def generate_recommendations(data, symbol=None):
         if 'Volume' in data.columns and data['Volume'].iloc[-1] is not None:
             avg_volume = data['Volume'].rolling(window=10).mean().iloc[-1]
             if isinstance(data['Volume'].iloc[-1], (int, float)) and isinstance(avg_volume, (int, float)):
-                if data['Volume'].iloc[-1] > avg_volume * 1.2:  # Relaxed condition for volume
+                if data['Volume'].iloc[-1] > avg_volume * 1.2:
                     buy_score += 1
                 elif data['Volume'].iloc[-1] < avg_volume * 0.5:
                     sell_score += 1
@@ -661,6 +664,19 @@ def generate_recommendations(data, symbol=None):
                     sell_score += 1
                     recommendations["Ichimoku_Trend"] = "Strong Sell"
 
+        # Add Moving Average Crossover
+        if 'SMA_20' in data.columns and 'SMA_50' in data.columns:
+            if (isinstance(data['SMA_20'].iloc[-1], (int, float)) and 
+                isinstance(data['SMA_50'].iloc[-1], (int, float)) and 
+                isinstance(data['SMA_20'].iloc[-2], (int, float)) and 
+                isinstance(data['SMA_50'].iloc[-2], (int, float))):
+                if (data['SMA_20'].iloc[-1] > data['SMA_50'].iloc[-1] and 
+                    data['SMA_20'].iloc[-2] <= data['SMA_50'].iloc[-2]):
+                    buy_score += 1  # Bullish crossover
+                elif (data['SMA_20'].iloc[-1] < data['SMA_50'].iloc[-1] and 
+                      data['SMA_20'].iloc[-2] >= data['SMA_50'].iloc[-2]):
+                    sell_score += 1  # Bearish crossover
+
         # New Indicators
         if ('Keltner_Upper' in data.columns and 'Keltner_Lower' in data.columns and 
             data['Close'].iloc[-1] is not None):
@@ -704,9 +720,9 @@ def generate_recommendations(data, symbol=None):
                 buy_score += 0.5
         
         # Relaxed threshold for buy/sell signals
-        if buy_score >= 3:  # Lowered from 4 to 3
+        if buy_score >= 3:
             recommendations["Intraday"] = "Strong Buy"
-        elif sell_score >= 3:  # Lowered from 4 to 3
+        elif sell_score >= 3:
             recommendations["Intraday"] = "Strong Sell"
         
         recommendations["Buy At"] = calculate_buy_at(data)
@@ -723,7 +739,6 @@ def generate_recommendations(data, symbol=None):
     except Exception as e:
         st.warning(f"⚠️ Error generating recommendations: {str(e)}")
     return recommendations
-
 def backtest_strategy(symbol, data, strategy="Intraday", lookback_period="1y", risk_reward_ratio=3):
     """
     Backtest a trading strategy for a given stock.
@@ -762,6 +777,7 @@ def backtest_strategy(symbol, data, strategy="Intraday", lookback_period="1y", r
     portfolio_value = 100000  # Initial capital in INR
     equity_curve = [portfolio_value]
     equity_dates = [data.index[0]]
+    daily_returns = []
     position = None
     entry_price = 0
     stop_loss = 0
@@ -777,6 +793,15 @@ def backtest_strategy(symbol, data, strategy="Intraday", lookback_period="1y", r
         current_price = current_data['Close'].iloc[-1]
         buy_signal = recommendations[strategy] in ["Buy", "Strong Buy"]
         sell_signal = recommendations[strategy] in ["Sell", "Strong Sell"]
+
+        # Calculate daily return for Sharpe ratio
+        prev_portfolio_value = equity_curve[-1]
+        if position == "Long":
+            unrealized_return = (current_price - entry_price) / entry_price
+            daily_return = (portfolio_value * (1 + unrealized_return)) / prev_portfolio_value - 1
+        else:
+            daily_return = 0
+        daily_returns.append(daily_return)
 
         # Check for exit conditions if in a position
         if position == "Long":
@@ -834,7 +859,7 @@ def backtest_strategy(symbol, data, strategy="Intraday", lookback_period="1y", r
                 risk = entry_price - stop_loss
                 reward = target - entry_price
                 risk_reward = reward / risk if risk > 0 else 0
-                if risk_reward >= 1:  # Minimum risk-reward ratio of 1:1
+                if risk_reward >= 2:  # Increased minimum risk-reward ratio to 2:1
                     portfolio_value *= (1 - transaction_cost)  # Apply transaction cost on entry
                     position = "Long"
 
@@ -847,10 +872,16 @@ def backtest_strategy(symbol, data, strategy="Intraday", lookback_period="1y", r
     wins = sum(1 for trade in trades if trade["Outcome"] == "Win")
     win_rate = wins / len(trades) if trades else 0
 
-    # Adjust Sharpe ratio for actual trading days
-    trading_days = len(data)
-    annualization_factor = (252 / trading_days) if trading_days > 0 else 1
-    sharpe_ratio = np.mean(trade_returns) / np.std(trade_returns) * np.sqrt(252 * annualization_factor) if trade_returns and np.std(trade_returns) != 0 else 0
+    # Calculate Sharpe ratio using daily portfolio returns
+    daily_returns = np.array(daily_returns)
+    trading_days = len(data) - 1
+    if trading_days > 0 and np.std(daily_returns) != 0:
+        mean_daily_return = np.mean(daily_returns)
+        std_daily_return = np.std(daily_returns)
+        annualization_factor = 252
+        sharpe_ratio = (mean_daily_return / std_daily_return) * np.sqrt(annualization_factor)
+    else:
+        sharpe_ratio = 0
 
     # Calculate maximum drawdown
     equity_series = pd.Series(equity_curve)
@@ -869,6 +900,7 @@ def backtest_strategy(symbol, data, strategy="Intraday", lookback_period="1y", r
         "Trades": trades,
         "Error": None
     }
+    
 def backtest_batch(stocks, strategy="Intraday", lookback_period="1y", progress_callback=None):
     """
     Backtest a strategy across multiple stocks.
@@ -1011,6 +1043,18 @@ def display_backtest_results(backtest_results, symbol=None, batch_results=None):
             trade_df = pd.DataFrame(backtest_results["Trades"])
             trade_df["Return"] = trade_df["Return"].apply(lambda x: f"{x*100:.2f}%")
             st.dataframe(trade_df[["Entry Date", "Exit Date", "Entry Price", "Exit Price", "Return", "Outcome"]])
+        
+        # Benchmark comparison
+        st.subheader("📊 Benchmark Comparison")
+        nifty_data = fetch_stock_data_cached("^NSEI", period="1y", interval="1d")
+        if not nifty_data.empty:
+            nifty_return = (nifty_data['Close'].iloc[-1] - nifty_data['Close'].iloc[0]) / nifty_data['Close'].iloc[0] * 100
+            st.metric("NIFTY 50 Return", f"{nifty_return:.2f}%")
+            strategy_return = backtest_results['Total Return']
+            alpha = strategy_return - nifty_return
+            st.metric("Alpha (vs NIFTY 50)", f"{alpha:.2f}%")
+        else:
+            st.warning("⚠️ Unable to fetch NIFTY 50 data for comparison.")
     
     if batch_results is not None and not batch_results.empty:
         st.subheader("🏆 Batch Backtest Results")
@@ -1142,7 +1186,7 @@ def display_dashboard(symbol=None, data=None, recommendations=None, selected_sto
                 st.markdown(f"**{strategy.replace('_', ' ')}**", unsafe_allow_html=True)
                 st.markdown(colored_recommendation(recommendations[strategy]), unsafe_allow_html=True)
         
-        # Backtest single stock
+        # Updated Backtest Section
         st.subheader("📉 Backtest Strategy")
         strategy_to_backtest = st.selectbox(
             "Select Strategy to Backtest",
@@ -1154,6 +1198,12 @@ def display_dashboard(symbol=None, data=None, recommendations=None, selected_sto
             options=["1y", "3y", "5y"],
             key="backtest_period"
         )
+        # Add interval selection for Intraday strategy
+        data_interval = st.selectbox(
+            "Select Data Interval for Backtest",
+            options=["1d", "1h"] if strategy_to_backtest == "Intraday" else ["1d"],
+            key="backtest_interval"
+        )
         if st.button("Run Backtest"):
             progress_bar = st.progress(0)
             loading_text = st.empty()
@@ -1161,15 +1211,21 @@ def display_dashboard(symbol=None, data=None, recommendations=None, selected_sto
                 "Running backtest...", "Simulating trades...", "Calculating metrics...",
                 "Analyzing performance...", "Finalizing results..."
             ])
-            backtest_results = backtest_strategy(
-                symbol,
-                data,
-                strategy=strategy_to_backtest,
-                lookback_period=lookback_period
-            )
-            progress_bar.progress(1.0)
-            loading_text.empty()
-            display_backtest_results(backtest_results, symbol)
+            # Fetch data with the selected interval
+            backtest_data = fetch_stock_data_cached(symbol, period=lookback_period, interval=data_interval)
+            if not backtest_data.empty:
+                backtest_data = analyze_stock(backtest_data)
+                backtest_results = backtest_strategy(
+                    symbol,
+                    backtest_data,
+                    strategy=strategy_to_backtest,
+                    lookback_period=lookback_period
+                )
+                progress_bar.progress(1.0)
+                loading_text.empty()
+                display_backtest_results(backtest_results, symbol)
+            else:
+                st.warning("⚠️ Failed to load data for backtesting.")
         
         # Existing tabs for price action, momentum, etc.
         tab1, tab2, tab3, tab4, tab5 = st.tabs(["📊 Price Action", "📉 Momentum", "📊 Volatility", "📈 Monte Carlo", "📉 New Indicators"])
