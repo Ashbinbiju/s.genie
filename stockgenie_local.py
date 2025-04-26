@@ -696,7 +696,7 @@ def generate_recommendations(data, symbol=None):
         else:
             feature_importance = {f: 1.0 / len(features) for f in features}
         
-        # Calculate weighted signals
+        # RSI
         if 'RSI' in data.columns and data['RSI'].iloc[-1] is not None:
             rsi_weight = feature_importance.get('RSI', 1.0 / len(features))
             if isinstance(data['RSI'].iloc[-1], (int, float)):
@@ -705,6 +705,7 @@ def generate_recommendations(data, symbol=None):
                 elif data['RSI'].iloc[-1] > 70:
                     sell_score += 2 * rsi_weight
         
+        # MACD
         if 'MACD' in data.columns and 'MACD_signal' in data.columns:
             macd_weight = feature_importance.get('MACD', 1.0 / len(features))
             if data['MACD'].iloc[-1] is not None and data['MACD_signal'].iloc[-1] is not None:
@@ -716,7 +717,7 @@ def generate_recommendations(data, symbol=None):
         
         # Bollinger Bands
         if 'Close' in data.columns and 'Lower_Band' in data.columns and 'Upper_Band' in data.columns:
-            bb_weight = feature_importance.get('Lower_Band', 1.0 / len(features))  # Proxy for Bollinger
+            bb_weight = feature_importance.get('Lower_Band', 1.0 / len(features))
             if isinstance(data['Close'].iloc[-1], (int, float)) and isinstance(data['Lower_Band'].iloc[-1], (int, float)) and isinstance(data['Upper_Band'].iloc[-1], (int, float)):
                 if data['Close'].iloc[-1] < data['Lower_Band'].iloc[-1]:
                     buy_score += 1 * bb_weight
@@ -734,7 +735,7 @@ def generate_recommendations(data, symbol=None):
         
         # Volume
         if 'Volume' in data.columns and data['Volume'].iloc[-1] is not None:
-            volume_weight = feature_importance.get('Volume', 1.0 / len(features))  # Proxy for volume
+            volume_weight = feature_importance.get('Volume', 1.0 / len(features))
             avg_volume = data['Volume'].rolling(window=10).mean().iloc[-1]
             if isinstance(data['Volume'].iloc[-1], (int, float)) and isinstance(avg_volume, (int, float)):
                 if data['Volume'].iloc[-1] > avg_volume * 1.2:
@@ -744,7 +745,7 @@ def generate_recommendations(data, symbol=None):
         
         # Divergence
         if 'Divergence' in data.columns:
-            divergence_weight = feature_importance.get('Divergence', 1.0 / len(features))  # Proxy
+            divergence_weight = feature_importance.get('Divergence', 1.0 / len(features))
             if data['Divergence'].iloc[-1] == "Bullish Divergence":
                 buy_score += 1 * divergence_weight
             elif data['Divergence'].iloc[-1] == "Bearish Divergence":
@@ -880,20 +881,19 @@ def generate_recommendations(data, symbol=None):
         # Fundamentals
         if symbol:
             fundamentals = fetch_fundamentals(symbol)
-            fundamental_weight = 0.1  # Fixed weight for fundamentals
+            fundamental_weight = 0.1
             if fundamentals['P/E'] < 15 and fundamentals['EPS'] > 0:
                 buy_score += 1 * fundamental_weight
             if fundamentals['RevenueGrowth'] > 0.1:
                 buy_score += 0.5 * fundamental_weight
         
-        # Generate recommendations based on scores
-        추천사항["Intraday"] = "Strong Buy" if buy_score >= 3 else "Strong Sell" if sell_score >= 3 else "Hold"
+        # Generate recommendations
+        recommendations["Intraday"] = "Strong Buy" if buy_score >= 3 else "Strong Sell" if sell_score >= 3 else "Hold"
         
         recommendations["Buy At"] = calculate_buy_at(data)
         recommendations["Stop Loss"] = calculate_stop_loss(data)
         recommendations["Target"] = calculate_target(data)
         
-        # Add ML accuracy to recommendations
         recommendations["ML_Accuracy"] = accuracy if model else 0.0
         recommendations["Score"] = max(0, min(buy_score - sell_score, 7))
         
