@@ -1351,7 +1351,7 @@ def display_dashboard(symbol=None, data=None, recommendations=None, selected_sto
                 if model:
                     prediction = model.predict(latest_data)[0]
                     probability = model.predict_proba(latest_data)[0][1]
-poor                    st.write(f"Prediction: {'Price Increase' if prediction == 1 else 'Price Decrease'}")
+                    st.write(f"Prediction: {'Price Increase' if prediction == 1 else 'Price Decrease'}")
                     st.write(f"Probability of Increase: {probability*100:.2f}%")
                 else:
                     st.warning("⚠️ Unable to generate ML prediction.")
