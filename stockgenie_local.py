@@ -16,6 +16,9 @@ from pytrends.request import TrendReq
 import numpy as np
 import itertools
 from arch import arch_model
+from sklearn.ensemble import RandomForestClassifier
+from sklearn.model_selection import train_test_split
+from sklearn.metrics import accuracy_score
 
 # API Keys (Consider moving to environment variables)
 ALPHA_VANTAGE_KEY = "TCAUKYUCIDZ6PI57"
@@ -231,6 +234,7 @@ def fetch_nse_stock_list():
         return list(set([stock for sector in SECTORS.values() for stock in sector]))
 
 @lru_cache(maxsize=100)
+
 def fetch_stock_data_cached(symbol, period="5y", interval="1d"):
     try:
         if ".NS" not in symbol:
@@ -242,6 +246,86 @@ def fetch_stock_data_cached(symbol, period="5y", interval="1d"):
         return data
     except Exception:
         return pd.DataFrame()
+
+def train_ml_model(data, features=None, target_shift=-1, test_size=0.2, random_state=42):
+    """
+    Train a Random Forest Classifier to predict price movement and return feature importance.
+    
+    Parameters:
+    - data: DataFrame with OHLCV and technical indicators
+    - features: List of feature columns (e.g., ['RSI', 'MACD', 'ATR'])
+    - target_shift: Shift for target variable (e.g., -1 for next day's price)
+    - test_size: Proportion of data for testing
+    - random_state: Seed for reproducibility
+    
+    Returns:
+    - model: Trained Random Forest Classifier
+    - feature_importance: Dict mapping features to their importance scores
+    - accuracy: Model accuracy on test set
+    """
+    if data.empty or len(data) < 50:
+        return None, {}, 0.0
+    
+    # Default features if none provided
+    if features is None:
+        features = ['RSI', 'MACD', 'MACD_signal', 'ATR', 'ADX', 'CMF', 'TRIX', 
+                   'Ultimate_Osc', 'CMO', 'VPT', 'SlowK', 'SlowD']
+    
+    # Ensure features exist in data and are numeric
+    valid_features = [f for f in features if f in data.columns and pd.api.types.is_numeric_dtype(data[f])]
+    if not valid_features:
+        st.warning("⚠️ No valid features available for ML training.")
+        return None, {}, 0.0
+    
+    # Prepare X (features) and y (target)
+    X = data[valid_features].dropna()
+    if len(X) < 50:
+        st.warning("⚠️ Insufficient data after dropping NaNs.")
+        return None, {}, 0.0
+    
+    # Create target: 1 if next day's close > current close, else 0
+    y = (data['Close'].shift(target_shift) > data['Close']).astype(int)
+    
+    # Align X and y
+    valid_idx = X.index.intersection(y.index)
+    X = X.loc[valid_idx]
+    y = y.loc[valid_idx]
+    
+    if len(X) < 50:
+        st.warning("⚠️ Insufficient aligned data for ML training.")
+        return None, {}, 0.0
+    
+    # Split data
+    X_train, X_test, y_train, y_test = train_test_split(
+        X, y, test_size=test_size, random_state=random_state, shuffle=False
+    )
+    
+    # Train Random Forest Classifier
+    model = RandomForestClassifier(
+        n_estimators=100,
+        max_depth=10,
+        min_samples_split=5,
+        random_state=random_state
+    )
+    try:
+        model.fit(X_train, y_train)
+    except Exception as e:
+        st.warning(f"⚠️ Failed to train ML model: {str(e)}")
+        return None, {}, 0.0
+    
+    # Evaluate model
+    try:
+        y_pred = model.predict(X_test)
+        accuracy = accuracy_score(y_test, y_pred)
+    except Exception as e:
+        st.warning(f"⚠️ Failed to evaluate ML model: {str(e)}")
+        accuracy = 0.0
+    
+    # Get feature importance
+    feature_importance = dict(zip(valid_features, model.feature_importances_))
+    
+    return model, feature_importance, accuracy
+    
 
 def calculate_advance_decline_ratio(stock_list):
     advances = 0
@@ -569,6 +653,7 @@ def generate_recommendations(data, symbol=None):
         "Current Price": None, "Buy At": None,
         "Stop Loss": None, "Target": None, "Score": 0
     }
+    
     if data.empty or 'Close' not in data.columns or data['Close'].iloc[-1] is None:
         st.warning("⚠️ No valid data available for recommendations.")
         return recommendations
@@ -578,167 +663,228 @@ def generate_recommendations(data, symbol=None):
         buy_score = 0
         sell_score = 0
         
+        # Train ML model to get feature importance
+        features = ['RSI', 'MACD', 'MACD_signal', 'ATR', 'ADX', 'CMF', 'TRIX', 
+                   'Ultimate_Osc', 'CMO', 'VPT', 'SlowK', 'SlowD']
+        model, feature_importance, accuracy = train_ml_model(data, features=features)
+        
+        if not feature_importance:
+            st.warning("⚠️ ML model training failed. Using equal weights.")
+            feature_importance = {f: 1.0 / len(features) for f in features}
+        
+        # Normalize feature importance to sum to 1
+        total_importance = sum(feature_importance.values())
+        if total_importance > 0:
+            feature_importance = {k: v / total_importance for k, v in feature_importance.items()}
+        else:
+            feature_importance = {f: 1.0 / len(features) for f in features}
+        
+        # Calculate weighted signals
         if 'RSI' in data.columns and data['RSI'].iloc[-1] is not None:
-            if isinstance(data['RSI'].iloc[-1], (int, float)) and data['RSI'].iloc[-1] < 30:
-                buy_score += 2
-            elif isinstance(data['RSI'].iloc[-1], (int, float)) and data['RSI'].iloc[-1] > 70:
-                sell_score += 2
-        if 'MACD' in data.columns and 'MACD_signal' in data.columns and data['MACD'].iloc[-1] is not None and data['MACD_signal'].iloc[-1] is not None:
-            if isinstance(data['MACD'].iloc[-1], (int, float)) and isinstance(data['MACD_signal'].iloc[-1], (int, float)):
-                if data['MACD'].iloc[-1] > data['MACD_signal'].iloc[-1]:
-                    buy_score += 1
-                elif data['MACD'].iloc[-1] < data['MACD_signal'].iloc[-1]:
-                    sell_score += 1
-        if 'Close' in data.columns and 'Lower_Band' in data.columns and 'Upper_Band' in data.columns and data['Close'].iloc[-1] is not None:
+            rsi_weight = feature_importance.get('RSI', 1.0 / len(features))
+            if isinstance(data['RSI'].iloc[-1], (int, float)):
+                if data['RSI'].iloc[-1] < 30:
+                    buy_score += 2 * rsi_weight
+                elif data['RSI'].iloc[-1] > 70:
+                    sell_score += 2 * rsi_weight
+        
+        if 'MACD' in data.columns and 'MACD_signal' in data.columns:
+            macd_weight = feature_importance.get('MACD', 1.0 / len(features))
+            if data['MACD'].iloc[-1] is not None and data['MACD_signal'].iloc[-1] is not None:
+                if isinstance(data['MACD'].iloc[-1], (int, float)) and isinstance(data['MACD_signal'].iloc[-1], (int, float)):
+                    if data['MACD'].iloc[-1] > data['MACD_signal'].iloc[-1]:
+                        buy_score += 1 * macd_weight
+                    elif data['MACD'].iloc[-1] < data['MACD_signal'].iloc[-1]:
+                        sell_score += 1 * macd_weight
+        
+        # Bollinger Bands
+        if 'Close' in data.columns and 'Lower_Band' in data.columns and 'Upper_Band' in data.columns:
+            bb_weight = feature_importance.get('Lower_Band', 1.0 / len(features))  # Proxy for Bollinger
             if isinstance(data['Close'].iloc[-1], (int, float)) and isinstance(data['Lower_Band'].iloc[-1], (int, float)) and isinstance(data['Upper_Band'].iloc[-1], (int, float)):
                 if data['Close'].iloc[-1] < data['Lower_Band'].iloc[-1]:
-                    buy_score += 1
+                    buy_score += 1 * bb_weight
                 elif data['Close'].iloc[-1] > data['Upper_Band'].iloc[-1]:
-                    sell_score += 1
-        if 'VWAP' in data.columns and data['VWAP'].iloc[-1] is not None and data['Close'].iloc[-1] is not None:
+                    sell_score += 1 * bb_weight
+        
+        # VWAP
+        if 'VWAP' in data.columns and data['VWAP'].iloc[-1] is not None:
+            vwap_weight = feature_importance.get('VWAP', 1.0 / len(features))
             if isinstance(data['VWAP'].iloc[-1], (int, float)) and isinstance(data['Close'].iloc[-1], (int, float)):
                 if data['Close'].iloc[-1] > data['VWAP'].iloc[-1]:
-                    buy_score += 1
+                    buy_score += 1 * vwap_weight
                 elif data['Close'].iloc[-1] < data['VWAP'].iloc[-1]:
-                    sell_score += 1
+                    sell_score += 1 * vwap_weight
+        
+        # Volume
         if 'Volume' in data.columns and data['Volume'].iloc[-1] is not None:
+            volume_weight = feature_importance.get('Volume', 1.0 / len(features))  # Proxy for volume
             avg_volume = data['Volume'].rolling(window=10).mean().iloc[-1]
             if isinstance(data['Volume'].iloc[-1], (int, float)) and isinstance(avg_volume, (int, float)):
                 if data['Volume'].iloc[-1] > avg_volume * 1.2:
-                    buy_score += 1
+                    buy_score += 1 * volume_weight
                 elif data['Volume'].iloc[-1] < avg_volume * 0.5:
-                    sell_score += 1
-        if 'Divergence' in data.columns:
-            if data['Divergence'].iloc[-1] == "Bullish Divergence":
-                buy_score += 1
-            elif data['Divergence'].iloc[-1] == "Bearish Divergence":
-                sell_score += 1
+                    sell_score += 1 * volume_weight
         
-        if 'Ichimoku_Span_A' in data.columns and 'Ichimoku_Span_B' in data.columns and data['Close'].iloc[-1] is not None:
+        # Divergence
+        if 'Divergence' in data.columns:
+            divergence_weight = feature_importance.get('Divergence', 1.0 / len(features))  # Proxy
+            if data['Divergence'].iloc[-1] == "Bullish Divergence":
+                buy_score += 1 * divergence_weight
+            elif data['Divergence'].iloc[-1] == "Bearish Divergence":
+                sell_score += 1 * divergence_weight
+        
+        # Ichimoku Cloud
+        if 'Ichimoku_Span_A' in data.columns and 'Ichimoku_Span_B' in data.columns:
+            ichimoku_weight = feature_importance.get('Ichimoku_Span_A', 1.0 / len(features))
             if (isinstance(data['Ichimoku_Span_A'].iloc[-1], (int, float)) and 
                 isinstance(data['Ichimoku_Span_B'].iloc[-1], (int, float)) and 
                 isinstance(data['Close'].iloc[-1], (int, float))):
                 if data['Close'].iloc[-1] > max(data['Ichimoku_Span_A'].iloc[-1], data['Ichimoku_Span_B'].iloc[-1]):
-                    buy_score += 1
+                    buy_score += 1 * ichimoku_weight
                     recommendations["Ichimoku_Trend"] = "Buy"
                 elif data['Close'].iloc[-1] < min(data['Ichimoku_Span_A'].iloc[-1], data['Ichimoku_Span_B'].iloc[-1]):
-                    sell_score += 1
+                    sell_score += 1 * ichimoku_weight
                     recommendations["Ichimoku_Trend"] = "Sell"
+        
+        # Chaikin Money Flow
         if 'CMF' in data.columns and data['CMF'].iloc[-1] is not None:
+            cmf_weight = feature_importance.get('CMF', 1.0 / len(features))
             if isinstance(data['CMF'].iloc[-1], (int, float)):
                 if data['CMF'].iloc[-1] > 0:
-                    buy_score += 1
+                    buy_score += 1 * cmf_weight
                 elif data['CMF'].iloc[-1] < 0:
-                    sell_score += 1
-        if 'Donchian_Upper' in data.columns and 'Donchian_Lower' in data.columns and data['Close'].iloc[-1] is not None:
+                    sell_score += 1 * cmf_weight
+        
+        # Donchian Channels
+        if 'Donchian_Upper' in data.columns and 'Donchian_Lower' in data.columns:
+            donchian_weight = feature_importance.get('Donchian_Upper', 1.0 / len(features))
             if (isinstance(data['Donchian_Upper'].iloc[-1], (int, float)) and 
                 isinstance(data['Donchian_Lower'].iloc[-1], (int, float)) and 
                 isinstance(data['Close'].iloc[-1], (int, float))):
                 if data['Close'].iloc[-1] > data['Donchian_Upper'].iloc[-1]:
-                    buy_score += 1
+                    buy_score += 1 * donchian_weight
                     recommendations["Breakout"] = "Buy"
                 elif data['Close'].iloc[-1] < data['Donchian_Lower'].iloc[-1]:
-                    sell_score += 1
+                    sell_score += 1 * donchian_weight
                     recommendations["Breakout"] = "Sell"
-        if 'RSI' in data.columns and 'Lower_Band' in data.columns and data['Close'].iloc[-1] is not None:
+        
+        # Mean Reversion (RSI + Bollinger)
+        if 'RSI' in data.columns and 'Lower_Band' in data.columns:
+            rsi_weight = feature_importance.get('RSI', 1.0 / len(features))
+            bb_weight = feature_importance.get('Lower_Band', 1.0 / len(features))
+            combined_weight = (rsi_weight + bb_weight) / 2
             if (isinstance(data['RSI'].iloc[-1], (int, float)) and 
                 isinstance(data['Lower_Band'].iloc[-1], (int, float)) and 
                 isinstance(data['Close'].iloc[-1], (int, float))):
                 if data['RSI'].iloc[-1] < 30 and data['Close'].iloc[-1] <= data['Lower_Band'].iloc[-1]:
-                    buy_score += 2
+                    buy_score += 2 * combined_weight
                     recommendations["Mean_Reversion"] = "Buy"
                 elif data['RSI'].iloc[-1] > 70 and data['Close'].iloc[-1] >= data['Upper_Band'].iloc[-1]:
-                    sell_score += 2
+                    sell_score += 2 * combined_weight
                     recommendations["Mean_Reversion"] = "Sell"
-        if 'Ichimoku_Tenkan' in data.columns and 'Ichimoku_Kijun' in data.columns and data['Close'].iloc[-1] is not None:
+        
+        # Ichimoku Strong Signals
+        if 'Ichimoku_Tenkan' in data.columns and 'Ichimoku_Kijun' in data.columns:
+            ichimoku_weight = feature_importance.get('Ichimoku_Tenkan', 1.0 / len(features))
             if (isinstance(data['Ichimoku_Tenkan'].iloc[-1], (int, float)) and 
                 isinstance(data['Ichimoku_Kijun'].iloc[-1], (int, float)) and 
                 isinstance(data['Close'].iloc[-1], (int, float)) and 
                 isinstance(data['Ichimoku_Span_A'].iloc[-1], (int, float))):
                 if (data['Ichimoku_Tenkan'].iloc[-1] > data['Ichimoku_Kijun'].iloc[-1] and
                     data['Close'].iloc[-1] > data['Ichimoku_Span_A'].iloc[-1]):
-                    buy_score += 1
+                    buy_score += 1 * ichimoku_weight
                     recommendations["Ichimoku_Trend"] = "Strong Buy"
                 elif (data['Ichimoku_Tenkan'].iloc[-1] < data['Ichimoku_Kijun'].iloc[-1] and
                       data['Close'].iloc[-1] < data['Ichimoku_Span_B'].iloc[-1]):
-                    sell_score += 1
+                    sell_score += 1 * ichimoku_weight
                     recommendations["Ichimoku_Trend"] = "Strong Sell"
-
-        # Add Moving Average Crossover
+        
+        # Moving Average Crossover
         if 'SMA_20' in data.columns and 'SMA_50' in data.columns:
+            sma_weight = feature_importance.get('SMA_20', 1.0 / len(features))
             if (isinstance(data['SMA_20'].iloc[-1], (int, float)) and 
                 isinstance(data['SMA_50'].iloc[-1], (int, float)) and 
                 isinstance(data['SMA_20'].iloc[-2], (int, float)) and 
                 isinstance(data['SMA_50'].iloc[-2], (int, float))):
                 if (data['SMA_20'].iloc[-1] > data['SMA_50'].iloc[-1] and 
                     data['SMA_20'].iloc[-2] <= data['SMA_50'].iloc[-2]):
-                    buy_score += 1  # Bullish crossover
+                    buy_score += 1 * sma_weight
                 elif (data['SMA_20'].iloc[-1] < data['SMA_50'].iloc[-1] and 
                       data['SMA_20'].iloc[-2] >= data['SMA_50'].iloc[-2]):
-                    sell_score += 1  # Bearish crossover
-
-        # New Indicators
-        if ('Keltner_Upper' in data.columns and 'Keltner_Lower' in data.columns and 
-            data['Close'].iloc[-1] is not None):
+                    sell_score += 1 * sma_weight
+        
+        # Keltner Channels
+        if 'Keltner_Upper' in data.columns and 'Keltner_Lower' in data.columns:
+            keltner_weight = feature_importance.get('Keltner_Upper', 1.0 / len(features))
             if (isinstance(data['Keltner_Upper'].iloc[-1], (int, float)) and 
                 isinstance(data['Keltner_Lower'].iloc[-1], (int, float)) and 
-                isinstance(data['Close'].iloc[-1], (int, float))):
+                isinstance(data['Close'].ilocKILL[-1], (int, float))):
                 if data['Close'].iloc[-1] < data['Keltner_Lower'].iloc[-1]:
-                    buy_score += 1
+                    buy_score += 1 * keltner_weight
                 elif data['Close'].iloc[-1] > data['Keltner_Upper'].iloc[-1]:
-                    sell_score += 1
+                    sell_score += 1 * keltner_weight
+        
+        # TRIX
         if 'TRIX' in data.columns and data['TRIX'].iloc[-1] is not None:
+            trix_weight = feature_importance.get('TRIX', 1.0 / len(features))
             if isinstance(data['TRIX'].iloc[-1], (int, float)):
                 if data['TRIX'].iloc[-1] > 0 and data['TRIX'].iloc[-1] > data['TRIX'].iloc[-2]:
-                    buy_score += 1
+                    buy_score += 1 * trix_weight
                 elif data['TRIX'].iloc[-1] < 0 and data['TRIX'].iloc[-1] < data['TRIX'].iloc[-2]:
-                    sell_score += 1
+                    sell_score += 1 * trix_weight
+        
+        # Ultimate Oscillator
         if 'Ultimate_Osc' in data.columns and data['Ultimate_Osc'].iloc[-1] is not None:
+            uo_weight = feature_importance.get('Ultimate_Osc', 1.0 / len(features))
             if isinstance(data['Ultimate_Osc'].iloc[-1], (int, float)):
                 if data['Ultimate_Osc'].iloc[-1] < 30:
-                    buy_score += 1
+                    buy_score += 1 * uo_weight
                 elif data['Ultimate_Osc'].iloc[-1] > 70:
-                    sell_score += 1
+                    sell_score += 1 * uo_weight
+        
+        # Chande Momentum Oscillator
         if 'CMO' in data.columns and data['CMO'].iloc[-1] is not None:
+            cmo_weight = feature_importance.get('CMO', 1.0 / len(features))
             if isinstance(data['CMO'].iloc[-1], (int, float)):
                 if data['CMO'].iloc[-1] < -50:
-                    buy_score += 1
+                    buy_score += 1 * cmo_weight
                 elif data['CMO'].iloc[-1] > 50:
-                    sell_score += 1
+                    sell_score += 1 * cmo_weight
+        
+        # Volume Price Trend
         if 'VPT' in data.columns and data['VPT'].iloc[-1] is not None:
+            vpt_weight = feature_importance.get('VPT', 1.0 / len(features))
             if isinstance(data['VPT'].iloc[-1], (int, float)):
                 if data['VPT'].iloc[-1] > data['VPT'].iloc[-2]:
-                    buy_score += 1
+                    buy_score += 1 * vpt_weight
                 elif data['VPT'].iloc[-1] < data['VPT'].iloc[-2]:
-                    sell_score += 1
-
+                    sell_score += 1 * vpt_weight
+        
+        # Fundamentals
         if symbol:
             fundamentals = fetch_fundamentals(symbol)
+            fundamental_weight = 0.1  # Fixed weight for fundamentals
             if fundamentals['P/E'] < 15 and fundamentals['EPS'] > 0:
-                buy_score += 1
+                buy_score += 1 * fundamental_weight
             if fundamentals['RevenueGrowth'] > 0.1:
-                buy_score += 0.5
+                buy_score += 0.5 * fundamental_weight
         
-        # Relaxed threshold for buy/sell signals
-        if buy_score >= 3:
-            recommendations["Intraday"] = "Strong Buy"
-        elif sell_score >= 3:
-            recommendations["Intraday"] = "Strong Sell"
+        # Generate recommendations based on scores
+        추천사항["Intraday"] = "Strong Buy" if buy_score >= 3 else "Strong Sell" if sell_score >= 3 else "Hold"
         
         recommendations["Buy At"] = calculate_buy_at(data)
         recommendations["Stop Loss"] = calculate_stop_loss(data)
         recommendations["Target"] = calculate_target(data)
-        if recommendations["Buy At"] is None:
-            st.warning("⚠️ Buy At not calculated due to missing data.")
-        if recommendations["Stop Loss"] is None:
-            st.warning("⚠️ Stop Loss not calculated due to missing data.")
-        if recommendations["Target"] is None:
-            st.warning("⚠️ Target not calculated due to missing data.")
         
+        # Add ML accuracy to recommendations
+        recommendations["ML_Accuracy"] = accuracy if model else 0.0
         recommendations["Score"] = max(0, min(buy_score - sell_score, 7))
+        
     except Exception as e:
         st.warning(f"⚠️ Error generating recommendations: {str(e)}")
+    
     return recommendations
+    
 def backtest_strategy(symbol, data, strategy="Intraday", lookback_period="1y", risk_reward_ratio=3):
     """
     Backtest a trading strategy for a given stock.
@@ -955,7 +1101,7 @@ def analyze_stock_parallel(symbol):
     if not data.empty:
         data = analyze_stock(data)
         recommendations = generate_recommendations(data, symbol)
-        return {
+        result = {
             "Symbol": symbol,
             "Current Price": recommendations["Current Price"],
             "Buy At": recommendations["Buy At"],
@@ -969,9 +1115,10 @@ def analyze_stock_parallel(symbol):
             "Breakout": recommendations["Breakout"],
             "Ichimoku_Trend": recommendations["Ichimoku_Trend"],
             "Score": recommendations.get("Score", 0),
+            "ML_Accuracy": recommendations.get("ML_Accuracy", 0.0)
         }
+        return result
     return None
-
 def analyze_all_stocks(stock_list, batch_size=50, progress_callback=None):
     results = []
     total_batches = (len(stock_list) // batch_size) + (1 if len(stock_list) % batch_size != 0 else 0)
@@ -1094,6 +1241,7 @@ def display_dashboard(symbol=None, data=None, recommendations=None, selected_sto
                     buy_at = row['Buy At'] if pd.notnull(row['Buy At']) else "N/A"
                     stop_loss = row['Stop Loss'] if pd.notnull(row['Stop Loss']) else "N/A"
                     target = row['Target'] if pd.notnull(row['Target']) else "N/A"
+                    ml_accuracy = row.get('ML_Accuracy', 0.0) * 100
                     st.markdown(f"""
                     {tooltip('Current Price', TOOLTIPS['Stop Loss'])}: ₹{current_price}  
                     Buy At: ₹{buy_at} | Stop Loss: ₹{stop_loss}  
@@ -1104,7 +1252,8 @@ def display_dashboard(symbol=None, data=None, recommendations=None, selected_sto
                     Long-Term: {colored_recommendation(row['Long-Term'])}  
                     Mean Reversion: {colored_recommendation(row['Mean_Reversion'])}  
                     Breakout: {colored_recommendation(row['Breakout'])}  
-                    Ichimoku Trend: {colored_recommendation(row['Ichimoku_Trend'])}
+                    Ichimoku Trend: {colored_recommendation(row['Ichimoku_Trend'])}  
+                    ML Model Accuracy: {ml_accuracy:.2f}%
                     """, unsafe_allow_html=True)
             # Batch backtest for top picks
             if st.button("📉 Backtest Top Picks"):
@@ -1147,11 +1296,13 @@ def display_dashboard(symbol=None, data=None, recommendations=None, selected_sto
                     buy_at = row['Buy At'] if pd.notnull(row['Buy At']) else "N/A"
                     stop_loss = row['Stop Loss'] if pd.notnull(row['Stop Loss']) else "N/A"
                     target = row['Target'] if pd.notnull(row['Target']) else "N/A"
+                    ml_accuracy = row.get('ML_Accuracy', 0.0) * 100
                     st.markdown(f"""
                     {tooltip('Current Price', TOOLTIPS['Stop Loss'])}: ₹{current_price}  
                     Buy At: ₹{buy_at} | Stop Loss: ₹{stop_loss}  
                     Target: ₹{target}  
                     Intraday: {colored_recommendation(row['Intraday'])}  
+                    ML Model Accuracy: {ml_accuracy:.2f}%
                     """, unsafe_allow_html=True)
         else:
             st.warning("⚠️ No intraday picks available due to data issues.")
@@ -1171,6 +1322,7 @@ def display_dashboard(symbol=None, data=None, recommendations=None, selected_sto
         with col4:
             target = recommendations['Target'] if recommendations['Target'] is not None else "N/A"
             st.metric(tooltip("Target", "Price target based on risk/reward"), f"₹{target}")
+        
         st.subheader("📈 Trading Recommendations")
         cols = st.columns(4)
         strategy_names = ["Intraday", "Swing", "Short-Term", "Long-Term"]
@@ -1178,6 +1330,7 @@ def display_dashboard(symbol=None, data=None, recommendations=None, selected_sto
             with col:
                 st.markdown(f"**{strategy}**", unsafe_allow_html=True)
                 st.markdown(colored_recommendation(recommendations[strategy]), unsafe_allow_html=True)
+        
         st.subheader("📈 Additional Strategies")
         cols = st.columns(3)
         new_strategies = ["Mean_Reversion", "Breakout", "Ichimoku_Trend"]
@@ -1186,7 +1339,28 @@ def display_dashboard(symbol=None, data=None, recommendations=None, selected_sto
                 st.markdown(f"**{strategy.replace('_', ' ')}**", unsafe_allow_html=True)
                 st.markdown(colored_recommendation(recommendations[strategy]), unsafe_allow_html=True)
         
-        # Updated Backtest Section
+        # ML Prediction
+        st.subheader("🤖 Machine Learning Prediction")
+        features = ['RSI', 'MACD', 'MACD_signal', 'ATR', 'ADX', 'CMF', 'TRIX', 
+                   'Ultimate_Osc', 'CMO', 'VPT', 'SlowK', 'SlowD']
+        valid_features = [f for f in features if f in data.columns and pd.api.types.is_numeric_dtype(data[f])]
+        if valid_features and len(data) > 10:
+            latest_data = data[valid_features].iloc[-1:].dropna()
+            if not latest_data.empty:
+                model, _, _ = train_ml_model(data, features=valid_features)
+                if model:
+                    prediction = model.predict(latest_data)[0]
+                    probability = model.predict_proba(latest_data)[0][1]
+poor                    st.write(f"Prediction: {'Price Increase' if prediction == 1 else 'Price Decrease'}")
+                    st.write(f"Probability of Increase: {probability*100:.2f}%")
+                else:
+                    st.warning("⚠️ Unable to generate ML prediction.")
+            else:
+                st.warning("⚠️ Insufficient recent data for ML prediction.")
+        else:
+            st.warning("⚠️ Insufficient features or data for ML prediction.")
+        
+        # Backtest Section
         st.subheader("📉 Backtest Strategy")
         strategy_to_backtest = st.selectbox(
             "Select Strategy to Backtest",
@@ -1198,7 +1372,6 @@ def display_dashboard(symbol=None, data=None, recommendations=None, selected_sto
             options=["1y", "3y", "5y"],
             key="backtest_period"
         )
-        # Add interval selection for Intraday strategy
         data_interval = st.selectbox(
             "Select Data Interval for Backtest",
             options=["1d", "1h"] if strategy_to_backtest == "Intraday" else ["1d"],
@@ -1211,7 +1384,6 @@ def display_dashboard(symbol=None, data=None, recommendations=None, selected_sto
                 "Running backtest...", "Simulating trades...", "Calculating metrics...",
                 "Analyzing performance...", "Finalizing results..."
             ])
-            # Fetch data with the selected interval
             backtest_data = fetch_stock_data_cached(symbol, period=lookback_period, interval=data_interval)
             if not backtest_data.empty:
                 backtest_data = analyze_stock(backtest_data)
@@ -1227,8 +1399,12 @@ def display_dashboard(symbol=None, data=None, recommendations=None, selected_sto
             else:
                 st.warning("⚠️ Failed to load data for backtesting.")
         
-        # Existing tabs for price action, momentum, etc.
-        tab1, tab2, tab3, tab4, tab5 = st.tabs(["📊 Price Action", "📉 Momentum", "📊 Volatility", "📈 Monte Carlo", "📉 New Indicators"])
+        # Updated Tabs
+        tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
+            "📊 Price Action", "📉 Momentum", "📊 Volatility", 
+            "📈 Monte Carlo", "📉 New Indicators", "🤖 ML Insights"
+        ])
+        
         with tab1:
             price_cols = ['Close', 'SMA_50', 'SMA_200', 'EMA_20', 'EMA_50']
             valid_price_cols = [col for col in price_cols if col in data.columns and pd.api.types.is_numeric_dtype(data[col])]
@@ -1237,6 +1413,7 @@ def display_dashboard(symbol=None, data=None, recommendations=None, selected_sto
                 st.plotly_chart(fig)
             else:
                 st.warning("⚠️ No valid price action data available for plotting.")
+        
         with tab2:
             momentum_cols = ['RSI', 'MACD', 'MACD_signal', 'TRIX', 'Ultimate_Osc', 'CMO']
             valid_momentum_cols = [col for col in momentum_cols if col in data.columns and pd.api.types.is_numeric_dtype(data[col])]
@@ -1245,6 +1422,7 @@ def display_dashboard(symbol=None, data=None, recommendations=None, selected_sto
                 st.plotly_chart(fig)
             else:
                 st.warning("⚠️ No valid momentum indicators available for plotting.")
+        
         with tab3:
             volatility_cols = ['ATR', 'Upper_Band', 'Lower_Band', 'Donchian_Upper', 'Donchian_Lower', 'Keltner_Upper', 'Keltner_Lower']
             valid_volatility_cols = [col for col in volatility_cols if col in data.columns and pd.api.types.is_numeric_dtype(data[col])]
@@ -1253,12 +1431,14 @@ def display_dashboard(symbol=None, data=None, recommendations=None, selected_sto
                 st.plotly_chart(fig)
             else:
                 st.warning("⚠️ No valid volatility indicators available for plotting.")
+        
         with tab4:
             mc_results = monte_carlo_simulation(data)
             mc_df = pd.DataFrame(mc_results).T
             mc_df.columns = [f"Sim {i+1}" for i in range(len(mc_results))]
             fig = px.line(mc_df, title="Monte Carlo Price Simulations (30 Days)")
             st.plotly_chart(fig)
+        
         with tab5:
             new_cols = ['Ichimoku_Span_A', 'Ichimoku_Span_B', 'Ichimoku_Tenkan', 'Ichimoku_Kijun', 'CMF', 'VPT']
             valid_new_cols = [col for col in new_cols if col in data.columns and pd.api.types.is_numeric_dtype(data[col])]
@@ -1267,6 +1447,27 @@ def display_dashboard(symbol=None, data=None, recommendations=None, selected_sto
                 st.plotly_chart(fig)
             else:
                 st.warning("⚠️ No valid new indicators available for plotting.")
+        
+        with tab6:
+            st.subheader("🤖 Machine Learning Insights")
+            if recommendations.get('ML_Accuracy', 0.0) > 0:
+                st.write(f"ML Model Accuracy: {recommendations['ML_Accuracy']*100:.2f}%")
+                # Train model again to get feature importance (or cache it)
+                _, feature_importance, _ = train_ml_model(data, features=features)
+                if feature_importance:
+                    importance_df = pd.DataFrame({
+                        'Indicator': list(feature_importance.keys()),
+                        'Importance': [v*100 for v in feature_importance.values()]
+                    }).sort_values(by='Importance', ascending=False)
+                    st.write("Feature Importance (%):")
+                    fig = px.bar(importance_df, x='Indicator', y='Importance', 
+                               title="Indicator Importance in Price Prediction")
+                    st.plotly_chart(fig)
+                else:
+                    st.warning("⚠️ Unable to compute feature importance.")
+            else:
+                st.warning("⚠️ ML model not trained or insufficient data.")
+    
     elif symbol:
         st.warning("⚠️ No data available for the selected stock.")
         
