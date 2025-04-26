@@ -246,63 +246,87 @@ def fetch_stock_data_cached(symbol, period="5y", interval="1d"):
         return data
     except Exception:
         return pd.DataFrame()
-
+        
+def calculate_cmo(close, period=14):
+    """
+    Calculate Chande Momentum Oscillator manually.
+    Parameters:
+    - close: pandas Series of closing prices
+    - period: lookback period (default 14)
+    Returns:
+    - pandas Series with CMO values
+    """
+    import pandas as pd
+    import numpy as np
+    
+    # Calculate price changes
+    delta = close.diff()
+    
+    # Separate gains and losses
+    gains = delta.where(delta > 0, 0)
+    losses = -delta.where(delta < 0, 0)
+    
+    # Sum gains and losses over the period
+    sum_gains = gains.rolling(window=period).sum()
+    sum_losses = losses.rolling(window=period).sum()
+    
+    # Calculate CMO
+    cmo = 100 * (sum_gains - sum_losses) / (sum_gains + sum_losses + 1e-10)  # Avoid division by zero
+    return cmo
+    
 def train_ml_model(data, features=None, target_shift=-1, test_size=0.2, random_state=42):
     """
     Train a Random Forest Classifier to predict price movement and return feature importance.
-    
     Parameters:
     - data: DataFrame with OHLCV and technical indicators
-    - features: List of feature columns (e.g., ['RSI', 'MACD', 'ATR'])
+    - features: List of feature columns
     - target_shift: Shift for target variable (e.g., -1 for next day's price)
     - test_size: Proportion of data for testing
     - random_state: Seed for reproducibility
-    
     Returns:
     - model: Trained Random Forest Classifier
     - feature_importance: Dict mapping features to their importance scores
     - accuracy: Model accuracy on test set
     """
+    import streamlit as st
+    import pandas as pd
+    from sklearn.ensemble import RandomForestClassifier
+    from sklearn.model_selection import train_test_split
+    from sklearn.metrics import accuracy_score
+    
     if data.empty or len(data) < 50:
+        st.warning(f"⚠️ Insufficient data: {len(data)} rows.")
         return None, {}, 0.0
     
-    # Default features if none provided
     if features is None:
         features = ['RSI', 'MACD', 'MACD_signal', 'ATR', 'ADX', 'CMF', 'TRIX', 
                    'Ultimate_Osc', 'CMO', 'VPT', 'SlowK', 'SlowD']
     
-    # Ensure features exist in data and are numeric
     valid_features = [f for f in features if f in data.columns and pd.api.types.is_numeric_dtype(data[f])]
     if not valid_features:
-        st.warning("⚠️ No valid features available for ML training.")
+        st.warning(f"⚠️ No valid features: {features}")
         return None, {}, 0.0
     
-    # Prepare X (features) and y (target)
     X = data[valid_features].dropna()
     if len(X) < 50:
-        st.warning("⚠️ Insufficient data after dropping NaNs.")
+        st.warning(f"⚠️ Insufficient data after dropping NaNs: {len(X)} rows.")
         return None, {}, 0.0
     
-    # Create target: 1 if next day's close > current close, else 0
     y = (data['Close'].shift(target_shift) > data['Close']).astype(int)
-    
-    # Align X and y
     valid_idx = X.index.intersection(y.index)
     X = X.loc[valid_idx]
     y = y.loc[valid_idx]
     
     if len(X) < 50:
-        st.warning("⚠️ Insufficient aligned data for ML training.")
+        st.warning(f"⚠️ Insufficient aligned data: {len(X)} rows.")
         return None, {}, 0.0
     
-    # Split data
     X_train, X_test, y_train, y_test = train_test_split(
         X, y, test_size=test_size, random_state=random_state, shuffle=False
     )
     
-    # Train Random Forest Classifier
     model = RandomForestClassifier(
-        n_estimators=100,
+        n_estimators=50,  # Reduced for speed
         max_depth=10,
         min_samples_split=5,
         random_state=random_state
@@ -313,7 +337,6 @@ def train_ml_model(data, features=None, target_shift=-1, test_size=0.2, random_s
         st.warning(f"⚠️ Failed to train ML model: {str(e)}")
         return None, {}, 0.0
     
-    # Evaluate model
     try:
         y_pred = model.predict(X_test)
         accuracy = accuracy_score(y_test, y_pred)
@@ -321,11 +344,8 @@ def train_ml_model(data, features=None, target_shift=-1, test_size=0.2, random_s
         st.warning(f"⚠️ Failed to evaluate ML model: {str(e)}")
         accuracy = 0.0
     
-    # Get feature importance
     feature_importance = dict(zip(valid_features, model.feature_importances_))
-    
     return model, feature_importance, accuracy
-    
 
 def calculate_advance_decline_ratio(stock_list):
     advances = 0
@@ -585,10 +605,10 @@ def analyze_stock(data):
         st.warning(f"⚠️ Failed to compute Ultimate Oscillator: {str(e)}")
         data['Ultimate_Osc'] = None
     try:
-        data['CMO'] = ta.momentum.ChandeMomentumOscillator(data['Close'], window=14).chande_momentum_oscillator()
+        data['CMO'] = calculate_cmo(data['Close'], period=14)
     except Exception as e:
-        st.warning(f"⚠️ Failed to compute Chande Momentum Oscillator: {str(e)}")
-        data['CMO'] = None
+        st.warning(f"Failed to compute Chande Momentum Oscillator: {str(e)}")
+        data['CMO'] = pd.Series([None] * len(data), index=data.index)
     try:
         data['VPT'] = ta.volume.VolumePriceTrendIndicator(data['Close'], data['Volume']).volume_price_trend()
     except Exception as e:
@@ -1097,28 +1117,33 @@ def analyze_batch(stock_batch):
     return results
 
 def analyze_stock_parallel(symbol):
+    import streamlit as st
     data = fetch_stock_data_cached(symbol)
     if not data.empty:
-        data = analyze_stock(data)
-        recommendations = generate_recommendations(data, symbol)
-        result = {
-            "Symbol": symbol,
-            "Current Price": recommendations["Current Price"],
-            "Buy At": recommendations["Buy At"],
-            "Stop Loss": recommendations["Stop Loss"],
-            "Target": recommendations["Target"],
-            "Intraday": recommendations["Intraday"],
-            "Swing": recommendations["Swing"],
-            "Short-Term": recommendations["Short-Term"],
-            "Long-Term": recommendations["Long-Term"],
-            "Mean_Reversion": recommendations["Mean_Reversion"],
-            "Breakout": recommendations["Breakout"],
-            "Ichimoku_Trend": recommendations["Ichimoku_Trend"],
-            "Score": recommendations.get("Score", 0),
-            "ML_Accuracy": recommendations.get("ML_Accuracy", 0.0)
-        }
-        return result
+        try:
+            data = analyze_stock(data)
+            recommendations = generate_recommendations(data, symbol)
+            result = {
+                "Symbol": symbol,
+                "Current Price": recommendations["Current Price"],
+                "Buy At": recommendations["Buy At"],
+                "Stop Loss": recommendations["Stop Loss"],
+                "Target": recommendations["Target"],
+                "Intraday": recommendations["Intraday"],
+                "Swing": recommendations["Swing"],
+                "Short-Term": recommendations["Short-Term"],
+                "Long-Term": recommendations["Long-Term"],
+                "Mean_Reversion": recommendations["Mean_Reversion"],
+                "Breakout": recommendations["Breakout"],
+                "Ichimoku_Trend": recommendations["Ichimoku_Trend"],
+                "Score": recommendations.get("Score", 0),
+                "ML_Accuracy": recommendations.get("ML_Accuracy", 0.0)
+            }
+            return result
+        except Exception as e:
+            st.warning(f"⚠️ Error analyzing {symbol}: {str(e)}")
     return None
+    
 def analyze_all_stocks(stock_list, batch_size=50, progress_callback=None):
     results = []
     total_batches = (len(stock_list) // batch_size) + (1 if len(stock_list) % batch_size != 0 else 0)
@@ -1150,76 +1175,55 @@ def colored_recommendation(recommendation):
         return recommendation
         
 def display_backtest_results(backtest_results, symbol=None, batch_results=None):
-    """
-    Display backtest results in the Streamlit dashboard.
+    import streamlit as st
+    import pandas as pd
+    import yfinance as yf
+    from tenacity import retry, stop_after_attempt, wait_exponential
     
-    Parameters:
-    - backtest_results: Dictionary with backtest metrics for a single stock
-    - symbol: Stock symbol (optional, for single stock display)
-    - batch_results: DataFrame with backtest results for multiple stocks (optional)
-    """
-    if symbol and backtest_results and backtest_results["Error"] is None:
-        st.subheader(f"📉 Backtest Results for {symbol.split('.')[0]}")
-        col1, col2, col3, col4 = st.columns(4)
-        with col1:
-            st.metric("Total Return", f"{backtest_results['Total Return']}%")
-        with col2:
-            st.metric("Win Rate", f"{backtest_results['Win Rate']}%")
-        with col3:
-            st.metric("Sharpe Ratio", f"{backtest_results['Sharpe Ratio']}")
-        with col4:
-            st.metric("Max Drawdown", f"{backtest_results['Max Drawdown']}%")
-        st.write(f"Number of Trades: {backtest_results['Number of Trades']}")
-        
-        # Plot equity curve using actual dates
-        equity_curve = backtest_results["Equity Curve"]
-        equity_dates = backtest_results["Equity Dates"]
-        if equity_curve and equity_dates:
-            equity_df = pd.DataFrame({
-                "Date": equity_dates,
-                "Portfolio Value": equity_curve
-            })
-            fig = px.line(equity_df, x="Date", y="Portfolio Value", title="Equity Curve")
-            st.plotly_chart(fig)
-        else:
-            st.warning("⚠️ No equity curve data available for plotting.")
-        
-        # Display trade log
-        if backtest_results["Trades"]:
-            st.subheader("📋 Trade Log")
-            trade_df = pd.DataFrame(backtest_results["Trades"])
-            trade_df["Return"] = trade_df["Return"].apply(lambda x: f"{x*100:.2f}%")
-            st.dataframe(trade_df[["Entry Date", "Exit Date", "Entry Price", "Exit Price", "Return", "Outcome"]])
-        
-        # Benchmark comparison
-        st.subheader("📊 Benchmark Comparison")
-        nifty_data = fetch_stock_data_cached("^NSEI", period="1y", interval="1d")
-        if not nifty_data.empty:
-            nifty_return = (nifty_data['Close'].iloc[-1] - nifty_data['Close'].iloc[0]) / nifty_data['Close'].iloc[0] * 100
-            st.metric("NIFTY 50 Return", f"{nifty_return:.2f}%")
-            strategy_return = backtest_results['Total Return']
-            alpha = strategy_return - nifty_return
-            st.metric("Alpha (vs NIFTY 50)", f"{alpha:.2f}%")
-        else:
-            st.warning("⚠️ Unable to fetch NIFTY 50 data for comparison.")
+    st.subheader("📉 Backtest Results")
     
-    if batch_results is not None and not batch_results.empty:
-        st.subheader("🏆 Batch Backtest Results")
-        st.dataframe(
-            batch_results[["Symbol", "Total Return", "Win Rate", "Sharpe Ratio", "Max Drawdown", "Number of Trades"]]
-            .style.format({
-                "Total Return": "{:.2f}%",
-                "Win Rate": "{:.2f}%",
-                "Sharpe Ratio": "{:.2f}",
-                "Max Drawdown": "{:.2f}%"
-            })
-        )
-
+    if batch_results:
+        st.write("Batch Backtest Results:")
+        batch_df = pd.DataFrame(batch_results)
+        st.dataframe(batch_df)
+    elif backtest_results:
+        st.write(f"Backtest for {symbol}")
+        st.write(f"Total Return: {backtest_results.get('Total Return', 0):.2%}")
+        st.write(f"Win Rate: {backtest_results.get('Win Rate', 0):.2%}")
+        st.write(f"Number of Trades: {backtest_results.get('Trades', 0)}")
+        
+        # Benchmark Comparison
+        st.subheader("Benchmark Comparison")
+        @retry(stop=stop_after_attempt(5), wait=wait_exponential(multiplier=1, min=4, max=10))
+        def fetch_nifty_data(period="1y"):
+            return yf.download('^NSEI', period=period, progress=False)
+        
+        try:
+            period = backtest_results.get('period', '1y')
+            nifty_data = fetch_nifty_data(period=period)
+            if not nifty_data.empty:
+                nifty_returns = (nifty_data['Close'].iloc[-1] / nifty_data['Close'].iloc[0] - 1) * 100
+                strategy_returns = backtest_results.get('Total Return', 0) * 100
+                st.write(f"Strategy Return: {strategy_returns:.2f}%")
+                st.write(f"NIFTY 50 Return: {nifty_returns:.2f}%")
+                st.write(f"Alpha: {strategy_returns - nifty_returns:.2f}%")
+            else:
+                st.warning("⚠️ NIFTY 50 data is empty.")
+        except Exception as e:
+            st.warning(f"⚠️ Unable to fetch NIFTY 50 data for comparison: {str(e)}")
+    else:
+        st.warning("⚠️ No backtest results available.")
+        
 def display_dashboard(symbol=None, data=None, recommendations=None, selected_stocks=None):
+    import streamlit as st
+    import plotly.express as px
+    from datetime import datetime
+    import itertools
+    import pandas as pd
+    
     st.title("📊 StockGenie Pro - NSE Analysis")
     st.subheader(f"📅 Analysis for {datetime.now().strftime('%d %b %Y')}")
     
-    # Existing code for top picks and intraday picks
     if st.button("🚀 Generate Daily Top Picks"):
         progress_bar = st.progress(0)
         loading_text = st.empty()
@@ -1255,7 +1259,6 @@ def display_dashboard(symbol=None, data=None, recommendations=None, selected_sto
                     Ichimoku Trend: {colored_recommendation(row['Ichimoku_Trend'])}  
                     ML Model Accuracy: {ml_accuracy:.2f}%
                     """, unsafe_allow_html=True)
-            # Batch backtest for top picks
             if st.button("📉 Backtest Top Picks"):
                 progress_bar = st.progress(0)
                 loading_text = st.empty()
@@ -1452,7 +1455,6 @@ def display_dashboard(symbol=None, data=None, recommendations=None, selected_sto
             st.subheader("🤖 Machine Learning Insights")
             if recommendations.get('ML_Accuracy', 0.0) > 0:
                 st.write(f"ML Model Accuracy: {recommendations['ML_Accuracy']*100:.2f}%")
-                # Train model again to get feature importance (or cache it)
                 _, feature_importance, _ = train_ml_model(data, features=features)
                 if feature_importance:
                     importance_df = pd.DataFrame({
@@ -1470,7 +1472,6 @@ def display_dashboard(symbol=None, data=None, recommendations=None, selected_sto
     
     elif symbol:
         st.warning("⚠️ No data available for the selected stock.")
-        
 def update_progress(progress_bar, loading_text, progress_value, loading_messages):
     progress_bar.progress(progress_value)
     loading_message = next(loading_messages)
