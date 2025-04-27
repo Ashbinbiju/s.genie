@@ -19,7 +19,34 @@ from arch import arch_model
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.model_selection import train_test_split
 from sklearn.metrics import accuracy_score
+import warnings
+warnings.filterwarnings("ignore", category=FutureWarning, module="ta.trend")
 
+def validate_data(data, min_rows=100, required_columns=['Open', 'High', 'Low', 'Close', 'Volume']):
+    import streamlit as st
+    if data.empty:
+        st.warning("⚠️ Data is empty.")
+        return False
+    if len(data) < min_rows:
+        st.warning(f"⚠️ Insufficient data: {len(data)} rows. Minimum required: {min_rows}.")
+        return False
+    missing_cols = [col for col in required_columns if col not in data.columns]
+    if missing_cols:
+        st.warning(f"⚠️ Missing required columns: {', '.join(missing_cols)}")
+        return False
+    if data[required_columns].isna().any().any():
+        st.warning("⚠️ Data contains NaN values in required columns.")
+        return False
+    return True
+
+from functools import lru_cache
+
+@lru_cache(maxsize=100)
+def compute_rsi(close_series, window):
+    import pandas as pd
+    import ta
+    return ta.momentum.RSIIndicator(pd.Series(close_series), window=window).rsi()
+    
 # Tooltip explanations
 TOOLTIPS = {
     "RSI": "Relative Strength Index (30=Oversold, 70=Overbought)",
@@ -231,17 +258,18 @@ def fetch_nse_stock_list():
         return list(set([stock for sector in SECTORS.values() for stock in sector]))
 
 @lru_cache(maxsize=100)
-
 def fetch_stock_data_cached(symbol, period="5y", interval="1d"):
+    import streamlit as st
     try:
         if ".NS" not in symbol:
             symbol += ".NS"
         stock = yf.Ticker(symbol)
-        data = stock.history(period=period, interval=interval)
+        data = stock.history(period=period, interval=interval, timeout=10)
         if data.empty:
             raise ValueError(f"No data found for {symbol}")
         return data
-    except Exception:
+    except Exception as e:
+        st.warning(f"⚠️ Failed to fetch data for {symbol}: {str(e)}")
         return pd.DataFrame()
         
 def calculate_cmo(close, period=14):
@@ -272,77 +300,58 @@ def calculate_cmo(close, period=14):
     return cmo
     
 def train_ml_model(data, features=None, target_shift=-1, test_size=0.2, random_state=42):
-    """
-    Train a Random Forest Classifier to predict price movement and return feature importance.
-    Parameters:
-    - data: DataFrame with OHLCV and technical indicators
-    - features: List of feature columns
-    - target_shift: Shift for target variable (e.g., -1 for next day's price)
-    - test_size: Proportion of data for testing
-    - random_state: Seed for reproducibility
-    Returns:
-    - model: Trained Random Forest Classifier
-    - feature_importance: Dict mapping features to their importance scores
-    - accuracy: Model accuracy on test set
-    """
     import streamlit as st
     import pandas as pd
     from sklearn.ensemble import RandomForestClassifier
     from sklearn.model_selection import train_test_split
     from sklearn.metrics import accuracy_score
-    
-    if data.empty or len(data) < 50:
-        st.warning(f"⚠️ Insufficient data: {len(data)} rows.")
-        return None, {}, 0.0
-    
+
+    if data.empty or len(data) < 30:  # Lowered threshold
+        st.warning(f"⚠️ Insufficient data: {len(data)} rows. Using equal weights.")
+        return None, {f: 1.0 / len(features) if features else 0 for f in (features or [])}, 0.0
+
     if features is None:
         features = ['RSI', 'MACD', 'MACD_signal', 'ATR', 'ADX', 'CMF', 'TRIX', 
                    'Ultimate_Osc', 'CMO', 'VPT', 'SlowK', 'SlowD']
-    
+
     valid_features = [f for f in features if f in data.columns and pd.api.types.is_numeric_dtype(data[f])]
     if not valid_features:
         st.warning(f"⚠️ No valid features: {features}")
-        return None, {}, 0.0
-    
+        return None, {f: 1.0 / len(features) for f in features}, 0.0
+
     X = data[valid_features].dropna()
-    if len(X) < 50:
+    if len(X) < 30:
         st.warning(f"⚠️ Insufficient data after dropping NaNs: {len(X)} rows.")
-        return None, {}, 0.0
-    
+        return None, {f: 1.0 / len(features) for f in features}, 0.0
+
     y = (data['Close'].shift(target_shift) > data['Close']).astype(int)
     valid_idx = X.index.intersection(y.index)
     X = X.loc[valid_idx]
     y = y.loc[valid_idx]
-    
-    if len(X) < 50:
+
+    if len(X) < 30:
         st.warning(f"⚠️ Insufficient aligned data: {len(X)} rows.")
-        return None, {}, 0.0
-    
+        return None, {f: 1.0 / len(features) for f in features}, 0.0
+
     X_train, X_test, y_train, y_test = train_test_split(
         X, y, test_size=test_size, random_state=random_state, shuffle=False
     )
-    
+
     model = RandomForestClassifier(
-        n_estimators=50,  # Reduced for speed
+        n_estimators=50,
         max_depth=10,
         min_samples_split=5,
         random_state=random_state
     )
     try:
         model.fit(X_train, y_train)
-    except Exception as e:
-        st.warning(f"⚠️ Failed to train ML model: {str(e)}")
-        return None, {}, 0.0
-    
-    try:
         y_pred = model.predict(X_test)
         accuracy = accuracy_score(y_test, y_pred)
+        feature_importance = dict(zip(valid_features, model.feature_importances_))
+        return model, feature_importance, accuracy
     except Exception as e:
-        st.warning(f"⚠️ Failed to evaluate ML model: {str(e)}")
-        accuracy = 0.0
-    
-    feature_importance = dict(zip(valid_features, model.feature_importances_))
-    return model, feature_importance, accuracy
+        st.warning(f"⚠️ Failed to train ML model: {str(e)}")
+        return None, {f: 1.0 / len(features) for f in features}, 0.0
 
 def calculate_advance_decline_ratio(stock_list):
     advances = 0
@@ -369,12 +378,14 @@ def monte_carlo_simulation(data, simulations=1000, days=30):
                 price_series.append(price)
             simulation_results.append(price_series)
         return simulation_results
-    
-    model = arch_model(returns, vol='GARCH', p=1, q=1, dist='Normal')
+
+    # Rescale returns for GARCH
+    scaled_returns = returns * 100  # Multiply by 100 to improve scale
+    model = arch_model(scaled_returns, vol='GARCH', p=1, q=1, dist='Normal')
     garch_fit = model.fit(disp='off')
     forecasts = garch_fit.forecast(horizon=days)
-    volatility = np.sqrt(forecasts.variance.iloc[-1].values)
-    mean_return = returns.mean()
+    volatility = np.sqrt(forecasts.variance.iloc[-1].values) / 100  # Rescale volatility back
+    mean_return = returns.mean()  # Use original mean return
     simulation_results = []
     for _ in range(simulations):
         price_series = [data['Close'].iloc[-1]]
@@ -437,23 +448,26 @@ def detect_divergence(data):
     return "Bullish Divergence" if bullish_div else "Bearish Divergence" if bearish_div else "No Divergence"
 
 def analyze_stock(data):
-    if data.empty or len(data) < 27:
-        st.warning("⚠️ Insufficient data to compute indicators.")
+    import streamlit as st
+    import pandas as pd
+    import ta
+
+    # Validate data
+    if not validate_data(data, min_rows=27):
+        st.warning("⚠️ Invalid data for analysis.")
         return data
-    required_columns = ['Open', 'High', 'Low', 'Close', 'Volume']
-    missing_cols = [col for col in required_columns if col not in data.columns]
-    if missing_cols:
-        st.warning(f"⚠️ Missing required columns: {', '.join(missing_cols)}")
-        return data
-    
+
+    data = data.copy()  # Avoid modifying the input dataframe
+
     try:
         rsi_window = optimize_rsi_window(data)
-        data['RSI'] = ta.momentum.RSIIndicator(data['Close'], window=rsi_window).rsi()
+        data['RSI'] = compute_rsi(tuple(data['Close']), rsi_window)
     except Exception as e:
         st.warning(f"⚠️ Failed to compute RSI: {str(e)}")
         data['RSI'] = None
+
     try:
-        macd = ta.trend.MACD(data['Close'], window_slow=17, window_fast=8, window_sign=9)
+        macd = ta.trend.MACD(data['Close'], window_slow=26, window_fast=12, window_sign=9)
         data['MACD'] = macd.macd()
         data['MACD_signal'] = macd.macd_signal()
         data['MACD_hist'] = macd.macd_diff()
@@ -462,7 +476,7 @@ def analyze_stock(data):
         data['MACD'] = None
         data['MACD_signal'] = None
         data['MACD_hist'] = None
-    # Updated Moving Average Section
+
     try:
         data['SMA_20'] = ta.trend.SMAIndicator(data['Close'], window=20).sma_indicator()
         data['SMA_50'] = ta.trend.SMAIndicator(data['Close'], window=50).sma_indicator()
@@ -476,6 +490,7 @@ def analyze_stock(data):
         data['SMA_200'] = None
         data['EMA_20'] = None
         data['EMA_50'] = None
+
     try:
         bollinger = ta.volatility.BollingerBands(data['Close'], window=20, window_dev=2)
         data['Upper_Band'] = bollinger.bollinger_hband()
@@ -486,19 +501,22 @@ def analyze_stock(data):
         data['Upper_Band'] = None
         data['Middle_Band'] = None
         data['Lower_Band'] = None
+
     try:
         stoch = ta.momentum.StochasticOscillator(data['High'], data['Low'], data['Close'], window=14, smooth_window=3)
         data['SlowK'] = stoch.stoch()
         data['SlowD'] = stoch.stoch_signal()
     except Exception as e:
-        st.warning(f"⚠️ Failed to compute Stochastic: {str(e)}")
+        st.warning(f"⚠️ Failed to compute Stochastic Oscillator: {str(e)}")
         data['SlowK'] = None
         data['SlowD'] = None
+
     try:
         data['ATR'] = ta.volatility.AverageTrueRange(data['High'], data['Low'], data['Close'], window=14).average_true_range()
     except Exception as e:
         st.warning(f"⚠️ Failed to compute ATR: {str(e)}")
         data['ATR'] = None
+
     try:
         if len(data) >= 27:
             data['ADX'] = ta.trend.ADXIndicator(data['High'], data['Low'], data['Close'], window=14).adx()
@@ -507,11 +525,13 @@ def analyze_stock(data):
     except Exception as e:
         st.warning(f"⚠️ Failed to compute ADX: {str(e)}")
         data['ADX'] = None
+
     try:
         data['OBV'] = ta.volume.OnBalanceVolumeIndicator(data['Close'], data['Volume']).on_balance_volume()
     except Exception as e:
         st.warning(f"⚠️ Failed to compute OBV: {str(e)}")
         data['OBV'] = None
+
     try:
         data['Cumulative_TP'] = ((data['High'] + data['Low'] + data['Close']) / 3) * data['Volume']
         data['Cumulative_Volume'] = data['Volume'].cumsum()
@@ -519,17 +539,20 @@ def analyze_stock(data):
     except Exception as e:
         st.warning(f"⚠️ Failed to compute VWAP: {str(e)}")
         data['VWAP'] = None
+
     try:
         data['Avg_Volume'] = data['Volume'].rolling(window=10).mean()
         data['Volume_Spike'] = data['Volume'] > (data['Avg_Volume'] * 1.5)
     except Exception as e:
         st.warning(f"⚠️ Failed to compute Volume Spike: {str(e)}")
         data['Volume_Spike'] = None
+
     try:
         data['Parabolic_SAR'] = ta.trend.PSARIndicator(data['High'], data['Low'], data['Close']).psar()
     except Exception as e:
         st.warning(f"⚠️ Failed to compute Parabolic SAR: {str(e)}")
         data['Parabolic_SAR'] = None
+
     try:
         high = data['High'].max()
         low = data['Low'].min()
@@ -539,16 +562,18 @@ def analyze_stock(data):
         data['Fib_50.0'] = high - diff * 0.5
         data['Fib_61.8'] = high - diff * 0.618
     except Exception as e:
-        st.warning(f"⚠️ Failed to compute Fibonacci: {str(e)}")
+        st.warning(f"⚠️ Failed to compute Fibonacci Levels: {str(e)}")
         data['Fib_23.6'] = None
         data['Fib_38.2'] = None
         data['Fib_50.0'] = None
         data['Fib_61.8'] = None
+
     try:
         data['Divergence'] = detect_divergence(data)
     except Exception as e:
         st.warning(f"⚠️ Failed to compute Divergence: {str(e)}")
         data['Divergence'] = "No Divergence"
+
     try:
         ichimoku = ta.trend.IchimokuIndicator(data['High'], data['Low'], window1=9, window2=26, window3=52)
         data['Ichimoku_Tenkan'] = ichimoku.ichimoku_conversion_line()
@@ -557,60 +582,73 @@ def analyze_stock(data):
         data['Ichimoku_Span_B'] = ichimoku.ichimoku_b()
         data['Ichimoku_Chikou'] = data['Close'].shift(-26)
     except Exception as e:
-        st.warning(f"⚠️ Failed to compute Ichimoku: {str(e)}")
+        st.warning(f"⚠️ Failed to compute Ichimoku Cloud: {str(e)}")
         data['Ichimoku_Tenkan'] = None
         data['Ichimoku_Kijun'] = None
         data['Ichimoku_Span_A'] = None
         data['Ichimoku_Span_B'] = None
         data['Ichimoku_Chikou'] = None
+
     try:
-        data['CMF'] = ta.volume.ChaikinMoneyFlowIndicator(data['High'], data['Low'], data['Close'], data['Volume'], window=20).chaikin_money_flow()
+        data['CMF'] = ta.volume.ChaikinMoneyFlowIndicator(
+            high=data['High'], low=data['Low'], close=data['Close'], volume=data['Volume'], window=20
+        ).chaikin_money_flow()
     except Exception as e:
         st.warning(f"⚠️ Failed to compute CMF: {str(e)}")
         data['CMF'] = None
+
     try:
-        donchian = ta.volatility.DonchianChannel(data['High'], data['Low'], data['Close'], window=20)
-        data['Donchian_Upper'] = donchian.donchian_channel_hband()
-        data['Donchian_Lower'] = donchian.donchian_channel_lband()
-        data['Donchian_Middle'] = donchian.donchian_channel_mband()
+        data['Donchian_Upper'] = data['High'].rolling(window=20).max()
+        data['Donchian_Lower'] = data['Low'].rolling(window=20).min()
+        data['Donchian_Middle'] = (data['Donchian_Upper'] + data['Donchian_Lower']) / 2
     except Exception as e:
-        st.warning(f"⚠️ Failed to compute Donchian: {str(e)}")
+        st.warning(f"⚠️ Failed to compute Donchian Channels: {str(e)}")
         data['Donchian_Upper'] = None
         data['Donchian_Lower'] = None
         data['Donchian_Middle'] = None
-    # New Indicators
+
     try:
-        keltner = ta.volatility.KeltnerChannel(data['High'], data['Low'], data['Close'], window=20, window_atr=10)
-        data['Keltner_Upper'] = keltner.keltner_channel_hband()
-        data['Keltner_Middle'] = keltner.keltner_channel_mband()
-        data['Keltner_Lower'] = keltner.keltner_channel_lband()
+        data['Keltner_Upper'] = ta.volatility.KeltnerChannel(
+            high=data['High'], low=data['Low'], close=data['Close'], window=20
+        ).keltner_channel_hband()
+        data['Keltner_Lower'] = ta.volatility.KeltnerChannel(
+            high=data['High'], low=data['Low'], close=data['Close'], window=20
+        ).keltner_channel_lband()
+        data['Keltner_Middle'] = ta.volatility.KeltnerChannel(
+            high=data['High'], low=data['Low'], close=data['Close'], window=20
+        ).keltner_channel_mband()
     except Exception as e:
         st.warning(f"⚠️ Failed to compute Keltner Channels: {str(e)}")
         data['Keltner_Upper'] = None
-        data['Keltner_Middle'] = None
         data['Keltner_Lower'] = None
+        data['Keltner_Middle'] = None
+
     try:
         data['TRIX'] = ta.trend.TRIXIndicator(data['Close'], window=15).trix()
     except Exception as e:
         st.warning(f"⚠️ Failed to compute TRIX: {str(e)}")
         data['TRIX'] = None
+
     try:
         data['Ultimate_Osc'] = ta.momentum.UltimateOscillator(
-            data['High'], data['Low'], data['Close'], window1=7, window2=14, window3=28
+            high=data['High'], low=data['Low'], close=data['Close']
         ).ultimate_oscillator()
     except Exception as e:
         st.warning(f"⚠️ Failed to compute Ultimate Oscillator: {str(e)}")
         data['Ultimate_Osc'] = None
+
     try:
-        data['CMO'] = calculate_cmo(data['Close'], period=14)
+        data['CMO'] = ta.momentum.KAMAIndicator(data['Close'], window=10).kama()
     except Exception as e:
-        st.warning(f"Failed to compute Chande Momentum Oscillator: {str(e)}")
-        data['CMO'] = pd.Series([None] * len(data), index=data.index)
+        st.warning(f"⚠️ Failed to compute CMO: {str(e)}")
+        data['CMO'] = None
+
     try:
         data['VPT'] = ta.volume.VolumePriceTrendIndicator(data['Close'], data['Volume']).volume_price_trend()
     except Exception as e:
-        st.warning(f"⚠️ Failed to compute Volume Price Trend: {str(e)}")
+        st.warning(f"⚠️ Failed to compute VPT: {str(e)}")
         data['VPT'] = None
+
     return data
 
 def calculate_buy_at(data):
@@ -662,87 +700,88 @@ def fetch_fundamentals(symbol):
         return {'P/E': float('inf'), 'EPS': 0, 'RevenueGrowth': 0}
 
 
-def generate_recommendations(data, symbol=None):
+def generate_recommendations(data, symbol=None, model=None, feature_importance=None, accuracy=0.0):
+    import streamlit as st
+    import pandas as pd
+
     recommendations = {
         "Intraday": "Hold", "Swing": "Hold",
         "Short-Term": "Hold", "Long-Term": "Hold",
         "Mean_Reversion": "Hold", "Breakout": "Hold", "Ichimoku_Trend": "Hold",
         "Current Price": None, "Buy At": None,
-        "Stop Loss": None, "Target": None, "Score": 0
+        "Stop Loss": None, "Target": None, "Score": 0, "ML_Accuracy": accuracy
     }
-    
+
     if data.empty or 'Close' not in data.columns or data['Close'].iloc[-1] is None:
         st.warning("⚠️ No valid data available for recommendations.")
         return recommendations
-    
+
     try:
         recommendations["Current Price"] = float(data['Close'].iloc[-1])
         buy_score = 0
         sell_score = 0
-        
-        # Train ML model to get feature importance
+
+        # Use precomputed model if provided, else train new model
         features = ['RSI', 'MACD', 'MACD_signal', 'ATR', 'ADX', 'CMF', 'TRIX', 
                    'Ultimate_Osc', 'CMO', 'VPT', 'SlowK', 'SlowD']
-        model, feature_importance, accuracy = train_ml_model(data, features=features)
-        
+        if model is None or feature_importance is None:
+            model, feature_importance, accuracy = train_ml_model(data, features=features)
+            recommendations["ML_Accuracy"] = accuracy
+
         if not feature_importance:
             st.warning("⚠️ ML model training failed. Using equal weights.")
             feature_importance = {f: 1.0 / len(features) for f in features}
-        
-        # Normalize feature importance to sum to 1
+
         total_importance = sum(feature_importance.values())
-        if total_importance > 0:
-            feature_importance = {k: v / total_importance for k, v in feature_importance.items()}
-        else:
-            feature_importance = {f: 1.0 / len(features) for f in features}
-        
+        feature_importance = {k: v / total_importance if total_importance > 0 else 1.0 / len(features) for k, v in feature_importance.items()}
+
         # RSI
-        if 'RSI' in data.columns and data['RSI'].iloc[-1] is not None:
+        if 'RSI' in data.columns and pd.notnull(data['RSI'].iloc[-1]):
             rsi_weight = feature_importance.get('RSI', 1.0 / len(features))
             if isinstance(data['RSI'].iloc[-1], (int, float)):
-                if data['RSI'].iloc[-1] < 30:
+                if data['RSI'].イル[-1] < 30:
                     buy_score += 2 * rsi_weight
                 elif data['RSI'].iloc[-1] > 70:
                     sell_score += 2 * rsi_weight
-        
+
         # MACD
         if 'MACD' in data.columns and 'MACD_signal' in data.columns:
             macd_weight = feature_importance.get('MACD', 1.0 / len(features))
-            if data['MACD'].iloc[-1] is not None and data['MACD_signal'].iloc[-1] is not None:
+            if pd.notnull(data['MACD'].iloc[-1]) and pd.notnull(data['MACD_signal'].iloc[-1]):
                 if isinstance(data['MACD'].iloc[-1], (int, float)) and isinstance(data['MACD_signal'].iloc[-1], (int, float)):
                     if data['MACD'].iloc[-1] > data['MACD_signal'].iloc[-1]:
                         buy_score += 1 * macd_weight
                     elif data['MACD'].iloc[-1] < data['MACD_signal'].iloc[-1]:
                         sell_score += 1 * macd_weight
-        
+
         # Bollinger Bands
         if 'Close' in data.columns and 'Lower_Band' in data.columns and 'Upper_Band' in data.columns:
             bb_weight = feature_importance.get('Lower_Band', 1.0 / len(features))
-            if isinstance(data['Close'].iloc[-1], (int, float)) and isinstance(data['Lower_Band'].iloc[-1], (int, float)) and isinstance(data['Upper_Band'].iloc[-1], (int, float)):
+            if pd.notnull(data['Close'].iloc[-1]) and pd.notnull(data['Lower_Band'].iloc[-1]) and pd.notnull(data['Upper_Band'].iloc[-1]):
                 if data['Close'].iloc[-1] < data['Lower_Band'].iloc[-1]:
                     buy_score += 1 * bb_weight
                 elif data['Close'].iloc[-1] > data['Upper_Band'].iloc[-1]:
                     sell_score += 1 * bb_weight
-        
+
         # VWAP
-        if 'VWAP' in data.columns and data['VWAP'].iloc[-1] is not None:
+        if 'VWAP' in data.columns and pd.notnull(data['VWAP'].iloc[-1]):
             vwap_weight = feature_importance.get('VWAP', 1.0 / len(features))
             if isinstance(data['VWAP'].iloc[-1], (int, float)) and isinstance(data['Close'].iloc[-1], (int, float)):
                 if data['Close'].iloc[-1] > data['VWAP'].iloc[-1]:
                     buy_score += 1 * vwap_weight
                 elif data['Close'].iloc[-1] < data['VWAP'].iloc[-1]:
                     sell_score += 1 * vwap_weight
-        
+
         # Volume
-        if 'Volume' in data.columns and data['Volume'].iloc[-1] is not None:
+        if 'Volume' in data.columns and pd.notnull(data['Volume'].iloc[-1]):
             volume_weight = feature_importance.get('Volume', 1.0 / len(features))
             avg_volume = data['Volume'].rolling(window=10).mean().iloc[-1]
-            if isinstance(data['Volume'].iloc[-1], (int, float)) and isinstance(avg_volume, (int, float)):
+            if pd.notnull(avg_volume):
                 if data['Volume'].iloc[-1] > avg_volume * 1.2:
                     buy_score += 1 * volume_weight
                 elif data['Volume'].iloc[-1] < avg_volume * 0.5:
                     sell_score += 1 * volume_weight
-        
+
         # Divergence
         if 'Divergence' in data.columns:
             divergence_weight = feature_importance.get('Divergence', 1.0 / len(features))
@@ -750,64 +789,55 @@ def generate_recommendations(data, symbol=None):
                 buy_score += 1 * divergence_weight
             elif data['Divergence'].iloc[-1] == "Bearish Divergence":
                 sell_score += 1 * divergence_weight
-        
+
         # Ichimoku Cloud
         if 'Ichimoku_Span_A' in data.columns and 'Ichimoku_Span_B' in data.columns:
             ichimoku_weight = feature_importance.get('Ichimoku_Span_A', 1.0 / len(features))
-            if (isinstance(data['Ichimoku_Span_A'].iloc[-1], (int, float)) and 
-                isinstance(data['Ichimoku_Span_B'].iloc[-1], (int, float)) and 
-                isinstance(data['Close'].iloc[-1], (int, float))):
+            if pd.notnull(data['Ichimoku_Span_A'].iloc[-1]) and pd.notnull(data['Ichimoku_Span_B'].iloc[-1]):
                 if data['Close'].iloc[-1] > max(data['Ichimoku_Span_A'].iloc[-1], data['Ichimoku_Span_B'].iloc[-1]):
                     buy_score += 1 * ichimoku_weight
                     recommendations["Ichimoku_Trend"] = "Buy"
                 elif data['Close'].iloc[-1] < min(data['Ichimoku_Span_A'].iloc[-1], data['Ichimoku_Span_B'].iloc[-1]):
                     sell_score += 1 * ichimoku_weight
                     recommendations["Ichimoku_Trend"] = "Sell"
-        
+
         # Chaikin Money Flow
-        if 'CMF' in data.columns and data['CMF'].iloc[-1] is not None:
+        if 'CMF' in data.columns and pd.notnull(data['CMF'].iloc[-1]):
             cmf_weight = feature_importance.get('CMF', 1.0 / len(features))
             if isinstance(data['CMF'].iloc[-1], (int, float)):
                 if data['CMF'].iloc[-1] > 0:
                     buy_score += 1 * cmf_weight
                 elif data['CMF'].iloc[-1] < 0:
                     sell_score += 1 * cmf_weight
-        
+
         # Donchian Channels
         if 'Donchian_Upper' in data.columns and 'Donchian_Lower' in data.columns:
             donchian_weight = feature_importance.get('Donchian_Upper', 1.0 / len(features))
-            if (isinstance(data['Donchian_Upper'].iloc[-1], (int, float)) and 
-                isinstance(data['Donchian_Lower'].iloc[-1], (int, float)) and 
-                isinstance(data['Close'].iloc[-1], (int, float))):
+            if pd.notnull(data['Donchian_Upper'].iloc[-1]) and pd.notnull(data['Donchian_Lower'].iloc[-1]):
                 if data['Close'].iloc[-1] > data['Donchian_Upper'].iloc[-1]:
                     buy_score += 1 * donchian_weight
                     recommendations["Breakout"] = "Buy"
                 elif data['Close'].iloc[-1] < data['Donchian_Lower'].iloc[-1]:
                     sell_score += 1 * donchian_weight
                     recommendations["Breakout"] = "Sell"
-        
+
         # Mean Reversion (RSI + Bollinger)
         if 'RSI' in data.columns and 'Lower_Band' in data.columns:
             rsi_weight = feature_importance.get('RSI', 1.0 / len(features))
             bb_weight = feature_importance.get('Lower_Band', 1.0 / len(features))
             combined_weight = (rsi_weight + bb_weight) / 2
-            if (isinstance(data['RSI'].iloc[-1], (int, float)) and 
-                isinstance(data['Lower_Band'].iloc[-1], (int, float)) and 
-                isinstance(data['Close'].iloc[-1], (int, float))):
+            if pd.notnull(data['RSI'].iloc[-1]) and pd.notnull(data['Lower_Band'].iloc[-1]):
                 if data['RSI'].iloc[-1] < 30 and data['Close'].iloc[-1] <= data['Lower_Band'].iloc[-1]:
                     buy_score += 2 * combined_weight
                     recommendations["Mean_Reversion"] = "Buy"
                 elif data['RSI'].iloc[-1] > 70 and data['Close'].iloc[-1] >= data['Upper_Band'].iloc[-1]:
                     sell_score += 2 * combined_weight
                     recommendations["Mean_Reversion"] = "Sell"
-        
+
         # Ichimoku Strong Signals
         if 'Ichimoku_Tenkan' in data.columns and 'Ichimoku_Kijun' in data.columns:
             ichimoku_weight = feature_importance.get('Ichimoku_Tenkan', 1.0 / len(features))
-            if (isinstance(data['Ichimoku_Tenkan'].iloc[-1], (int, float)) and 
-                isinstance(data['Ichimoku_Kijun'].iloc[-1], (int, float)) and 
-                isinstance(data['Close'].iloc[-1], (int, float)) and 
-                isinstance(data['Ichimoku_Span_A'].iloc[-1], (int, float))):
+            if pd.notnull(data['Ichimoku_Tenkan'].iloc[-1]) and pd.notnull(data['Ichimoku_Kijun'].iloc[-1]):
                 if (data['Ichimoku_Tenkan'].iloc[-1] > data['Ichimoku_Kijun'].iloc[-1] and
                     data['Close'].iloc[-1] > data['Ichimoku_Span_A'].iloc[-1]):
                     buy_score += 1 * ichimoku_weight
@@ -816,68 +846,64 @@ def generate_recommendations(data, symbol=None):
                       data['Close'].iloc[-1] < data['Ichimoku_Span_B'].iloc[-1]):
                     sell_score += 1 * ichimoku_weight
                     recommendations["Ichimoku_Trend"] = "Strong Sell"
-        
+
         # Moving Average Crossover
         if 'SMA_20' in data.columns and 'SMA_50' in data.columns:
             sma_weight = feature_importance.get('SMA_20', 1.0 / len(features))
-            if (isinstance(data['SMA_20'].iloc[-1], (int, float)) and 
-                isinstance(data['SMA_50'].iloc[-1], (int, float)) and 
-                isinstance(data['SMA_20'].iloc[-2], (int, float)) and 
-                isinstance(data['SMA_50'].iloc[-2], (int, float))):
+            if (pd.notnull(data['SMA_20'].iloc[-1]) and pd.notnull(data['SMA_50'].iloc[-1]) and
+                pd.notnull(data['SMA_20'].iloc[-2]) and pd.notnull(data['SMA_50'].iloc[-2])):
                 if (data['SMA_20'].iloc[-1] > data['SMA_50'].iloc[-1] and 
                     data['SMA_20'].iloc[-2] <= data['SMA_50'].iloc[-2]):
                     buy_score += 1 * sma_weight
                 elif (data['SMA_20'].iloc[-1] < data['SMA_50'].iloc[-1] and 
                       data['SMA_20'].iloc[-2] >= data['SMA_50'].iloc[-2]):
                     sell_score += 1 * sma_weight
-        
+
         # Keltner Channels
         if 'Keltner_Upper' in data.columns and 'Keltner_Lower' in data.columns:
             keltner_weight = feature_importance.get('Keltner_Upper', 1.0 / len(features))
-            if (isinstance(data['Keltner_Upper'].iloc[-1], (int, float)) and 
-                isinstance(data['Keltner_Lower'].iloc[-1], (int, float)) and 
-                isinstance(data['Close'].iloc[-1], (int, float))):
+            if pd.notnull(data['Keltner_Upper'].iloc[-1]) and pd.notnull(data['Keltner_Lower'].iloc[-1]):
                 if data['Close'].iloc[-1] < data['Keltner_Lower'].iloc[-1]:
                     buy_score += 1 * keltner_weight
                 elif data['Close'].iloc[-1] > data['Keltner_Upper'].iloc[-1]:
                     sell_score += 1 * keltner_weight
-        
+
         # TRIX
-        if 'TRIX' in data.columns and data['TRIX'].iloc[-1] is not None:
+        if 'TRIX' in data.columns and pd.notnull(data['TRIX'].iloc[-1]):
             trix_weight = feature_importance.get('TRIX', 1.0 / len(features))
             if isinstance(data['TRIX'].iloc[-1], (int, float)):
                 if data['TRIX'].iloc[-1] > 0 and data['TRIX'].iloc[-1] > data['TRIX'].iloc[-2]:
                     buy_score += 1 * trix_weight
                 elif data['TRIX'].iloc[-1] < 0 and data['TRIX'].iloc[-1] < data['TRIX'].iloc[-2]:
                     sell_score += 1 * trix_weight
-        
+
         # Ultimate Oscillator
-        if 'Ultimate_Osc' in data.columns and data['Ultimate_Osc'].iloc[-1] is not None:
+        if 'Ultimate_Osc' in data.columns and pd.notnull(data['Ultimate_Osc'].iloc[-1]):
             uo_weight = feature_importance.get('Ultimate_Osc', 1.0 / len(features))
             if isinstance(data['Ultimate_Osc'].iloc[-1], (int, float)):
                 if data['Ultimate_Osc'].iloc[-1] < 30:
                     buy_score += 1 * uo_weight
                 elif data['Ultimate_Osc'].iloc[-1] > 70:
                     sell_score += 1 * uo_weight
-        
+
         # Chande Momentum Oscillator
-        if 'CMO' in data.columns and data['CMO'].iloc[-1] is not None:
+        if 'CMO' in data.columns and pd.notnull(data['CMO'].iloc[-1]):
             cmo_weight = feature_importance.get('CMO', 1.0 / len(features))
             if isinstance(data['CMO'].iloc[-1], (int, float)):
                 if data['CMO'].iloc[-1] < -50:
                     buy_score += 1 * cmo_weight
                 elif data['CMO'].iloc[-1] > 50:
                     sell_score += 1 * cmo_weight
-        
+
         # Volume Price Trend
-        if 'VPT' in data.columns and data['VPT'].iloc[-1] is not None:
+        if 'VPT' in data.columns and pd.notnull(data['VPT'].iloc[-1]):
             vpt_weight = feature_importance.get('VPT', 1.0 / len(features))
             if isinstance(data['VPT'].iloc[-1], (int, float)):
                 if data['VPT'].iloc[-1] > data['VPT'].iloc[-2]:
                     buy_score += 1 * vpt_weight
                 elif data['VPT'].iloc[-1] < data['VPT'].iloc[-2]:
                     sell_score += 1 * vpt_weight
-        
+
         # Fundamentals
         if symbol:
             fundamentals = fetch_fundamentals(symbol)
@@ -886,37 +912,25 @@ def generate_recommendations(data, symbol=None):
                 buy_score += 1 * fundamental_weight
             if fundamentals['RevenueGrowth'] > 0.1:
                 buy_score += 0.5 * fundamental_weight
-        
+
         # Generate recommendations
         recommendations["Intraday"] = "Strong Buy" if buy_score >= 3 else "Strong Sell" if sell_score >= 3 else "Hold"
-        
         recommendations["Buy At"] = calculate_buy_at(data)
         recommendations["Stop Loss"] = calculate_stop_loss(data)
         recommendations["Target"] = calculate_target(data)
-        
-        recommendations["ML_Accuracy"] = accuracy if model else 0.0
         recommendations["Score"] = max(0, min(buy_score - sell_score, 7))
-        
+
     except Exception as e:
         st.warning(f"⚠️ Error generating recommendations: {str(e)}")
-    
+
     return recommendations
     
-def backtest_strategy(symbol, data, strategy="Intraday", lookback_period="1y", risk_reward_ratio=3):
-    """
-    Backtest a trading strategy for a given stock.
-    
-    Parameters:
-    - symbol: Stock symbol (e.g., "RELIANCE.NS")
-    - data: Historical OHLCV data (pandas DataFrame)
-    - strategy: Strategy to backtest ("Intraday", "Mean_Reversion", "Breakout", "Ichimoku_Trend")
-    - lookback_period: Period for backtesting (e.g., "1y")
-    - risk_reward_ratio: Risk/reward ratio for target calculation
-    
-    Returns:
-    - Dictionary with backtest metrics (returns, win rate, Sharpe ratio, max drawdown, trades)
-    """
-    if data.empty or len(data) < 50:
+def backtest_strategy(symbol, data, strategy="Intraday", lookback_period="1y", risk_reward_ratio=3, progress_callback=None):
+    import streamlit as st
+    import pandas as pd
+    import numpy as np
+
+    if not validate_data(data, min_rows=50):
         return {
             "Total Return": 0,
             "Win Rate": 0,
@@ -926,18 +940,26 @@ def backtest_strategy(symbol, data, strategy="Intraday", lookback_period="1y", r
             "Equity Curve": [],
             "Equity Dates": [],
             "Trades": [],
-            "Error": "Insufficient data for backtesting"
+            "Error": "Invalid data for backtesting"
         }
-
     # Filter data to lookback period
     end_date = data.index[-1]
     days = {"1y": 365, "3y": 1095, "5y": 1825}
     start_date = end_date - pd.Timedelta(days=days.get(lookback_period, 365))
     data = data.loc[start_date:end_date].copy()
 
+    # Precompute indicators
+    data = analyze_stock(data)
+
+    # Train ML model once on a sufficiently large subset
+    min_rows = 100
+    features = ['RSI', 'MACD', 'MACD_signal', 'ATR', 'ADX', 'CMF', 'TRIX', 
+                'Ultimate_Osc', 'CMO', 'VPT', 'SlowK', 'SlowD']
+    model, feature_importance, accuracy = train_ml_model(data.iloc[:min_rows], features=features)
+
     # Initialize variables
     trades = []
-    portfolio_value = 100000  # Initial capital in INR
+    portfolio_value = 100000
     equity_curve = [portfolio_value]
     equity_dates = [data.index[0]]
     daily_returns = []
@@ -945,13 +967,20 @@ def backtest_strategy(symbol, data, strategy="Intraday", lookback_period="1y", r
     entry_price = 0
     stop_loss = 0
     target = 0
-    transaction_cost = 0.001  # 0.1% per trade (buy + sell = 0.2% total)
+    transaction_cost = 0.001
 
-    # Simulate trades day by day
+    total_iterations = len(data) - 1
     for i in range(1, len(data)):
-        # Get subset of data up to current day
+        if i + 1 < min_rows:
+            equity_curve.append(portfolio_value)
+            equity_dates.append(data.index[i])
+            daily_returns.append(0)
+            if progress_callback:
+                progress_callback(i / total_iterations)
+            continue
+
         current_data = data.iloc[:i+1]
-        recommendations = generate_recommendations(current_data, symbol)
+        recommendations = generate_recommendations(current_data, symbol, model=model, feature_importance=feature_importance, accuracy=accuracy)
 
         current_price = current_data['Close'].iloc[-1]
         buy_signal = recommendations[strategy] in ["Buy", "Strong Buy"]
@@ -969,9 +998,8 @@ def backtest_strategy(symbol, data, strategy="Intraday", lookback_period="1y", r
         # Check for exit conditions if in a position
         if position == "Long":
             if current_price <= stop_loss:
-                # Hit stop loss
                 trade_return = (stop_loss - entry_price) / entry_price
-                trade_return -= transaction_cost  # Apply transaction cost on exit
+                trade_return -= transaction_cost
                 portfolio_value *= (1 + trade_return)
                 trades.append({
                     "Entry Date": current_data.index[-2],
@@ -983,9 +1011,8 @@ def backtest_strategy(symbol, data, strategy="Intraday", lookback_period="1y", r
                 })
                 position = None
             elif current_price >= target:
-                # Hit target
                 trade_return = (target - entry_price) / entry_price
-                trade_return -= transaction_cost  # Apply transaction cost on exit
+                trade_return -= transaction_cost
                 portfolio_value *= (1 + trade_return)
                 trades.append({
                     "Entry Date": current_data.index[-2],
@@ -997,9 +1024,8 @@ def backtest_strategy(symbol, data, strategy="Intraday", lookback_period="1y", r
                 })
                 position = None
             elif sell_signal:
-                # Exit on sell signal
                 trade_return = (current_price - entry_price) / entry_price
-                trade_return -= transaction_cost  # Apply transaction cost on exit
+                trade_return -= transaction_cost
                 portfolio_value *= (1 + trade_return)
                 outcome = "Win" if trade_return > 0 else "Loss"
                 trades.append({
@@ -1018,16 +1044,21 @@ def backtest_strategy(symbol, data, strategy="Intraday", lookback_period="1y", r
             stop_loss = recommendations["Stop Loss"]
             target = recommendations["Target"]
             if stop_loss is not None and target is not None and entry_price > stop_loss:
-                # Calculate risk-reward ratio
                 risk = entry_price - stop_loss
                 reward = target - entry_price
                 risk_reward = reward / risk if risk > 0 else 0
-                if risk_reward >= 2:  # Increased minimum risk-reward ratio to 2:1
-                    portfolio_value *= (1 - transaction_cost)  # Apply transaction cost on entry
+                if risk_reward >= 1.5:
+                    portfolio_value *= (1 - transaction_cost)
                     position = "Long"
+                else:
+                    print(f"Skipped trade on {current_data.index[-1]}: Risk-Reward={risk_reward:.2f} < 1.5")
+            else:
+                print(f"Skipped trade on {current_data.index[-1]}: Invalid Buy At/Stop Loss/Target")
 
         equity_curve.append(portfolio_value)
         equity_dates.append(data.index[i])
+        if progress_callback:
+            progress_callback(i / total_iterations)
 
     # Calculate metrics
     total_return = (portfolio_value - 100000) / 100000
@@ -1035,7 +1066,6 @@ def backtest_strategy(symbol, data, strategy="Intraday", lookback_period="1y", r
     wins = sum(1 for trade in trades if trade["Outcome"] == "Win")
     win_rate = wins / len(trades) if trades else 0
 
-    # Calculate Sharpe ratio using daily portfolio returns
     daily_returns = np.array(daily_returns)
     trading_days = len(data) - 1
     if trading_days > 0 and np.std(daily_returns) != 0:
@@ -1046,7 +1076,6 @@ def backtest_strategy(symbol, data, strategy="Intraday", lookback_period="1y", r
     else:
         sharpe_ratio = 0
 
-    # Calculate maximum drawdown
     equity_series = pd.Series(equity_curve)
     rolling_max = equity_series.cummax()
     drawdowns = (rolling_max - equity_series) / rolling_max
@@ -1065,21 +1094,14 @@ def backtest_strategy(symbol, data, strategy="Intraday", lookback_period="1y", r
     }
     
 def backtest_batch(stocks, strategy="Intraday", lookback_period="1y", progress_callback=None):
-    """
-    Backtest a strategy across multiple stocks.
-    
-    Parameters:
-    - stocks: List of stock symbols
-    - strategy: Strategy to backtest
-    - lookback_period: Period for backtesting
-    - progress_callback: Function to update progress
-    
-    Returns:
-    - DataFrame with backtest results for each stock
-    """
+    import streamlit as st
+    from concurrent.futures import ProcessPoolExecutor
+    from concurrent.futures import as_completed
+    import pandas as pd
+
     results = []
-    with ThreadPoolExecutor(max_workers=10) as executor:
-        futures = {executor.submit(backtest_strategy, symbol, fetch_stock_data_cached(symbol), strategy, lookback_period): symbol for symbol in stocks}
+    with ProcessPoolExecutor(max_workers=4) as executor:  # Reduced workers for CPU-bound tasks
+        futures = {executor.submit(backtest_strategy, symbol, fetch_stock_data_cached(symbol, period=lookback_period), strategy, lookback_period): symbol for symbol in stocks}
         for i, future in enumerate(as_completed(futures)):
             symbol = futures[future]
             try:
@@ -1090,10 +1112,7 @@ def backtest_batch(stocks, strategy="Intraday", lookback_period="1y", progress_c
                 st.warning(f"⚠️ Error backtesting {symbol}: {str(e)}")
             if progress_callback:
                 progress_callback((i + 1) / len(stocks))
-    
-    results_df = pd.DataFrame([r for r in results if r["Error"] is None])
-    if results_df.empty:
-        return pd.DataFrame()
+    results_df = pd.DataFrame([r for r in results if r.get("Error") is None])
     return results_df.sort_values(by="Total Return", ascending=False)
     
 def analyze_batch(stock_batch):
@@ -1172,45 +1191,44 @@ def colored_recommendation(recommendation):
         return recommendation
         
 def display_backtest_results(backtest_results, symbol=None, batch_results=None):
-    """
-    Display backtest results with benchmark comparison.
-    Parameters:
-    - backtest_results: Dict with backtest metrics
-    - symbol: Stock ticker
-    - batch_results: List of batch backtest results
-    """
     import streamlit as st
     import pandas as pd
     import yfinance as yf
     from tenacity import retry, stop_after_attempt, wait_exponential
-    
+
     st.subheader("📉 Backtest Results")
-    
+
     if batch_results:
         st.write("Batch Backtest Results:")
         batch_df = pd.DataFrame(batch_results)
         st.dataframe(batch_df)
     elif backtest_results:
         st.write(f"Backtest for {symbol}")
-        st.write(f"Total Return: {backtest_results.get('Total Return', 0.0):.2%}")
-        st.write(f"Win Rate: {backtest_results.get('Win Rate', 0.0):.2%}")
-        st.write(f"Number of Trades: {backtest_results.get('Trades', 0)}")
-        
+        st.write(f"Total Return: {backtest_results.get('Total Return', 0.0):.2f}%")
+        st.write(f"Win Rate: {backtest_results.get('Win Rate', 0.0):.2f}%")
+        st.write(f"Number of Trades: {len(backtest_results.get('Trades', []))}")
+
         # Benchmark Comparison
         st.subheader("Benchmark Comparison")
         @retry(stop=stop_after_attempt(5), wait=wait_exponential(multiplier=1, min=4, max=10))
         def fetch_nifty_data(period="1y"):
-            return yf.download('^NSEI', period=period, progress=False)
-        
+            try:
+                data = yf.download('^NSEI', period=period, progress=False)
+                if data.empty:
+                    raise ValueError("Empty NIFTY 50 data")
+                return data
+            except Exception as e:
+                raise Exception(f"Failed to fetch NIFTY 50 data: {str(e)}")
+
         try:
             period = backtest_results.get('period', '1y')
             nifty_data = fetch_nifty_data(period=period)
             if not nifty_data.empty and len(nifty_data) > 1:
                 nifty_returns = (nifty_data['Close'].iloc[-1] / nifty_data['Close'].iloc[0] - 1) * 100
-                strategy_returns = backtest_results.get('Total Return', 0.0) * 100
+                strategy_returns = backtest_results.get('Total Return', 0.0)
                 st.write(f"Strategy Return: {strategy_returns:.2f}%")
                 st.write(f"NIFTY 50 Return: {nifty_returns:.2f}%")
-                st.write(f"Alpha: {strategy_returns - nifty_returns:.2f}%")
+                st.write(f"Alpha: {(strategy_returns - nifty_returns):.2f}%")
             else:
                 st.warning("⚠️ NIFTY 50 data is empty or insufficient.")
         except Exception as e:
@@ -1367,45 +1385,48 @@ def display_dashboard(symbol=None, data=None, recommendations=None, selected_sto
         else:
             st.warning("⚠️ Insufficient features or data for ML prediction.")
         
-        # Backtest Section
-        st.subheader("📉 Backtest Strategy")
-        strategy_to_backtest = st.selectbox(
-            "Select Strategy to Backtest",
-            options=["Intraday", "Mean_Reversion", "Breakout", "Ichimoku_Trend"],
-            key="backtest_strategy"
-        )
-        lookback_period = st.selectbox(
-            "Select Lookback Period",
-            options=["1y", "3y", "5y"],
-            key="backtest_period"
-        )
-        data_interval = st.selectbox(
-            "Select Data Interval for Backtest",
-            options=["1d", "1h"] if strategy_to_backtest == "Intraday" else ["1d"],
-            key="backtest_interval"
-        )
-        if st.button("Run Backtest"):
-            progress_bar = st.progress(0)
-            loading_text = st.empty()
-            loading_messages = itertools.cycle([
-                "Running backtest...", "Simulating trades...", "Calculating metrics...",
-                "Analyzing performance...", "Finalizing results..."
-            ])
-            backtest_data = fetch_stock_data_cached(symbol, period=lookback_period, interval=data_interval)
-            if not backtest_data.empty:
-                backtest_data = analyze_stock(backtest_data)
-                backtest_results = backtest_strategy(
-                    symbol,
-                    backtest_data,
-                    strategy=strategy_to_backtest,
-                    lookback_period=lookback_period
-                )
-                progress_bar.progress(1.0)
-                loading_text.empty()
-                display_backtest_results(backtest_results, symbol)
-            else:
-                st.warning("⚠️ Failed to load data for backtesting.")
-        
+                # Backtest Section
+    st.subheader("📉 Backtest Strategy")
+    strategy_to_backtest = st.selectbox(
+        "Select Strategy to Backtest",
+        options=["Intraday", "Mean_Reversion", "Breakout", "Ichimoku_Trend"],
+        key="backtest_strategy"
+    )
+    lookback_period = st.selectbox(
+        "Select Lookback Period",
+        options=["1y", "3y", "5y"],
+        key="backtest_period"
+    )
+    data_interval = st.selectbox(
+        "Select Data Interval for Backtest",
+        options=["1d", "1h"] if strategy_to_backtest == "Intraday" else ["1d"],
+        key="backtest_interval"
+    )
+    if st.button("Run Backtest"):
+        progress_bar = st.progress(0)
+        loading_text = st.empty()
+        loading_messages = itertools.cycle([
+            "Running backtest...", "Simulating trades...", "Calculating metrics...",
+            "Analyzing performance...", "Finalizing results..."
+        ])
+        def update_backtest_progress(progress):
+            update_progress(progress_bar, loading_text, progress, loading_messages)
+
+        backtest_data = fetch_stock_data_cached(symbol, period=lookback_period, interval=data_interval)
+        if not backtest_data.empty:
+            backtest_data = analyze_stock(backtest_data)
+            backtest_results = backtest_strategy(
+                symbol,
+                backtest_data,
+                strategy=strategy_to_backtest,
+                lookback_period=lookback_period,
+                progress_callback=update_backtest_progress
+            )
+            progress_bar.empty()
+            loading_text.empty()
+            display_backtest_results(backtest_results, symbol)
+        else:
+            st.warning("⚠️ Failed to load data for backtesting.")
         # Updated Tabs
         tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
             "📊 Price Action", "📉 Momentum", "📊 Volatility", 
