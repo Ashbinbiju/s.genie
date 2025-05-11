@@ -1205,7 +1205,7 @@ def analyze_intraday_stocks(stock_list, batch_size=10, progress_callback=None):
         results_df["Score"] = 0
     if "Current Price" not in results_df.columns:
         results_df["Current Price"] = None
-   intraday_df = results_df[results_df["Intraday"].str.contains("Buy", na=False)]
+    intraday_df = results_df[results_df["Intraday"].str.contains("Buy", na=False)]
     return intraday_df.sort_values(by="Score", ascending=False).head(5)
 
 def colored_recommendation(recommendation):
