@@ -18,7 +18,7 @@ from arch import arch_model
 import warnings
 import sqlite3
 from diskcache import Cache  # For persistent caching
-from smartapi import SmartConnect  # Angel One SmartAPI
+from SmartApi import SmartConnect
 import pyotp  # For TOTP authentication
 
 # Suppress specific warnings
