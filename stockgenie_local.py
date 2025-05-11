@@ -109,13 +109,24 @@ SECTORS = {
 def tooltip(label, explanation):
     return f"{label} 📌 ({explanation})"
 
-def retry(max_retries=3, delay=1, backoff_factor=2, jitter=0.5):
+
+def retry(max_retries=3, delay=2, backoff_factor=2, jitter=0.5):
     def decorator(func):
         def wrapper(*args, **kwargs):
             retries = 0
             while retries < max_retries:
                 try:
                     return func(*args, **kwargs)
+                except requests.exceptions.HTTPError as e:
+                    if e.response.status_code == 429:  # Handle rate limit specifically
+                        retries += 1
+                        if retries == max_retries:
+                            raise e
+                        sleep_time = (delay * (backoff_factor ** retries)) + random.uniform(0, jitter)
+                        st.warning(f"Rate limit hit. Retrying after {sleep_time:.2f} seconds...")
+                        time.sleep(sleep_time)
+                    else:
+                        raise e
                 except (requests.exceptions.RequestException, ConnectionError) as e:
                     retries += 1
                     if retries == max_retries:
@@ -124,6 +135,7 @@ def retry(max_retries=3, delay=1, backoff_factor=2, jitter=0.5):
                     time.sleep(sleep_time)
         return wrapper
     return decorator
+    
 
 @retry(max_retries=3, delay=2)
 def fetch_nse_stock_list():
@@ -146,7 +158,7 @@ def fetch_stock_data_with_auth(symbol, period="5y", interval="1d"):
         session = requests.Session()
         session.headers.update({"User-Agent": random.choice(USER_AGENTS)})
         stock = yf.Ticker(symbol, session=session)
-        time.sleep(random.uniform(1, 3))
+        time.sleep(random.uniform(3, 5))  # Increase delay to 3-5 seconds
         data = stock.history(period=period, interval=interval)
         if data.empty:
             raise ValueError(f"No data found for {symbol}")
@@ -155,7 +167,7 @@ def fetch_stock_data_with_auth(symbol, period="5y", interval="1d"):
         st.warning(f"⚠️ Error fetching data for {symbol}: {str(e)}")
         return pd.DataFrame()
 
-@lru_cache(maxsize=100)
+@lru_cache(maxsize=1000)
 def fetch_stock_data_cached(symbol, period="5y", interval="1d"):
     return fetch_stock_data_with_auth(symbol, period, interval)
 
@@ -838,7 +850,7 @@ def generate_recommendations(data, symbol=None):
 def analyze_batch(stock_batch):
     results = []
     errors = []
-    with ThreadPoolExecutor(max_workers=10) as executor:
+    with ThreadPoolExecutor(max_workers=2) as executor:  # Reduce to 2 workers
         futures = {executor.submit(analyze_stock_parallel, symbol): symbol for symbol in stock_batch}
         for future in as_completed(futures):
             symbol = futures[future]
@@ -883,6 +895,7 @@ def analyze_all_stocks(stock_list, batch_size=10, progress_callback=None):
         results.extend(batch_results)
         if progress_callback:
             progress_callback((i + len(batch)) / len(stock_list))
+        time.sleep(5)
     
     results_df = pd.DataFrame([r for r in results if r is not None])
     if results_df.empty:
