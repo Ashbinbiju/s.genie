@@ -5,8 +5,11 @@ pandas==2.2.2
 plotly==5.22.0
 pyotp==2.9.0
 pytrends==4.9.2
-requests>=2.32.3
+requests==2.32.3
 smartapi-python==1.5.5
 spacy==3.7.5
 streamlit==1.38.0
 ta==0.11.0
+logzero==1.7.0
+websocket-client==1.8.0
+pycryptodome==3.20.0
