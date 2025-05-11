@@ -21,6 +21,18 @@ from diskcache import Cache  # For persistent caching
 from SmartApi import SmartConnect
 import pyotp  # For TOTP authentication
 
+@st.cache_data(ttl=86400)  # Cache for 1 day
+def load_symbol_token_map():
+    try:
+        url = "https://margincalculator.angelbroking.in/OpenAPI_File/files/OpenAPIScripMaster.json"
+        response = requests.get(url)
+        response.raise_for_status()
+        data = response.json()
+        return {entry["symbol"]: entry["token"] for entry in data if "symbol" in entry and "token" in entry}
+    except Exception as e:
+        st.warning(f"⚠️ Failed to load instrument list: {str(e)}")
+        return {}
+
 # Suppress specific warnings
 warnings.filterwarnings("ignore", category=FutureWarning)
 warnings.filterwarnings("ignore", category=UserWarning)
@@ -181,15 +193,31 @@ def fetch_stock_data_with_auth(symbol, period="5y", interval="1d"):
         }
         api_interval = interval_map.get(interval, "ONE_DAY")
         
-        # Fetch historical data
+        # Fetch latest symbol-token map
+        symbol_token_map = load_symbol_token_map()
+        symboltoken = symbol_token_map.get(symbol)
+
+    if not symboltoken:
+        st.warning(f"⚠️ Token not found for symbol: {symbol}")
+        return pd.DataFrame()
+
+           # Get the latest token from the master list
+        symbol_token_map = load_symbol_token_map()
+        symboltoken = symbol_token_map.get(symbol)
+        if not symboltoken:
+            st.warning(f"⚠️ Token not found for symbol: {symbol}")
+            return pd.DataFrame()
+
+        # Fetch historical data using the valid token
         historical_data = smart_api.getCandleData({
             "exchange": "NSE",
-            "symboltoken": symbol,  # Note: Requires token mapping
+            "symboltoken": symboltoken,
             "interval": api_interval,
             "fromdate": start_date.strftime("%Y-%m-%d %H:%M"),
             "todate": end_date.strftime("%Y-%m-%d %H:%M")
         })
-        
+
+  
         if historical_data['status'] and historical_data['data']:
             # Convert to DataFrame
             data = pd.DataFrame(historical_data['data'], columns=['Date', 'Open', 'High', 'Low', 'Close', 'Volume'])
