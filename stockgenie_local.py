@@ -1247,8 +1247,8 @@ def display_dashboard(symbol=None, data=None, recommendations=None, selected_sto
             fig.add_scatter(x=data.index, y=data['Lower_Band'], mode='lines', name='Bollinger Lower', line=dict(color='green', dash='dash'))
         if 'Ichimoku_Span_A' in data.columns and data['Ichimoku_Span_A'].notnull().any():
             fig.add_scatter(x=data.index, y=data['Ichimoku_Span_A'], mode='lines', name='Ichimoku Span A', line=dict(color='purple'))
-        if 'Ichimoku_Span_B' in data.columns and data['Ichimoku_Span_B'].notnull().any彼此4.0 license (https://creativecommons.org/licenses/by/4.0/).
-
+        if 'Ichimoku_Span_B' in data.columns and data['Ichimoku_Span_B'].notnull().any():
+            fig.add_scatter(x=data.index, y=data['Ichimoku_Span_B'], mode='lines', name='Ichimoku Span B', line=dict(color='purple', dash='dash'))
         st.plotly_chart(fig)
 
         st.subheader("📊 Monte Carlo Simulation")
