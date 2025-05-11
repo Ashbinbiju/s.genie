@@ -36,9 +36,6 @@ def load_symbol_token_map():
 warnings.filterwarnings("ignore", category=FutureWarning)
 warnings.filterwarnings("ignore", category=UserWarning)
 
-import streamlit as st
-import pyotp
-
 CLIENT_ID = st.text_input("Enter Client ID", type="password")
 PASSWORD = st.text_input("Enter Password", type="password")
 TOTP_SECRET = st.text_input("Enter TOTP Secret", type="password")
