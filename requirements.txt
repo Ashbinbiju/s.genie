@@ -10,5 +10,3 @@ smartapi-python==1.4.8
 spacy==3.7.5
 streamlit==1.38.0
 ta==0.11.0
-python -m spacy download en_core_web_sm
-
