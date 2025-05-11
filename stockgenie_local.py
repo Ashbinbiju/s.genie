@@ -163,28 +163,29 @@ def fetch_stock_data_with_auth(symbol, period="5y", interval="1d"):
     cached_data = cache.get(cache_key)
     if cached_data is not None:
         return pd.read_pickle(io.BytesIO(cached_data))
-    
+
     try:
         # Ensure symbol is in Angel One format (e.g., "HDFCBANK-EQ")
         if "-EQ" not in symbol:
             symbol = f"{symbol.split('.')[0]}-EQ"
-        
+
+        # 🔐 Init SmartAPI client
         smart_api = init_smartapi_client()
         if not smart_api:
             raise ValueError("SmartAPI client initialization failed")
-        
-        # Calculate date range
+
+        # 📅 Date range
         end_date = datetime.now()
         if period == "5y":
-            start_date = end_date - timedelta(days=5*365)
+            start_date = end_date - timedelta(days=5 * 365)
         elif period == "1y":
             start_date = end_date - timedelta(days=365)
         elif period == "1mo":
             start_date = end_date - timedelta(days=30)
         else:
-            start_date = end_date - timedelta(days=365)  # Default to 1 year
-        
-        # Map interval to SmartAPI format
+            start_date = end_date - timedelta(days=365)
+
+        # ⏱️ Interval mapping
         interval_map = {
             "1d": "ONE_DAY",
             "1h": "ONE_HOUR",
@@ -192,23 +193,15 @@ def fetch_stock_data_with_auth(symbol, period="5y", interval="1d"):
             "15m": "FIFTEEN_MINUTE"
         }
         api_interval = interval_map.get(interval, "ONE_DAY")
-        
-        # Fetch latest symbol-token map
-        symbol_token_map = load_symbol_token_map()
-        symboltoken = symbol_token_map.get(symbol)
 
-    if not symboltoken:
-        st.warning(f"⚠️ Token not found for symbol: {symbol}")
-        return pd.DataFrame()
-
-           # Get the latest token from the master list
+        # 🔁 Load latest token
         symbol_token_map = load_symbol_token_map()
         symboltoken = symbol_token_map.get(symbol)
         if not symboltoken:
             st.warning(f"⚠️ Token not found for symbol: {symbol}")
             return pd.DataFrame()
 
-        # Fetch historical data using the valid token
+        # 📊 Fetch historical candle data
         historical_data = smart_api.getCandleData({
             "exchange": "NSE",
             "symboltoken": symboltoken,
@@ -217,21 +210,18 @@ def fetch_stock_data_with_auth(symbol, period="5y", interval="1d"):
             "todate": end_date.strftime("%Y-%m-%d %H:%M")
         })
 
-  
         if historical_data['status'] and historical_data['data']:
-            # Convert to DataFrame
             data = pd.DataFrame(historical_data['data'], columns=['Date', 'Open', 'High', 'Low', 'Close', 'Volume'])
             data['Date'] = pd.to_datetime(data['Date'])
             data.set_index('Date', inplace=True)
-            
-            # Cache the data for 24 hours
+
             buffer = io.BytesIO()
             data.to_pickle(buffer)
             cache.set(cache_key, buffer.getvalue(), expire=86400)
             return data
         else:
             raise ValueError(f"No data found for {symbol}: {historical_data.get('message', 'Unknown error')}")
-    
+
     except requests.exceptions.HTTPError as e:
         if e.response.status_code == 429:
             st.warning(f"⚠️ Rate limit exceeded for {symbol}. Skipping...")
