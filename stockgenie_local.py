@@ -1,4 +1,3 @@
-import yfinance as yf
 import pandas as pd
 import ta
 import streamlit as st
@@ -19,58 +18,38 @@ from arch import arch_model
 import warnings
 import sqlite3
 from diskcache import Cache  # For persistent caching
+from smartapi import SmartConnect  # Angel One SmartAPI
+import pyotp  # For TOTP authentication
 
 # Suppress specific warnings
 warnings.filterwarnings("ignore", category=FutureWarning)
 warnings.filterwarnings("ignore", category=UserWarning)
 
+# Angel One SmartAPI credentials
+CLIENT_ID = "AAAG399109"
+PASSWORD = "1503"
+TOTP_SECRET = "OLRQ3CYBLPN2XWQPHLKMB7WEKI"
+API_KEYS = {
+    "Historical": "c3C0tMGn",
+    "Trading": "ruseeaBq",
+    "Market": "PflRFXyd"
+}
+
 USER_AGENTS = [
-    # Chrome on Windows
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
-    "Mozilla/5.0 (Windows NT 11.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36",
-    
-    # Chrome on macOS
     "Mozilla/5.0 (Macintosh; Intel Mac OS X 14_4_1) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
-    "Mozilla/5.0 (Macintosh; Apple M3 Mac OS X 14_5_0) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36",
-    
-    # Firefox on Windows and macOS
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:124.0) Gecko/20100101 Firefox/124.0",
-    "Mozilla/5.0 (Macintosh; Intel Mac OS X 14.4; rv:125.0) Gecko/20100101 Firefox/125.0",
-    
-    # Safari
     "Mozilla/5.0 (Macintosh; Intel Mac OS X 14_4_2) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.4 Safari/605.1.15",
-    "Mozilla/5.0 (Macintosh; Apple M3 Mac OS X 14_5_0) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.5 Safari/605.1.15",
-    
-    # Edge
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Edge/124.0.2478.80 Safari/537.36",
-    "Mozilla/5.0 (Windows NT 11.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Edge/125.0.2505.35 Safari/537.36",
-    
-    # Mobile Chrome (Android)
     "Mozilla/5.0 (Linux; Android 14; SM-S928B) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Mobile Safari/537.36",
-    "Mozilla/5.0 (Linux; Android 15; Pixel 8 Pro) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Mobile Safari/537.36",
-    
-    # Mobile Safari (iOS)
     "Mozilla/5.0 (iPhone; CPU iPhone OS 17_4_1 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.4 Mobile/15E148 Safari/604.1",
-    "Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Mobile/15E148 Safari/604.1",
-    
-    # Opera
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36 OPR/110.0.0.0",
-    "Mozilla/5.0 (Macintosh; Intel Mac OS X 14_4_1) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36 OPR/110.0.0.0",
-    
-    # Samsung Internet
     "Mozilla/5.0 (Linux; Android 14; SM-S928B) AppleWebKit/537.36 (KHTML, like Gecko) SamsungBrowser/23.0 Chrome/115.0.0.0 Mobile Safari/537.36",
-    "Mozilla/5.0 (Linux; Android 15; SM-S930U) AppleWebKit/537.36 (KHTML, like Gecko) SamsungBrowser/24.0 Chrome/117.0.0.0 Mobile Safari/537.36",
-    
-    # Brave
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36 Brave/124.0.0.0",
-    "Mozilla/5.0 (Macintosh; Intel Mac OS X 14_4_1) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36 Brave/124.0.0.0"
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36 Brave/124.0.0.0"
 ]
 
 # Initialize disk cache
 cache = Cache("stock_data_cache")
-
-# API Keys (Consider moving to environment variables)
-ALPHA_VANTAGE_KEY = "TCAUKYUCIDZ6PI57"
 
 # Tooltip explanations
 TOOLTIPS = {
@@ -97,52 +76,31 @@ TOOLTIPS = {
 # Define sectors and their stocks
 SECTORS = {
     "Bank": [
-        "HDFCBANK.NS", "ICICIBANK.NS", "SBIN.NS", "KOTAKBANK.NS", "AXISBANK.NS",
-        "INDUSINDBK.NS", "PNB.NS", "BANKBARODA.NS", "CANBK.NS", "UNIONBANK.NS",
-        "IDFCFIRSTB.NS", "FEDERALBNK.NS", "RBLBANK.NS", "BANDHANBNK.NS", "INDIANB.NS",
-        "BANKINDIA.NS", "KARURVYSYA.NS", "CUB.NS", "J&KBANK.NS", "LAKSHVILAS.NS",
-        "DCBBANK.NS", "SYNDIBANK.NS", "ALBK.NS", "ANDHRABANK.NS", "CORPBANK.NS",
-        "ORIENTBANK.NS", "UNITEDBNK.NS", "AUBANK.NS"
+        "HDFCBANK-EQ", "ICICIBANK-EQ", "SBIN-EQ", "KOTAKBANK-EQ", "AXISBANK-EQ",
+        "INDUSINDBK-EQ", "PNB-EQ", "BANKBARODA-EQ", "CANBK-EQ", "UNIONBANK-EQ",
+        "IDFCFIRSTB-EQ", "FEDERALBNK-EQ", "RBLBANK-EQ", "BANDHANBNK-EQ", "INDIANB-EQ",
+        "BANKINDIA-EQ", "KARURVYSYA-EQ", "CUB-EQ", "J&KBANK-EQ", "LAKSHVILAS-EQ",
+        "DCBBANK-EQ", "SYNDIBANK-EQ", "ALBK-EQ", "ANDHRABANK-EQ", "CORPBANK-EQ",
+        "ORIENTBANK-EQ", "UNITEDBNK-EQ", "AUBANK-EQ"
     ],
-    "Software & IT Services": ["TCS.NS", "INFY.NS", "WIPRO.NS", "HCLTECH.NS", "TECHM.NS"],
-    "Finance": ["BAJFINANCE.NS", "HDFCLIFE.NS", "SBILIFE.NS", "ICICIPRULI.NS"],
-    "Automobile & Ancillaries": ["MARUTI.NS", "TATAMOTORS.NS", "BAJAJ-AUTO.NS", "HEROMOTOCO.NS"],
-    "Healthcare": ["SUNPHARMA.NS", "DRREDDY.NS", "CIPLA.NS", "DIVISLAB.NS"],
-    "Metals & Mining": ["TATASTEEL.NS", "JSWSTEEL.NS", "HINDALCO.NS", "VEDL.NS"],
-    "Oil&Gas": ["RELIANCE.NS", "ONGC.NS", "IOC.NS", "BPCL.NS", "HINDPETRO.NS", "OIL.NS", "PETRONET.NS", "MRPL.NS", "CHENNPETRO.NS"],
-    "FMCG": ["HINDUNILVR.NS", "ITC.NS", "NESTLEIND.NS", "BRITANNIA.NS"],
-    "Power": ["NTPC.NS", "POWERGRID.NS", "ADANIPOWER.NS", "TATAPOWER.NS", "ADANIENSOL.NS", "JSWENERGY.NS", "INDIANREN.NS", "NLCINDIA.NS", "CESC.NS", "RPOWER.NS", "IEX.NS", "NAVA.NS", "INDIGRID.NS", "ACMESOLAR.NS", "RELINFRA.NS", "GMRP&UI.NS", "SWSOLAR.NS", "PTC.NS", "GIPCL.NS", "BFUTILITIE.NS", "RAVINDRA.NS", "DANISH.NS", "APSINDIA.NS", "SUNGARNER.NS"],
-    "Capital Goods": ["LT.NS", "BHEL.NS", "SIEMENS.NS"],
-    "Chemicals": ["PIDILITIND.NS", "SRF.NS", "UPL.NS"],
-    "Telecom": ["BHARTIARTL.NS", "IDEA.NS", "RELIANCE.NS"],
-    "Infrastructure": ["ADANIPORTS.NS", "GMRINFRA.NS"],
-    "Insurance": ["ICICIGI.NS", "NIACL.NS"],
-    "Diversified": ["RODIUM.BO", "FRANKLIN.BO", "ANSALBU.NS", "SHERVANI.BO"],
-    "Construction Materials": ["ULTRACEMCO.NS", "ACC.NS", "AMBUJACEM.NS"],
-    "Real Estate": ["DLF.NS", "GODREJPROP.NS"],
-    "Aviation": ["INDIGO.NS", "SPICEJET.NS"],
-    "Retailing": ["DMART.NS", "TRENT.NS"],
-    "Miscellaneous": ["ADANIENT.NS", "ADANIGREEN.NS"],
-    "Diamond & Jewellery": ["TITAN.NS", "PCJEWELLER.NS"],
-    "Consumer Durables": ["HAVELLS.NS", "CROMPTON.NS"],
-    "Trading": ["ADANIPOWER.NS"],
-    "Hospitality": ["INDHOTEL.NS", "EIHOTEL.NS"],
-    "Agri": ["UPL.NS", "PIIND.NS"],
-    "Textiles": ["PAGEIND.NS", "RAYMOND.NS"],
-    "Industrial Gases & Fuels": ["LINDEINDIA.NS"],
-    "Electricals": ["POLYCAB.NS", "KEI.NS"],
-    "Alcohol": ["SDBL.NS", "GLOBUSSPR.NS", "TI.NS", "PICCADIL.NS", "ABDL.NS", "RADICO.NS", "UBL.NS", "UNITDSPR.NS"],
-    "Logistics": ["CONCOR.NS", "BLUEDART.NS"],
-    "Plastic Products": ["SUPREMEIND.NS"],
-    "Ship Building": ["ABSMARINE.NS", "GRSE.NS", "COCHINSHIP.NS"],
-    "Media & Entertainment": ["ZEEL.NS", "SUNTV.NS"],
-    "ETF": ["NIFTYBEES.NS"],
-    "Footwear": ["BATAINDIA.NS", "RELAXO.NS"],
-    "Manufacturing": ["ASIANPAINT.NS", "BERGEPAINT.NS"],
-    "Containers & Packaging": ["AGI.NS", "UFLEX.NS", "JINDALPOLY.NS", "COSMOFIRST.NS", "HUHTAMAKI.NS", "ESTER.NS", "TIRUPATI.NS", "PYRAMID.NS", "BBTCL.NS", "RAJESHCAN.NS", "IDEALTECHO.NS", "PERFECTPAC.NS", "GUJCON.NS", "HCP.NS", "SHETRON.NS"],
-    "Paper": ["JKPAPER.NS", "WSTCSTPAPR.NS", "SESHAPAPER.NS", "PDMJEPAPER.NS", "NRAGRINDQ.NS", "RUCHIRA.NS", "SANGALPAPR.NS", "SVJENTERPR.NS", "METROGLOBL.NS", "SHREYANIND.NS", "SUBAMPAPER.NS", "STARPAPER.NS", "PAKKA.NS", "TNPL.NS", "KUANTUM.NS"],
-    "Photographic Products": ["JINDALPHOT.NS"]
+    "Software & IT Services": ["TCS-EQ", "INFY-EQ", "WIPRO-EQ", "HCLTECH-EQ", "TECHM-EQ"],
+    "Finance": ["BAJFINANCE-EQ", "HDFCLIFE-EQ", "SBILIFE-EQ", "ICICIPRULI-EQ"]
 }
+
+# Initialize SmartAPI client
+def init_smartapi_client():
+    try:
+        smart_api = SmartConnect(api_key=API_KEYS["Historical"])
+        totp = pyotp.TOTP(TOTP_SECRET)
+        data = smart_api.generateSession(CLIENT_ID, PASSWORD, totp.now())
+        if data['status']:
+            return smart_api
+        else:
+            st.error(f"⚠️ SmartAPI authentication failed: {data['message']}")
+            return None
+    except Exception as e:
+        st.error(f"⚠️ Error initializing SmartAPI: {str(e)}")
+        return None
 
 def tooltip(label, explanation):
     return f"{label} 📌 ({explanation})"
@@ -182,7 +140,7 @@ def fetch_nse_stock_list():
         response = session.get(url, timeout=10)
         response.raise_for_status()
         nse_data = pd.read_csv(io.StringIO(response.text))
-        stock_list = [f"{symbol}.NS" for symbol in nse_data['SYMBOL']]
+        stock_list = [f"{symbol}-EQ" for symbol in nse_data['SYMBOL']]
         return stock_list
     except Exception:
         return list(set([stock for sector in SECTORS.values() for stock in sector]))
@@ -195,21 +153,57 @@ def fetch_stock_data_with_auth(symbol, period="5y", interval="1d"):
         return pd.read_pickle(io.BytesIO(cached_data))
     
     try:
-        if ".NS" not in symbol:
-            symbol += ".NS"
-        session = requests.Session()
-        session.headers.update({"User-Agent": random.choice(USER_AGENTS)})
-        stock = yf.Ticker(symbol, session=session)
-        time.sleep(random.uniform(1, 2))  # Small delay to avoid rapid requests
-        data = stock.history(period=period, interval=interval)
-        if data.empty:
-            raise ValueError(f"No data found for {symbol}")
+        # Ensure symbol is in Angel One format (e.g., "HDFCBANK-EQ")
+        if "-EQ" not in symbol:
+            symbol = f"{symbol.split('.')[0]}-EQ"
         
-        # Cache the data for 24 hours
-        buffer = io.BytesIO()
-        data.to_pickle(buffer)
-        cache.set(cache_key, buffer.getvalue(), expire=86400)
-        return data
+        smart_api = init_smartapi_client()
+        if not smart_api:
+            raise ValueError("SmartAPI client initialization failed")
+        
+        # Calculate date range
+        end_date = datetime.now()
+        if period == "5y":
+            start_date = end_date - timedelta(days=5*365)
+        elif period == "1y":
+            start_date = end_date - timedelta(days=365)
+        elif period == "1mo":
+            start_date = end_date - timedelta(days=30)
+        else:
+            start_date = end_date - timedelta(days=365)  # Default to 1 year
+        
+        # Map interval to SmartAPI format
+        interval_map = {
+            "1d": "ONE_DAY",
+            "1h": "ONE_HOUR",
+            "5m": "FIVE_MINUTE",
+            "15m": "FIFTEEN_MINUTE"
+        }
+        api_interval = interval_map.get(interval, "ONE_DAY")
+        
+        # Fetch historical data
+        historical_data = smart_api.getCandleData({
+            "exchange": "NSE",
+            "symboltoken": symbol,  # Note: Requires token mapping
+            "interval": api_interval,
+            "fromdate": start_date.strftime("%Y-%m-%d %H:%M"),
+            "todate": end_date.strftime("%Y-%m-%d %H:%M")
+        })
+        
+        if historical_data['status'] and historical_data['data']:
+            # Convert to DataFrame
+            data = pd.DataFrame(historical_data['data'], columns=['Date', 'Open', 'High', 'Low', 'Close', 'Volume'])
+            data['Date'] = pd.to_datetime(data['Date'])
+            data.set_index('Date', inplace=True)
+            
+            # Cache the data for 24 hours
+            buffer = io.BytesIO()
+            data.to_pickle(buffer)
+            cache.set(cache_key, buffer.getvalue(), expire=86400)
+            return data
+        else:
+            raise ValueError(f"No data found for {symbol}: {historical_data.get('message', 'Unknown error')}")
+    
     except requests.exceptions.HTTPError as e:
         if e.response.status_code == 429:
             st.warning(f"⚠️ Rate limit exceeded for {symbol}. Skipping...")
@@ -335,7 +329,6 @@ def calculate_cmo(close, window=14):
 def analyze_stock(data):
     if data.empty or len(data) < 27:
         st.warning("⚠️ Insufficient data to compute indicators.")
-        # Initialize all expected columns with None to avoid missing column errors
         columns = [
             'RSI', 'MACD', 'MACD_signal', 'MACD_hist', 'SMA_50', 'SMA_200', 'EMA_20', 'EMA_50',
             'Upper_Band', 'Middle_Band', 'Lower_Band', 'SlowK', 'SlowD', 'ATR', 'ADX', 'OBV',
@@ -603,13 +596,14 @@ def calculate_target_row(row, risk_reward_ratio=3):
 
 def fetch_fundamentals(symbol):
     try:
-        stock = yf.Ticker(symbol)
-        info = stock.info
-        return {
-            'P/E': info.get('trailingPE', float('inf')),
-            'EPS': info.get('trailingEps', 0),
-            'RevenueGrowth': info.get('revenueGrowth', 0)
-        }
+        smart_api = init_smartapi_client()
+        if not smart_api:
+            return {'P/E': float('inf'), 'EPS': 0, 'RevenueGrowth': 0}
+        
+        # Note: SmartAPI does not directly provide fundamentals like P/E, EPS, etc.
+        # You may need to fetch this from another source or use a third-party API
+        # For now, returning dummy values
+        return {'P/E': float('inf'), 'EPS': 0, 'RevenueGrowth': 0}
     except Exception:
         return {'P/E': float('inf'), 'EPS': 0, 'RevenueGrowth': 0}
 
@@ -622,7 +616,6 @@ def generate_recommendations(data, symbol=None):
         "Stop Loss": None, "Target": None, "Score": 0
     }
 
-    # Check if data has enough rows and required columns
     if data.empty or len(data) < 27 or 'Close' not in data.columns or data['Close'].iloc[-1] is None:
         st.warning("⚠️ Insufficient data for recommendations.")
         return recommendations
@@ -632,7 +625,6 @@ def generate_recommendations(data, symbol=None):
         buy_score = 0
         sell_score = 0
 
-        # RSI
         if 'RSI' in data.columns and data['RSI'].iloc[-1] is not None and len(data['RSI'].dropna()) >= 1:
             if isinstance(data['RSI'].iloc[-1], (int, float, np.integer, np.floating)):
                 if data['RSI'].iloc[-1] <= 20:
@@ -642,7 +634,6 @@ def generate_recommendations(data, symbol=None):
                 elif data['RSI'].iloc[-1] > 70:
                     sell_score += 2
 
-        # MACD
         if 'MACD' in data.columns and 'MACD_signal' in data.columns and data['MACD'].iloc[-1] is not None and data['MACD_signal'].iloc[-1] is not None and len(data['MACD'].dropna()) >= 1:
             if isinstance(data['MACD'].iloc[-1], (int, float, np.integer, np.floating)) and isinstance(data['MACD_signal'].iloc[-1], (int, float, np.integer, np.floating)):
                 if data['MACD'].iloc[-1] > data['MACD_signal'].iloc[-1]:
@@ -650,7 +641,6 @@ def generate_recommendations(data, symbol=None):
                 elif data['MACD'].iloc[-1] < data['MACD_signal'].iloc[-1]:
                     sell_score += 1
 
-        # Bollinger Bands
         if 'Close' in data.columns and 'Lower_Band' in data.columns and 'Upper_Band' in data.columns and data['Close'].iloc[-1] is not None and len(data['Lower_Band'].dropna()) >= 1:
             if isinstance(data['Close'].iloc[-1], (int, float, np.integer, np.floating)) and isinstance(data['Lower_Band'].iloc[-1], (int, float, np.integer, np.floating)) and isinstance(data['Upper_Band'].iloc[-1], (int, float, np.integer, np.floating)):
                 if data['Close'].iloc[-1] < data['Lower_Band'].iloc[-1]:
@@ -658,7 +648,6 @@ def generate_recommendations(data, symbol=None):
                 elif data['Close'].iloc[-1] > data['Upper_Band'].iloc[-1]:
                     sell_score += 1
 
-        # VWAP
         if 'VWAP' in data.columns and data['VWAP'].iloc[-1] is not None and data['Close'].iloc[-1] is not None and len(data['VWAP'].dropna()) >= 1:
             if isinstance(data['VWAP'].iloc[-1], (int, float, np.integer, np.floating)) and isinstance(data['Close'].iloc[-1], (int, float, np.integer, np.floating)):
                 if data['Close'].iloc[-1] > data['VWAP'].iloc[-1]:
@@ -666,7 +655,6 @@ def generate_recommendations(data, symbol=None):
                 elif data['Close'].iloc[-1] < data['VWAP'].iloc[-1]:
                     sell_score += 1
 
-        # Volume Analysis
         if ('Volume' in data.columns and data['Volume'].iloc[-1] is not None and 
             'Avg_Volume' in data.columns and data['Avg_Volume'].iloc[-1] is not None and len(data['Volume'].dropna()) >= 2):
             volume_ratio = data['Volume'].iloc[-1] / data['Avg_Volume'].iloc[-1]
@@ -678,7 +666,6 @@ def generate_recommendations(data, symbol=None):
                 elif volume_ratio < 0.5:
                     sell_score += 1
 
-        # Volume Spikes
         if 'Volume_Spike' in data.columns and data['Volume_Spike'].iloc[-1] is not None and len(data['Volume_Spike'].dropna()) >= 1:
             if data['Volume_Spike'].iloc[-1] and isinstance(data['Close'].iloc[-1], (int, float, np.integer, np.floating)) and isinstance(data['Close'].iloc[-2], (int, float, np.integer, np.floating)):
                 if data['Close'].iloc[-1] > data['Close'].iloc[-2]:
@@ -686,14 +673,12 @@ def generate_recommendations(data, symbol=None):
                 else:
                     sell_score += 1
 
-        # Divergence
         if 'Divergence' in data.columns and data['Divergence'].iloc[-1] is not None:
             if data['Divergence'].iloc[-1] == "Bullish Divergence":
                 buy_score += 1
             elif data['Divergence'].iloc[-1] == "Bearish Divergence":
                 sell_score += 1
 
-        # Ichimoku Cloud
         if 'Ichimoku_Span_A' in data.columns and 'Ichimoku_Span_B' in data.columns and data['Close'].iloc[-1] is not None and len(data['Ichimoku_Span_A'].dropna()) >= 1:
             if (isinstance(data['Ichimoku_Span_A'].iloc[-1], (int, float, np.integer, np.floating)) and 
                 isinstance(data['Ichimoku_Span_B'].iloc[-1], (int, float, np.integer, np.floating)) and 
@@ -705,7 +690,6 @@ def generate_recommendations(data, symbol=None):
                     sell_score += 1
                     recommendations["Ichimoku_Trend"] = "Sell"
 
-        # Chaikin Money Flow
         if 'CMF' in data.columns and data['CMF'].iloc[-1] is not None and len(data['CMF'].dropna()) >= 1:
             if isinstance(data['CMF'].iloc[-1], (int, float, np.integer, np.floating)):
                 if data['CMF'].iloc[-1] > 0:
@@ -713,7 +697,6 @@ def generate_recommendations(data, symbol=None):
                 elif data['CMF'].iloc[-1] < 0:
                     sell_score += 1
 
-        # Donchian Channels
         if 'Donchian_Upper' in data.columns and 'Donchian_Lower' in data.columns and data['Close'].iloc[-1] is not None and len(data['Donchian_Upper'].dropna()) >= 1:
             if (isinstance(data['Donchian_Upper'].iloc[-1], (int, float, np.integer, np.floating)) and 
                 isinstance(data['Donchian_Lower'].iloc[-1], (int, float, np.integer, np.floating)) and 
@@ -725,7 +708,6 @@ def generate_recommendations(data, symbol=None):
                     sell_score += 1
                     recommendations["Breakout"] = "Sell"
 
-        # Mean Reversion
         if 'RSI' in data.columns and 'Lower_Band' in data.columns and 'Upper_Band' in data.columns and data['Close'].iloc[-1] is not None and len(data['RSI'].dropna()) >= 1:
             if (isinstance(data['RSI'].iloc[-1], (int, float, np.integer, np.floating)) and 
                 isinstance(data['Lower_Band'].iloc[-1], (int, float, np.integer, np.floating)) and 
@@ -738,7 +720,6 @@ def generate_recommendations(data, symbol=None):
                     sell_score += 2
                     recommendations["Mean_Reversion"] = "Sell"
 
-        # Ichimoku Trend
         if 'Ichimoku_Tenkan' in data.columns and 'Ichimoku_Kijun' in data.columns and data['Close'].iloc[-1] is not None and len(data['Ichimoku_Tenkan'].dropna()) >= 1:
             if (isinstance(data['Ichimoku_Tenkan'].iloc[-1], (int, float, np.integer, np.floating)) and 
                 isinstance(data['Ichimoku_Kijun'].iloc[-1], (int, float, np.integer, np.floating)) and 
@@ -753,7 +734,6 @@ def generate_recommendations(data, symbol=None):
                     sell_score += 1
                     recommendations["Ichimoku_Trend"] = "Strong Sell"
 
-        # Keltner Channels
         if ('Keltner_Upper' in data.columns and 'Keltner_Lower' in data.columns and 
             data['Close'].iloc[-1] is not None and len(data['Keltner_Upper'].dropna()) >= 1):
             if (isinstance(data['Keltner_Upper'].iloc[-1], (int, float, np.integer, np.floating)) and 
@@ -764,7 +744,6 @@ def generate_recommendations(data, symbol=None):
                 elif data['Close'].iloc[-1] > data['Keltner_Upper'].iloc[-1]:
                     sell_score += 1
 
-        # TRIX
         if 'TRIX' in data.columns and data['TRIX'].iloc[-1] is not None and len(data['TRIX'].dropna()) >= 2:
             if isinstance(data['TRIX'].iloc[-1], (int, float, np.integer, np.floating)) and isinstance(data['TRIX'].iloc[-2], (int, float, np.integer, np.floating)):
                 if data['TRIX'].iloc[-1] > 0 and data['TRIX'].iloc[-1] > data['TRIX'].iloc[-2]:
@@ -772,7 +751,6 @@ def generate_recommendations(data, symbol=None):
                 elif data['TRIX'].iloc[-1] < 0 and data['TRIX'].iloc[-1] < data['TRIX'].iloc[-2]:
                     sell_score += 1
 
-        # Ultimate Oscillator
         if 'Ultimate_Osc' in data.columns and data['Ultimate_Osc'].iloc[-1] is not None and len(data['Ultimate_Osc'].dropna()) >= 1:
             if isinstance(data['Ultimate_Osc'].iloc[-1], (int, float, np.integer, np.floating)):
                 if data['Ultimate_Osc'].iloc[-1] < 30:
@@ -780,7 +758,6 @@ def generate_recommendations(data, symbol=None):
                 elif data['Ultimate_Osc'].iloc[-1] > 70:
                     sell_score += 1
 
-        # Chande Momentum Oscillator
         if 'CMO' in data.columns and data['CMO'].iloc[-1] is not None and len(data['CMO'].dropna()) >= 1:
             if isinstance(data['CMO'].iloc[-1], (int, float, np.integer, np.floating)):
                 if data['CMO'].iloc[-1] < -50:
@@ -788,7 +765,6 @@ def generate_recommendations(data, symbol=None):
                 elif data['CMO'].iloc[-1] > 50:
                     sell_score += 1
 
-        # Volume Price Trend
         if 'VPT' in data.columns and data['VPT'].iloc[-1] is not None and len(data['VPT'].dropna()) >= 2:
             if isinstance(data['VPT'].iloc[-1], (int, float, np.integer, np.floating)) and isinstance(data['VPT'].iloc[-2], (int, float, np.integer, np.floating)):
                 if data['VPT'].iloc[-1] > data['VPT'].iloc[-2]:
@@ -796,7 +772,6 @@ def generate_recommendations(data, symbol=None):
                 elif data['VPT'].iloc[-1] < data['VPT'].iloc[-2]:
                     sell_score += 1
 
-        # Fibonacci Retracements
         if ('Fib_23.6' in data.columns and 'Fib_38.2' in data.columns and 
             data['Close'].iloc[-1] is not None and len(data['Fib_23.6'].dropna()) >= 1):
             current_price = data['Close'].iloc[-1]
@@ -809,7 +784,6 @@ def generate_recommendations(data, symbol=None):
                     else:
                         sell_score += 1
 
-        # Parabolic SAR
         if ('Parabolic_SAR' in data.columns and data['Parabolic_SAR'].iloc[-1] is not None and 
             data['Close'].iloc[-1] is not None and len(data['Parabolic_SAR'].dropna()) >= 1):
             if isinstance(data['Parabolic_SAR'].iloc[-1], (int, float, np.integer, np.floating)) and isinstance(data['Close'].iloc[-1], (int, float, np.integer, np.floating)):
@@ -818,7 +792,6 @@ def generate_recommendations(data, symbol=None):
                 elif data['Close'].iloc[-1] < data['Parabolic_SAR'].iloc[-1]:
                     sell_score += 1
 
-        # OBV
         if ('OBV' in data.columns and data['OBV'].iloc[-1] is not None and 
             data['OBV'].iloc[-2] is not None and len(data['OBV'].dropna()) >= 2):
             if isinstance(data['OBV'].iloc[-1], (int, float, np.integer, np.floating)) and isinstance(data['OBV'].iloc[-2], (int, float, np.integer, np.floating)):
@@ -827,7 +800,6 @@ def generate_recommendations(data, symbol=None):
                 elif data['OBV'].iloc[-1] < data['OBV'].iloc[-2]:
                     sell_score += 1
 
-        # Fundamentals
         if symbol:
             fundamentals = fetch_fundamentals(symbol)
             if fundamentals['P/E'] < 15 and fundamentals['EPS'] > 0:
@@ -839,7 +811,6 @@ def generate_recommendations(data, symbol=None):
             elif fundamentals['RevenueGrowth'] < 0:
                 sell_score += 0.5
 
-        # Set recommendations based on scores
         net_score = buy_score - sell_score
         if buy_score > sell_score and buy_score >= 4:
             recommendations["Intraday"] = "Strong Buy"
@@ -872,21 +843,19 @@ def generate_recommendations(data, symbol=None):
     return recommendations
 
 def backtest_stock(data, strategy="Swing"):
-    if data.empty or len(data) < 200:  # Ensure enough data for meaningful backtest
+    if data.empty or len(data) < 200:
         return None
 
     data = data.copy()
-    # Calculate indicators again for the full dataset to ensure consistency
     data = analyze_stock(data)
 
-    # Drop rows where key indicators are missing, but only after ensuring columns exist
     key_cols = ['Open', 'Close', 'RSI', 'MACD', 'MACD_signal', 'ATR', 'ADX', 'TRIX', 'VPT', 'OBV']
     for col in key_cols:
         if col not in data.columns:
             data[col] = None
-    data = data.dropna(subset=['Open', 'Close'])  # Only require Open and Close for backtesting
+    data = data.dropna(subset=['Open', 'Close'])
 
-    if len(data) < 27:  # Minimum rows needed for indicators
+    if len(data) < 27:
         return None
 
     initial_capital = 25000
@@ -894,15 +863,13 @@ def backtest_stock(data, strategy="Swing"):
     position = 0
     trades = []
 
-    # Start backtesting after enough rows for indicators (e.g., 200 for SMA_200)
     min_rows = 200
     for i in range(min_rows, len(data) - 1):
         row = data.iloc[i]
         next_row = data.iloc[i + 1]
-        # Pass the full data up to index i+1, but ensure indicators are available
         sliced_data = data.iloc[:i+1]
         if len(sliced_data['RSI'].dropna()) < 1 or len(sliced_data['MACD'].dropna()) < 1:
-            continue  # Skip if key indicators are not yet available
+            continue
         recommendations = generate_recommendations(sliced_data, symbol="test")
 
         if position == 0 and recommendations[strategy] in ["Buy", "Strong Buy"]:
@@ -1026,7 +993,7 @@ def analyze_all_stocks(stock_list, batch_size=10, progress_callback=None):
         results.extend(batch_results)
         if progress_callback:
             progress_callback((i + len(batch)) / len(stock_list))
-        time.sleep(10)  # Increased delay to avoid rate limits
+        time.sleep(10)
     
     results_df = pd.DataFrame([r for r in results if r is not None])
     if results_df.empty:
@@ -1047,7 +1014,7 @@ def analyze_intraday_stocks(stock_list, batch_size=10, progress_callback=None):
         results.extend(batch_results)
         if progress_callback:
             progress_callback((i + len(batch)) / len(stock_list))
-        time.sleep(10)  # Increased delay to avoid rate limits
+        time.sleep(10)
     
     results_df = pd.DataFrame([r for r in results if r is not None])
     if results_df.empty:
@@ -1079,14 +1046,12 @@ def display_dashboard(symbol=None, data=None, recommendations=None, selected_sto
     st.title("📊 StockGenie Pro - NSE Analysis")
     st.subheader(f"📅 Analysis for {datetime.now().strftime('%d %b %Y')}")
     
-    # Sector selection
     sector = st.sidebar.selectbox("Select Sector", ["All"] + list(SECTORS.keys()))
     if sector == "All":
         selected_stocks = list(set([stock for sector in SECTORS.values() for stock in sector]))
     else:
         selected_stocks = SECTORS[sector]
     
-    # Daily Top Picks
     if st.button("🚀 Generate Daily Top Picks"):
         progress_bar = st.progress(0)
         loading_text = st.empty()
@@ -1125,7 +1090,6 @@ def display_dashboard(symbol=None, data=None, recommendations=None, selected_sto
         else:
             st.warning("⚠️ No top picks available due to data issues.")
     
-    # Intraday Top Picks
     if st.button("⚡ Generate Intraday Top 5 Picks"):
         progress_bar = st.progress(0)
         loading_text = st.empty()
@@ -1158,7 +1122,6 @@ def display_dashboard(symbol=None, data=None, recommendations=None, selected_sto
         else:
             st.warning("⚠️ No intraday picks available due to data issues.")
     
-    # Historical Picks
     if st.button("📜 View Historical Picks"):
         conn = sqlite3.connect('stock_picks.db')
         history_df = pd.read_sql_query("SELECT * FROM daily_picks ORDER BY date DESC", conn)
@@ -1175,9 +1138,8 @@ def display_dashboard(symbol=None, data=None, recommendations=None, selected_sto
         else:
             st.warning("⚠️ No historical data available.")
     
-    # Single Stock Analysis
     if symbol and data is not None and recommendations is not None:
-        st.header(f"📋 {symbol.split('.')[0]} Analysis")
+        st.header(f"📋 {symbol.split('-')[0]} Analysis")
         col1, col2, col3, col4 = st.columns(4)
         with col1:
             current_price = recommendations['Current Price'] if recommendations['Current Price'] is not None else "N/A"
@@ -1207,7 +1169,6 @@ def display_dashboard(symbol=None, data=None, recommendations=None, selected_sto
             st.write(f"**Ichimoku Trend**: {colored_recommendation(recommendations['Ichimoku_Trend'])}")
             st.write(f"**{tooltip('Score', TOOLTIPS['Score'])}**: {recommendations['Score']}/7")
         
-        # Backtesting
         if st.button("🔍 Backtest Swing Strategy"):
             backtest_results = backtest_stock(data, strategy="Swing")
             if backtest_results:
@@ -1236,7 +1197,6 @@ def display_dashboard(symbol=None, data=None, recommendations=None, selected_sto
             else:
                 st.warning("⚠️ Insufficient data for backtesting.")
         
-        # Technical Indicators
         st.subheader("📊 Technical Indicators")
         indicators = [
             ("RSI", data['RSI'].iloc[-1], TOOLTIPS['RSI']),
@@ -1266,53 +1226,69 @@ def display_dashboard(symbol=None, data=None, recommendations=None, selected_sto
             else:
                 with col2:
                     value = round(value, 2) if pd.notnull(value) else "N/A"
+                    st.write(f"**{tooltip(name, tooltip_text)}**:                
                     st.write(f"**{tooltip(name, tooltip_text)}**: {value}")
-        
-        # Price Chart
-        st.subheader("📈 Price Chart")
-        chart_data = data[['Close', 'SMA_50', 'SMA_200', 'Upper_Band', 'Lower_Band']].tail(100)
-        chart_data = chart_data.rename(columns={'Close': 'Price'})
-        fig = px.line(chart_data, x=chart_data.index, y=['Price', 'SMA_50', 'SMA_200', 'Upper_Band', 'Lower_Band'],
-                      title=f"{symbol} Price and Indicators")
+
+        st.subheader("📈 Price Chart with Indicators")
+        fig = px.line(data, x=data.index, y='Close', title=f"{symbol.split('-')[0]} Price")
+        if 'SMA_50' in data.columns and data['SMA_50'].notnull().any():
+            fig.add_scatter(x=data.index, y=data['SMA_50'], mode='lines', name='SMA 50', line=dict(color='orange'))
+        if 'SMA_200' in data.columns and data['SMA_200'].notnull().any():
+            fig.add_scatter(x=data.index, y=data['SMA_200'], mode='lines', name='SMA 200', line=dict(color='red'))
+        if 'Upper_Band' in data.columns and data['Upper_Band'].notnull().any():
+            fig.add_scatter(x=data.index, y=data['Upper_Band'], mode='lines', name='Bollinger Upper', line=dict(color='green', dash='dash'))
+        if 'Lower_Band' in data.columns and data['Lower_Band'].notnull().any():
+            fig.add_scatter(x=data.index, y=data['Lower_Band'], mode='lines', name='Bollinger Lower', line=dict(color='green', dash='dash'))
+        if 'Ichimoku_Span_A' in data.columns and data['Ichimoku_Span_A'].notnull().any():
+            fig.add_scatter(x=data.index, y=data['Ichimoku_Span_A'], mode='lines', name='Ichimoku Span A', line=dict(color='purple'))
+        if 'Ichimoku_Span_B' in data.columns and data['Ichimoku_Span_B'].notnull().any():
+            fig.add_scatter(x=data.index, y=data['Ichimoku_Span_B'], mode='lines', name='Ichimoku Span B', line=dict(color='pink'))
         st.plotly_chart(fig)
-        
-        # Monte Carlo Simulation
-        if st.button("🔄 Run Monte Carlo Simulation"):
-            st.subheader("📉 Monte Carlo Price Forecast")
-            simulations = monte_carlo_simulation(data, simulations=1000, days=30)
-            sim_df = pd.DataFrame(simulations).T
-            sim_df.index = [data.index[-1] + timedelta(days=i) for i in range(len(sim_df))]
-            fig = px.line(sim_df, x=sim_df.index, y=sim_df.columns,
-                          title=f"{symbol} Monte Carlo Simulation (30 Days)")
-            fig.update_traces(opacity=0.1)
-            st.plotly_chart(fig)
-            avg_price = sim_df.iloc[-1].mean()
-            st.write(f"**Average Predicted Price (30 Days)**: ₹{avg_price:.2f}")
-        
-        # Risk Assessment
+
+        st.subheader("📊 Monte Carlo Simulation")
+        simulations = monte_carlo_simulation(data)
+        sim_df = pd.DataFrame(simulations).T
+        sim_df.index = [data.index[-1] + timedelta(days=i) for i in range(len(sim_df))]
+        fig_sim = px.line(sim_df, title="Monte Carlo Price Projections (30 Days)")
+        st.plotly_chart(fig_sim)
+
+        st.subheader("📊 RSI and MACD")
+        fig_ind = px.line(data, x=data.index, y='RSI', title="RSI")
+        fig_ind.add_hline(y=70, line_dash="dash", line_color="red")
+        fig_ind.add_hline(y=30, line_dash="dash", line_color="green")
+        st.plotly_chart(fig_ind)
+
+        fig_macd = px.line(data, x=data.index, y=['MACD', 'MACD_signal'], title="MACD")
+        st.plotly_chart(fig_macd)
+
+        st.subheader("📊 Volume Analysis")
+        fig_vol = px.bar(data, x=data.index, y='Volume', title="Volume")
+        if 'Volume_Spike' in data.columns:
+            spike_data = data[data['Volume_Spike'] == True]
+            if not spike_data.empty:
+                fig_vol.add_scatter(x=spike_data.index, y=spike_data['Volume'], mode='markers', name='Volume Spike', marker=dict(color='red', size=10))
+        st.plotly_chart(fig_vol)
+
         st.subheader("⚠️ Risk Assessment")
         risk = assess_risk(data)
-        st.write(f"**Risk Level**: {risk}")
+        st.write(f"Risk Level: {risk}")
 
-def main():
-    init_database()
-    st.set_page_config(page_title="StockGenie Pro", layout="wide")
-    
-    # Sidebar for stock selection
-    stock_list = fetch_nse_stock_list()
-    symbol = st.sidebar.selectbox("Select Stock", stock_list)
-    
-    # Fetch and analyze data for selected stock
-    if symbol:
-        data = fetch_stock_data_cached(symbol)
-        if not data.empty:
-            data = analyze_stock(data)
-            recommendations = generate_recommendations(data, symbol)
-            display_dashboard(symbol, data, recommendations, stock_list)
-        else:
-            st.error(f"⚠️ No data available for {symbol}")
-    else:
-        display_dashboard(selected_stocks=stock_list)
+        st.subheader("🔍 Divergence Analysis")
+        divergence = data['Divergence'].iloc[-1] if 'Divergence' in data.columns else "No Divergence"
+        st.write(f"Divergence: {divergence}")
 
 if __name__ == "__main__":
-    main()
+    init_database()
+    stock_list = fetch_nse_stock_list()
+    if stock_list:
+        st.sidebar.header("🔍 Stock Analysis")
+        selected_symbol = st.sidebar.selectbox("Select Stock", stock_list, index=stock_list.index("HDFCBANK-EQ") if "HDFCBANK-EQ" in stock_list else 0)
+        data = fetch_stock_data_cached(selected_symbol)
+        if not data.empty:
+            data = analyze_stock(data)
+            recommendations = generate_recommendations(data, selected_symbol)
+            display_dashboard(selected_symbol, data, recommendations, stock_list)
+        else:
+            st.error(f"⚠️ No data available for {selected_symbol}.")
+    else:
+        st.error("⚠️ Failed to fetch stock list.")
