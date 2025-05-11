@@ -36,13 +36,16 @@ def load_symbol_token_map():
 warnings.filterwarnings("ignore", category=FutureWarning)
 warnings.filterwarnings("ignore", category=UserWarning)
 
-CLIENT_ID = "AAAG399109"
-PASSWORD = "1503"
-TOTP_SECRET = "OLRQ3CYBLPN2XWQPHLKMB7WEKI"
-API_KEYS = {
-    "Historical": "c3C0tMGn",
-    "Trading": "ruseeaBq",
-    "Market": "PflRFXyd"
+import streamlit as st
+import pyotp
+
+CLIENT_ID = st.text_input("Enter Client ID", type="password")
+PASSWORD = st.text_input("Enter Password", type="password")
+TOTP_SECRET = st.text_input("Enter TOTP Secret", type="password")
+
+if CLIENT_ID and PASSWORD and TOTP_SECRET:
+    totp = pyotp.TOTP(TOTP_SECRET)
+    st.success(f"TOTP Code: {totp.now()}")
 }
 
 USER_AGENTS = [
