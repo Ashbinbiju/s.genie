@@ -24,7 +24,7 @@ import pyotp  # For TOTP authentication
 @st.cache_data(ttl=86400)  # Cache for 1 day
 def load_symbol_token_map():
     try:
-        url = "https://margincalculator.angelbroking.in/OpenAPI_File/files/OpenAPIScripMaster.json"
+        url = "https://margincalculator.angelbroking.com/OpenAPI_File/files/OpenAPIScripMaster.json"
         response = requests.get(url)
         response.raise_for_status()
         data = response.json()
