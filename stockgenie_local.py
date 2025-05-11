@@ -1226,7 +1226,7 @@ def display_dashboard(symbol=None, data=None, recommendations=None, selected_sto
             else:
                 with col2:
                     value = round(value, 2) if pd.notnull(value) else "N/A"
-                    st.write(f"**{tooltip(name, tooltip_text)}**:                
+                    st.write(f"**{tooltip(name, tooltip_text)}**: {value}")               
                     st.write(f"**{tooltip(name, tooltip_text)}**: {value}")
 
         st.subheader("📈 Price Chart with Indicators")
