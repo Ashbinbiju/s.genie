@@ -17,11 +17,11 @@ import itertools
 from arch import arch_model
 import warnings
 import sqlite3
-from diskcache import Cache  # For persistent caching
+from diskcache import Cache
 from SmartApi import SmartConnect
-import pyotp  # For TOTP authentication
+import pyotp
 
-@st.cache_data(ttl=86400)  # Cache for 1 day
+@st.cache_data(ttl=86400)
 def load_symbol_token_map():
     try:
         url = "https://margincalculator.angelbroking.com/OpenAPI_File/files/OpenAPIScripMaster.json"
@@ -33,11 +33,9 @@ def load_symbol_token_map():
         st.warning(f"⚠️ Failed to load instrument list: {str(e)}")
         return {}
 
-# Suppress specific warnings
 warnings.filterwarnings("ignore", category=FutureWarning)
 warnings.filterwarnings("ignore", category=UserWarning)
 
-# Angel One SmartAPI credentials
 CLIENT_ID = "AAAG399109"
 PASSWORD = "1503"
 TOTP_SECRET = "OLRQ3CYBLPN2XWQPHLKMB7WEKI"
@@ -60,10 +58,8 @@ USER_AGENTS = [
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36 Brave/124.0.0.0"
 ]
 
-# Initialize disk cache
 cache = Cache("stock_data_cache")
 
-# Tooltip explanations
 TOOLTIPS = {
     "RSI": "Relative Strength Index (30=Oversold, 70=Overbought)",
     "ATR": "Average True Range - Measures market volatility",
@@ -85,221 +81,13 @@ TOOLTIPS = {
     "Score": "Measured by RSI, MACD, Ichimoku Cloud, and ATR volatility. Low score = weak signal, high score = strong signal."
 }
 
-# Define sectors and their stocks
-
 SECTORS = {
-  "Bank": [
-    "HDFCBANK.NS", "ICICIBANK.NS", "SBIN.NS", "KOTAKBANK.NS", "AXISBANK.NS",
-    "INDUSINDBK.NS", "PNB.NS", "BANKBARODA.NS", "CANBK.NS", "UNIONBANK.NS",
-    "IDFCFIRSTB.NS", "FEDERALBNK.NS", "RBLBANK.NS", "BANDHANBNK.NS", "INDIANB.NS",
-    "BANKINDIA.NS", "KARURVYSYA.NS", "CUB.NS", "J&KBANK.NS", "DCBBANK.NS",
-    "AUBANK.NS", "YESBANK.NS", "IDBI.NS", "SOUTHBANK.NS", "CSBBANK.NS",
-    "TMB.NS", "KTKBANK.NS", "EQUITASBNK.NS", "UJJIVANSFB.NS"
-  ],
-
-
-
-  "Software & IT Services": [
-    "TCS.NS", "INFY.NS", "HCLTECH.NS", "WIPRO.NS", "TECHM.NS", "LTIM.NS",
-    "MPHASIS.NS", "FSL.NS", "BSOFT.NS", "NEWGEN.NS", "ZENSARTECH.NS",
-    "RATEGAIN.NS", "TANLA.NS", "COFORGE.NS", "PERSISTENT.NS", "CYIENT.NS",
-    "SONATSOFTW.NS", "KPITTECH.NS", "BIRLASOFT.NS", "TATAELXSI.NS", "MINDTREE.NS",
-    "INTELLECT.NS", "HAPPSTMNDS.NS", "MASTEK.NS", "ECLERX.NS", "NIITLTD.NS",
-    "RSYSTEMS.NS", "XCHANGING.NS", "OFSS.NS", "AURIONPRO.NS", "DATAMATICS.NS",
-    "QUICKHEAL.NS", "CIGNITITEC.NS", "ALLSEC.NS"
-  ],
-
-
-
-  "Finance": [
-    "HDFCBANK.NS", "ICICIBANK.NS", "SBIN.NS", "KOTAKBANK.NS", "BAJFINANCE.NS",
-    "AXISBANK.NS", "BAJAJFINSV.NS", "INDUSINDBK.NS", "SHRIRAMFIN.NS", "CHOLAFIN.NS",
-    "SBICARD.NS", "M&MFIN.NS", "MUTHOOTFIN.NS", "LICHSGFIN.NS", "IDFCFIRSTB.NS",
-    "AUBANK.NS", "POONAWALLA.NS", "SUNDARMFIN.NS", "IIFL.NS", "ABCAPITAL.NS",
-    "L&TFH.NS", "CREDITACC.NS", "MANAPPURAM.NS", "DHANI.NS", "JMFINANCIL.NS",
-    "EDELWEISS.NS", "INDIASHLTR.NS", "MOTILALOFS.NS", "CDSL.NS", "BSE.NS",
-    "MCX.NS", "ANGELONE.NS", "KARURVYSYA.NS", "RBLBANK.NS", "PNB.NS",
-    "CANBK.NS", "UNIONBANK.NS", "IOB.NS", "YESBANK.NS", "UCOBANK.NS",
-    "BANKINDIA.NS", "CENTRALBK.NS", "IDBI.NS", "J&KBANK.NS", "DCBBANK.NS",
-    "FEDERALBNK.NS", "SOUTHBANK.NS", "CSBBANK.NS", "TMB.NS", "KTKBANK.NS",
-    "EQUITASBNK.NS", "UJJIVANSFB.NS", "BANDHANBNK.NS", "SURYODAY.NS", "FSL.NS",
-    "PSB.NS", "PFS.NS", "HDFCAMC.NS", "NAM-INDIA.NS", "UTIAMC.NS", "ABSLAMC.NS",
-    "360ONE.NS", "ANANDRATHI.NS", "PNBHOUSING.NS", "HOMEFIRST.NS", "AAVAS.NS",
-    "APTUS.NS", "RECLTD.NS", "PFC.NS", "IREDA.NS", "SMCGLOBAL.NS", "CHOICEIN.NS",
-    "KFINTECH.NS", "CAMSBANK.NS", "MASFIN.NS", "TRIDENT.NS", "SBFC.NS",
-    "UGROCAP.NS", "FUSION.NS", "PAISALO.NS", "CAPITALSFB.NS", "NSIL.NS",
-    "SATIN.NS", "CREDAGRI.NS"
-  ],
-
-
-
-  "Automobile & Ancillaries": [
-    "MARUTI.NS", "TATAMOTORS.NS", "M&M.NS", "BAJAJ-AUTO.NS", "HEROMOTOCO.NS",
-    "EICHERMOT.NS", "TVSMOTOR.NS", "ASHOKLEY.NS", "MRF.NS", "BALKRISIND.NS",
-    "APOLLOTYRE.NS", "CEATLTD.NS", "JKTYRE.NS", "MOTHERSON.NS", "BHARATFORG.NS",
-    "SUNDRMFAST.NS", "EXIDEIND.NS", "AMARAJABAT.NS", "BOSCHLTD.NS", "ENDURANCE.NS",
-    "MINDAIND.NS", "WABCOINDIA.NS", "GABRIEL.NS", "SUPRAJIT.NS", "LUMAXTECH.NS",
-    "FIEMIND.NS", "SUBROS.NS", "JAMNAAUTO.NS", "SHRIRAMCIT.NS", "ESCORTS.NS",
-    "ATULAUTO.NS", "OLECTRA.NS", "GREAVESCOT.NS", "SMLISUZU.NS", "VSTTILLERS.NS",
-    "HINDMOTORS.NS", "MAHSCOOTER.NS"
-  ],
-
-
-
-  "Healthcare": [
-    "SUNPHARMA.NS", "CIPLA.NS", "DRREDDY.NS", "APOLLOHOSP.NS", "LUPIN.NS",
-    "DIVISLAB.NS", "AUROPHARMA.NS", "ALKEM.NS", "TORNTPHARM.NS", "ZYDUSLIFE.NS",
-    "IPCALAB.NS", "GLENMARK.NS", "BIOCON.NS", "ABBOTINDIA.NS", "SANOFI.NS",
-    "PFIZER.NS", "GLAXO.NS", "NATCOPHARM.NS", "AJANTPHARM.NS", "GRANULES.NS",
-    "LAURUSLABS.NS", "STAR.NS", "JUBLPHARMA.NS", "ASTRAZEN.NS", "WOCKPHARDT.NS",
-    "FORTIS.NS", "MAXHEALTH.NS", "METROPOLIS.NS", "THYROCARE.NS", "POLYMED.NS",
-    "KIMS.NS", "NH.NS", "LALPATHLAB.NS", "MEDPLUS.NS", "ERIS.NS", "INDOCO.NS",
-    "CAPLIPOINT.NS", "NEULANDLAB.NS", "SHILPAMED.NS", "SUVENPHAR.NS", "AARTIDRUGS.NS",
-    "PGHL.NS", "SYNGENE.NS", "VINATIORGA.NS", "GLAND.NS", "JBCHEPHARM.NS",
-    "HCG.NS", "RAINBOW.NS", "ASTERDM.NS", "KRSNAA.NS", "VIJAYA.NS", "MEDANTA.NS",
-    "NETMEDS.NS", "BLISSGVS.NS", "MOREPENLAB.NS", "RPGLIFE.NS"
-  ],
-
-
-  "Metals & Mining": [
-    "TATASTEEL.NS", "JSWSTEEL.NS", "HINDALCO.NS", "VEDL.NS", "SAIL.NS",
-    "NMDC.NS", "HINDZINC.NS", "NALCO.NS", "JINDALSTEL.NS", "MOIL.NS",
-    "APLAPOLLO.NS", "RATNAMANI.NS", "JSL.NS", "WELCORP.NS", "TINPLATE.NS",
-    "SHYAMMETL.NS", "MIDHANI.NS", "GRAVITA.NS", "SARDAEN.NS", "ASHAPURMIN.NS",
-    "JTLIND.NS", "RAMASTEEL.NS", "MAITHANALL.NS", "KIOCL.NS", "IMFA.NS",
-    "GMDCLTD.NS", "VISHNU.NS", "SANDUMA.NS"
-  ],
-
-
-  "FMCG": [
-    "HINDUNILVR.NS", "ITC.NS", "NESTLEIND.NS", "VARBEV.NS", "BRITANNIA.NS",
-    "GODREJCP.NS", "DABUR.NS", "COLPAL.NS", "MARICO.NS", "PGHH.NS",
-    "EMAMILTD.NS", "GILLETTE.NS", "HATSUN.NS", "JYOTHYLAB.NS", "BAJAJCON.NS",
-    "RADICO.NS", "TATACONSUM.NS", "UNITDSPR.NS", "CCL.NS", "AVANTIFEED.NS",
-    "BIKAJI.NS", "PATANJALI.NS", "VBL.NS", "ZOMATO.NS", "DOMS.NS",
-    "GODREJAGRO.NS", "SAPPHIRE.NS", "VENKEYS.NS", "BECTORFOOD.NS", "KRBL.NS"
-  ],
-
-
-
-  "Power": [
-    "NTPC.NS", "POWERGRID.NS", "ADANIPOWER.NS", "TATAPOWER.NS", "JSWENERGY.NS",
-    "NHPC.NS", "SJVN.NS", "TORNTPOWER.NS", "CESC.NS", "ADANIENSOL.NS",
-    "INDIAGRID.NS", "POWERMECH.NS", "KEC.NS", "INOXWIND.NS", "KALPATPOWR.NS",
-    "SUZLON.NS", "BHEL.NS", "THERMAX.NS", "GEPIL.NS", "VOLTAMP.NS",
-    "TRIL.NS", "TDPOWERSYS.NS", "JYOTISTRUC.NS", "IWEL.NS"
-  ],
-
-
-  "Capital Goods": [
-    "LT.NS", "SIEMENS.NS", "ABB.NS", "BEL.NS", "BHEL.NS", "HAL.NS",
-    "CUMMINSIND.NS", "THERMAX.NS", "AIAENG.NS", "SKFINDIA.NS", "GRINDWELL.NS",
-    "TIMKEN.NS", "KSB.NS", "ELGIEQUIP.NS", "LAKSHMIMACH.NS", "KIRLOSENG.NS",
-    "GREAVESCOT.NS", "TRITURBINE.NS", "VOLTAS.NS", "BLUESTARCO.NS", "HAVELLS.NS",
-    "DIXON.NS", "KAYNES.NS", "SYRMA.NS", "AMBER.NS", "SUZLON.NS", "CGPOWER.NS",
-    "APARINDS.NS", "HBLPOWER.NS", "KEI.NS", "POLYCAB.NS", "RRKABEL.NS",
-    "SCHNEIDER.NS", "TDPOWERSYS.NS", "KIRLOSBROS.NS", "JYOTICNC.NS", "DATAPATTNS.NS",
-    "INOXWIND.NS", "KALPATPOWR.NS", "MAZDOCK.NS", "COCHINSHIP.NS", "GRSE.NS",
-    "POWERMECH.NS", "ISGEC.NS", "HPL.NS", "VTL.NS", "DYNAMATECH.NS", "JASH.NS",
-    "GMMPFAUDLR.NS", "ESABINDIA.NS", "CENTURYEXT.NS", "SALASAR.NS", "TITAGARH.NS",
-    "VGUARD.NS", "WABAG.NS"
-  ],
-
-
-  "Oil & Gas": [
-    "RELIANCE.NS", "ONGC.NS", "IOC.NS", "BPCL.NS", "HPCL.NS", "GAIL.NS",
-    "PETRONET.NS", "OIL.NS", "IGL.NS", "MGL.NS", "GUJGASLTD.NS", "GSPL.NS",
-    "AEGISCHEM.NS", "CHENNPETRO.NS", "MRPL.NS", "GULFOILLUB.NS", "CASTROLIND.NS",
-    "SOTL.NS", "PANAMAPET.NS", "GOCLCORP.NS"
-  ],
-
-
-  "Chemicals": [
-    "PIDILITIND.NS", "SRF.NS", "DEEPAKNTR.NS", "ATUL.NS", "AARTIIND.NS",
-    "NAVINFLUOR.NS", "VINATIORGA.NS", "FINEORG.NS", "ALKYLAMINE.NS", "BALAMINES.NS",
-    "GUJFLUORO.NS", "CLEAN.NS", "JUBLINGREA.NS", "GALAXYSURF.NS", "PCBL.NS",
-    "NOCIL.NS", "BASF.NS", "SUDARSCHEM.NS", "NEOGEN.NS", "PRIVISCL.NS",
-    "ROSSARI.NS", "LXCHEM.NS", "ANURAS.NS", "JUBLPHARMA.NS", "CHEMCON.NS",
-    "DMCC.NS", "TATACHEM.NS", "COROMANDEL.NS", "UPL.NS", "BAYERCROP.NS",
-    "SUMICHEM.NS", "PIIND.NS", "DHARAMSI.NS", "EIDPARRY.NS", "CHEMPLASTS.NS",
-    "VISHNU.NS", "IGPL.NS", "TIRUMALCHM.NS"
-  ],
-
-
-  "Telecom": [
-    "BHARTIARTL.NS", "VODAFONEIDEA.NS", "INDUSTOWER.NS", "TATACOMM.NS",
-    "HFCL.NS", "TEJASNET.NS", "STLTECH.NS", "ITI.NS", "ASTEC.NS"
-  ],
-
-
-  "Infrastructure": [
-    "LT.NS", "GMRINFRA.NS", "IRB.NS", "NBCC.NS", "RVNL.NS", "KEC.NS",
-    "PNCINFRA.NS", "KNRCON.NS", "GRINFRA.NS", "NCC.NS", "HGINFRA.NS",
-    "ASHOKA.NS", "SADBHAV.NS", "JWL.NS", "PATELENG.NS", "KALPATPOWR.NS",
-    "IRCON.NS", "ENGINERSIN.NS", "AHLUWALIA.NS", "PSPPROJECTS.NS", "CAPACITE.NS",
-    "WELSPUNIND.NS", "TITAGARH.NS", "HCC.NS", "MANINFRA.NS", "RIIL.NS",
-    "DBREALTY.NS", "JWL.NS"
-  ],
-
-
-
-  "Insurance": [
-    "SBILIFE.NS", "HDFCLIFE.NS", "ICICIGI.NS", "ICICIPRULI.NS", "LICI.NS",
-    "GICRE.NS", "NIACL.NS", "STARHEALTH.NS", "BAJAJFINSV.NS", "MAXFIN.NS"
-  ],
-
-
-  "Diversified": [
-    "ITC.NS", "RELIANCE.NS", "ADANIENT.NS", "GRASIM.NS", "HINDUNILVR.NS",
-    "DCMSHRIRAM.NS", "3MINDIA.NS", "CENTURYPLY.NS", "KFINTECH.NS", "BALMERLAWRI.NS",
-    "GODREJIND.NS", "VBL.NS", "BIRLACORPN.NS"
-  ],
-
-
-  "Construction Materials": [
-    "ULTRACEMCO.NS", "SHREECEM.NS", "AMBUJACEM.NS", "ACC.NS", "JKCEMENT.NS",
-    "DALBHARAT.NS", "RAMCOCEM.NS", "NUVOCO.NS", "JKLAKSHMI.NS", "BIRLACORPN.NS",
-    "HEIDELBERG.NS", "INDIACEM.NS", "PRISMJOHNS.NS", "STARCEMENT.NS", "SAGCEM.NS",
-    "DECCANCE.NS", "KCP.NS", "ORIENTCEM.NS", "HIL.NS", "EVERESTIND.NS",
-    "VISAKAIND.NS", "BIGBLOC.NS"
-  ],
-
-
-  "Real Estate": [
-    "DLF.NS", "GODREJPROP.NS", "OBEROIRLTY.NS", "PHOENIXLTD.NS", "PRESTIGE.NS",
-    "BRIGADE.NS", "SOBHA.NS", "SUNTECK.NS", "MAHLIFE.NS", "ANANTRAJ.NS",
-    "KOLTEPATIL.NS", "PURVA.NS", "ARVSMART.NS", "RUSTOMJEE.NS", "DBREALTY.NS",
-    "IBREALEST.NS", "OMAXE.NS", "ASHIANA.NS", "ELDEHSG.NS", "TARC.NS"
-  ],
-
-
-  "Aviation": [
-    "INDIGO.NS", "SPICEJET.NS", "AAI.NS", "GMRINFRA.NS"
-  ],
-
-
-  "Retailing": [
-    "DMART.NS", "TRENT.NS", "ABFRL.NS", "VMART.NS", "SHOPERSTOP.NS",
-    "BATAINDIA.NS", "METROBRAND.NS", "ARVINDFASN.NS", "CANTABIL.NS", "ZOMATO.NS",
-    "NYKAA.NS", "MANYAVAR.NS", "ELECTRONICSMRKT.NS", "LANDMARK.NS", "V2RETAIL.NS",
-    "THANGAMAYL.NS", "KALYANKJIL.NS", "TITAN.NS"
-  ],
-
-
-  "Miscellaneous": [
-    "PIDILITIND.NS", "BSE.NS", "CDSL.NS", "MCX.NS", "NAUKRI.NS",
-    "JUSTDIAL.NS", "TEAMLEASE.NS", "QUESS.NS", "SIS.NS", "DELHIVERY.NS",
-    "PRUDENT.NS", "MEDIASSIST.NS", "AWFIS.NS", "JUBLFOOD.NS", "DEVYANI.NS",
-    "WESTLIFE.NS", "SAPPHIRE.NS", "BARBEQUE.NS", "EASEMYTRIP.NS", "THOMASCOOK.NS",
-    "MSTC.NS", "IRCTC.NS", "POLICYBZR.NS", "PAYTM.NS", "INFIBEAM.NS",
-    "CARTRADE.NS", "HONASA.NS", "ONE97COMM.NS", "SIGNATURE.NS", "RRKABEL.NS",
-    "HMAAGRO.NS", "RKFORGE.NS", "CAMPUS.NS", "SENCO.NS", "CONCORDBIO.NS"
-  ]
+    # Placeholder: Fill in your sector dictionary here
+    "Bank": ["HDFCBANK.NS", "ICICIBANK.NS"],
+    "Software & IT Services": ["TCS.NS", "INFY.NS"],
+    # Add other sectors and stocks as needed
 }
 
-
-
-# Initialize SmartAPI client
 def init_smartapi_client():
     try:
         smart_api = SmartConnect(api_key=API_KEYS["Historical"])
@@ -365,16 +153,13 @@ def fetch_stock_data_with_auth(symbol, period="5y", interval="1d"):
         return pd.read_pickle(io.BytesIO(cached_data))
 
     try:
-        # Ensure symbol is in Angel One format (e.g., "HDFCBANK-EQ")
         if "-EQ" not in symbol:
             symbol = f"{symbol.split('.')[0]}-EQ"
 
-        # 🔐 Init SmartAPI client
         smart_api = init_smartapi_client()
         if not smart_api:
             raise ValueError("SmartAPI client initialization failed")
 
-        # 📅 Date range
         end_date = datetime.now()
         if period == "5y":
             start_date = end_date - timedelta(days=5 * 365)
@@ -385,7 +170,6 @@ def fetch_stock_data_with_auth(symbol, period="5y", interval="1d"):
         else:
             start_date = end_date - timedelta(days=365)
 
-        # ⏱️ Interval mapping
         interval_map = {
             "1d": "ONE_DAY",
             "1h": "ONE_HOUR",
@@ -394,14 +178,12 @@ def fetch_stock_data_with_auth(symbol, period="5y", interval="1d"):
         }
         api_interval = interval_map.get(interval, "ONE_DAY")
 
-        # 🔁 Load latest token
         symbol_token_map = load_symbol_token_map()
         symboltoken = symbol_token_map.get(symbol)
         if not symboltoken:
             st.warning(f"⚠️ Token not found for symbol: {symbol}")
             return pd.DataFrame()
 
-        # 📊 Fetch historical candle data
         historical_data = smart_api.getCandleData({
             "exchange": "NSE",
             "symboltoken": symboltoken,
@@ -817,10 +599,6 @@ def fetch_fundamentals(symbol):
         smart_api = init_smartapi_client()
         if not smart_api:
             return {'P/E': float('inf'), 'EPS': 0, 'RevenueGrowth': 0}
-        
-        # Note: SmartAPI does not directly provide fundamentals like P/E, EPS, etc.
-        # You may need to fetch this from another source or use a third-party API
-        # For now, returning dummy values
         return {'P/E': float('inf'), 'EPS': 0, 'RevenueGrowth': 0}
     except Exception:
         return {'P/E': float('inf'), 'EPS': 0, 'RevenueGrowth': 0}
@@ -1264,11 +1042,22 @@ def display_dashboard(symbol=None, data=None, recommendations=None, selected_sto
     st.title("📊 StockGenie Pro - NSE Analysis")
     st.subheader(f"📅 Analysis for {datetime.now().strftime('%d %b %Y')}")
     
-    sector = st.sidebar.selectbox("Select Sector", ["All"] + list(SECTORS.keys()))
-    if sector == "All":
+    sector_options = ["All"] + list(SECTORS.keys())
+    selected_sectors = st.sidebar.multiselect(
+        "Select Sectors",
+        options=sector_options,
+        default=["Bank"],
+        help="Choose one or more sectors to analyze. Select 'All' to include all sectors."
+    )
+    
+    if "All" in selected_sectors:
         selected_stocks = list(set([stock for sector in SECTORS.values() for stock in sector]))
     else:
-        selected_stocks = SECTORS[sector]
+        selected_stocks = list(set([stock for sector in selected_sectors for stock in SECTORS.get(sector, [])]))
+    
+    if not selected_stocks:
+        st.warning("⚠️ No stocks selected. Please choose at least one sector.")
+        return
     
     if st.button("🚀 Generate Daily Top Picks"):
         progress_bar = st.progress(0)
@@ -1444,7 +1233,6 @@ def display_dashboard(symbol=None, data=None, recommendations=None, selected_sto
             else:
                 with col2:
                     value = round(value, 2) if pd.notnull(value) else "N/A"
-                    st.write(f"**{tooltip(name, tooltip_text)}**: {value}")               
                     st.write(f"**{tooltip(name, tooltip_text)}**: {value}")
 
         st.subheader("📈 Price Chart with Indicators")
@@ -1459,8 +1247,8 @@ def display_dashboard(symbol=None, data=None, recommendations=None, selected_sto
             fig.add_scatter(x=data.index, y=data['Lower_Band'], mode='lines', name='Bollinger Lower', line=dict(color='green', dash='dash'))
         if 'Ichimoku_Span_A' in data.columns and data['Ichimoku_Span_A'].notnull().any():
             fig.add_scatter(x=data.index, y=data['Ichimoku_Span_A'], mode='lines', name='Ichimoku Span A', line=dict(color='purple'))
-        if 'Ichimoku_Span_B' in data.columns and data['Ichimoku_Span_B'].notnull().any():
-            fig.add_scatter(x=data.index, y=data['Ichimoku_Span_B'], mode='lines', name='Ichimoku Span B', line=dict(color='pink'))
+        if 'Ichimoku_Span_B' in data.columns and data['Ichimoku_Span_B'].notnull().any彼此4.0 license (https://creativecommons.org/licenses/by/4.0/).
+
         st.plotly_chart(fig)
 
         st.subheader("📊 Monte Carlo Simulation")
@@ -1487,26 +1275,22 @@ def display_dashboard(symbol=None, data=None, recommendations=None, selected_sto
                 fig_vol.add_scatter(x=spike_data.index, y=spike_data['Volume'], mode='markers', name='Volume Spike', marker=dict(color='red', size=10))
         st.plotly_chart(fig_vol)
 
-        st.subheader("⚠️ Risk Assessment")
-        risk = assess_risk(data)
-        st.write(f"Risk Level: {risk}")
-
-        st.subheader("🔍 Divergence Analysis")
-        divergence = data['Divergence'].iloc[-1] if 'Divergence' in data.columns else "No Divergence"
-        st.write(f"Divergence: {divergence}")
-
-if __name__ == "__main__":
+def main():
     init_database()
+    st.sidebar.title("🔍 Stock Selection")
     stock_list = fetch_nse_stock_list()
-    if stock_list:
-        st.sidebar.header("🔍 Stock Analysis")
-        selected_symbol = st.sidebar.selectbox("Select Stock", stock_list, index=stock_list.index("HDFCBANK-EQ") if "HDFCBANK-EQ" in stock_list else 0)
-        data = fetch_stock_data_cached(selected_symbol)
+    symbol = st.sidebar.selectbox("Select Stock", stock_list, index=0)
+    
+    if symbol:
+        data = fetch_stock_data_cached(symbol)
         if not data.empty:
             data = analyze_stock(data)
-            recommendations = generate_recommendations(data, selected_symbol)
-            display_dashboard(selected_symbol, data, recommendations, stock_list)
+            recommendations = generate_recommendations(data, symbol)
+            display_dashboard(symbol, data, recommendations)
         else:
-            st.error(f"⚠️ No data available for {selected_symbol}.")
+            st.warning("⚠️ No data available for the selected stock.")
     else:
-        st.error("⚠️ Failed to fetch stock list.")
+        display_dashboard()
+
+if __name__ == "__main__":
+    main()
