@@ -36,13 +36,13 @@ def load_symbol_token_map():
 warnings.filterwarnings("ignore", category=FutureWarning)
 warnings.filterwarnings("ignore", category=UserWarning)
 
-CLIENT_ID = st.text_input("Enter Client ID", type="password")
-PASSWORD = st.text_input("Enter Password", type="password")
-TOTP_SECRET = st.text_input("Enter TOTP Secret", type="password")
-
-if CLIENT_ID and PASSWORD and TOTP_SECRET:
-    totp = pyotp.TOTP(TOTP_SECRET)
-    st.success(f"TOTP Code: {totp.now()}")
+CLIENT_ID = "AAAG399109"
+PASSWORD = "1503"
+TOTP_SECRET = "OLRQ3CYBLPN2XWQPHLKMB7WEKI"
+API_KEYS = {
+    "Historical": "c3C0tMGn",
+    "Trading": "ruseeaBq",
+    "Market": "PflRFXyd"
 }
 
 USER_AGENTS = [
@@ -197,7 +197,7 @@ SECTORS = {
     "INOXWIND.NS", "KALPATPOWR.NS", "MAZDOCK.NS", "COCHINSHIP.NS", "GRSE.NS",
     "POWERMECH.NS", "ISGEC.NS", "HPL.NS", "VTL.NS", "DYNAMATECH.NS", "JASH.NS",
     "GMMPFAUDLR.NS", "ESABINDIA.NS", "CENTURYEXT.NS", "SALASAR.NS", "TITAGARH.NS",
-    "VGUARD.NS", "WABAG.NS"
+    "VGUARD.NS", "WABAG.NS","AZAD"
   ],
 
 
@@ -1500,3 +1500,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
