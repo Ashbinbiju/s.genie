@@ -22,7 +22,8 @@ from SmartApi import SmartConnect
 import pyotp
 import os
 from dotenv import load_dotenv
-import python-dotenv
+
+load_dotenv()
 
 @st.cache_data(ttl=86400)
 def load_symbol_token_map():
