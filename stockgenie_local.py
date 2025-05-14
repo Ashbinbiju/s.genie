@@ -1154,7 +1154,7 @@ def insert_top_picks(results_df, pick_type="daily"):
 def analyze_batch(stock_batch):
     results = []
     errors = []
-    with ThreadPoolExecutor(max_workers=1) as executor:
+    with ThreadPoolExecutor(max_workers=3) as executor:
         futures = {executor.submit(analyze_stock_parallel, symbol): symbol for symbol in stock_batch}
         for future in as_completed(futures):
             symbol = futures[future]
@@ -1199,7 +1199,7 @@ def analyze_all_stocks(stock_list, batch_size=10, progress_callback=None):
         results.extend(batch_results)
         if progress_callback:
             progress_callback((i + len(batch)) / len(stock_list))
-        time.sleep(10)
+        time.sleep(3)
     
     results_df = pd.DataFrame([r for r in results if r is not None])
     if results_df.empty:
@@ -1220,7 +1220,7 @@ def analyze_intraday_stocks(stock_list, batch_size=10, progress_callback=None):
         results.extend(batch_results)
         if progress_callback:
             progress_callback((i + len(batch)) / len(stock_list))
-        time.sleep(10)
+        time.sleep(3)
     
     results_df = pd.DataFrame([r for r in results if r is not None])
     if results_df.empty:
