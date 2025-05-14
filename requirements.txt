@@ -14,3 +14,4 @@ logzero==1.7.0
 websocket-client==1.8.0
 pycryptodome==3.20.0
 python-dotenv
+pyotp
