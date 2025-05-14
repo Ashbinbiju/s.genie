@@ -20,6 +20,8 @@ import sqlite3
 from diskcache import Cache
 from SmartApi import SmartConnect
 import pyotp
+import os
+from dotenv import load_dotenv
 
 @st.cache_data(ttl=86400)
 def load_symbol_token_map():
@@ -36,13 +38,13 @@ def load_symbol_token_map():
 warnings.filterwarnings("ignore", category=FutureWarning)
 warnings.filterwarnings("ignore", category=UserWarning)
 
-CLIENT_ID = "AAAG399109"
-PASSWORD = "1503"
-TOTP_SECRET = "OLRQ3CYBLPN2XWQPHLKMB7WEKI"
+CLIENT_ID = os.getenv("CLIENT_ID")
+PASSWORD = os.getenv("PASSWORD")
+TOTP_SECRET = os.getenv("TOTP_SECRET")
 API_KEYS = {
-    "Historical": "c3C0tMGn",
-    "Trading": "ruseeaBq",
-    "Market": "PflRFXyd"
+    "Historical": os.getenv("HISTORICAL_API_KEY"),
+    "Trading": os.getenv("TRADING_API_KEY"),
+    "Market": os.getenv("MARKET_API_KEY")
 }
 
 USER_AGENTS = [
