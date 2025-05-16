@@ -28,21 +28,27 @@ SECTOR_INDICES = {
     "Nifty Realty": "NIFTYREALTY"
 }
 
-# Initialize SmartAPI client
-def init_smartapi_client():
-    try:
-        smart_api = SmartConnect(api_key=API_KEY)
-        totp = pyotp.TOTP(TOTP_SECRET)
-        data = smart_api.generateSession(CLIENT_ID, PASSWORD, totp.now())
-        if data['status']:
-            print("Successfully authenticated with SmartAPI")
-            return smart_api
-        else:
-            print(f"Authentication failed: {data['message']}")
-            return None
-    except Exception as e:
-        print(f"Error initializing SmartAPI: {str(e)}")
-        return None
+# Initialize SmartAPI client with retry mechanism
+def init_smartapi_client(max_retries=3, delay=5):
+    for attempt in range(max_retries):
+        try:
+            smart_api = SmartConnect(api_key=API_KEY)
+            totp = pyotp.TOTP(TOTP_SECRET)
+            totp_code = totp.now()
+            data = smart_api.generateSession(CLIENT_ID, PASSWORD, totp_code)
+            if data['status']:
+                print(f"Successfully authenticated with SmartAPI (TOTP: {totp_code})")
+                return smart_api
+            else:
+                print(f"Authentication failed: {data['message']} (Attempt {attempt + 1}/{max_retries})")
+                if attempt < max_retries - 1:
+                    time.sleep(delay)
+        except Exception as e:
+            print(f"Error initializing SmartAPI: {str(e)} (Attempt {attempt + 1}/{max_retries})")
+            if attempt < max_retries - 1:
+                time.sleep(delay)
+    print("Failed to authenticate after maximum retries")
+    return None
 
 # Load instrument tokens from Angel One's scrip master
 def load_symbol_token_map():
@@ -64,7 +70,7 @@ def fetch_sector_data(smart_api, symbol, token):
         if ltp_data['status'] and 'data' in ltp_data and ltp_data['data']:
             ltp = ltp_data['data']['ltp']
         else:
-            # Fallback to intraday candle data if LTP is unavailable
+            # Fallback to intraday candle data
             end_date = datetime.now()
             start_date = end_date - timedelta(days=1)
             candle_data = smart_api.getCandleData({
@@ -80,7 +86,7 @@ def fetch_sector_data(smart_api, symbol, token):
                 print(f"No data for {symbol}: {candle_data.get('message', 'Unknown error')}")
                 return None, None
 
-        # Fetch previous day's close from candle data
+        # Fetch previous day's close
         end_date = datetime.now() - timedelta(days=1)
         start_date = end_date - timedelta(days=1)
         candle_data = smart_api.getCandleData({
