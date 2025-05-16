@@ -1048,6 +1048,24 @@ def generate_recommendations(data, symbol=None):
         st.warning(f"⚠️ Error generating recommendations: {str(e)}")
     return recommendations
 
+def analyze_sector_performance(rate_limit_delay=2):
+    sector_scores = {}
+    for sector, stocks in SECTORS.items():
+        total_score = 0
+        count = 0
+        for symbol in stocks[:5]:  # Only analyze top 5 stocks per sector
+            data = fetch_stock_data_cached(symbol)
+            if data.empty:
+                continue
+            data = analyze_stock(data)
+            rec = generate_recommendations(data, symbol)
+            total_score += rec.get("Score", 0)
+            count += 1
+            time.sleep(rate_limit_delay)  # prevent hitting API limits
+        avg_score = total_score / count if count else 0
+        sector_scores[sector] = avg_score
+    return sorted(sector_scores.items(), key=lambda x: x[1], reverse=True)[:3]
+
 def backtest_stock(data, strategy="Swing"):
     if data.empty or len(data) < 200:
         return None
@@ -1268,7 +1286,13 @@ def display_dashboard(symbol=None, data=None, recommendations=None, selected_sto
     if not selected_stocks:
         st.warning("⚠️ No stocks selected. Please choose at least one sector.")
         return
-    
+        
+    with st.spinner("🔍 Analyzing top performing sectors..."):
+    top_sectors = analyze_sector_performance(rate_limit_delay=2)
+    st.subheader("🔝 Top 3 Performing Sectors Today")
+    for name, score in top_sectors:
+        st.markdown(f"- **{name}**: {score:.2f}/7")
+
     if st.button("🚀 Generate Daily Top Picks"):
         progress_bar = st.progress(0)
         loading_text = st.empty()
