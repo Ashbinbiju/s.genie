@@ -1053,7 +1053,7 @@ def analyze_sector_performance(rate_limit_delay=2):
     for sector, stocks in SECTORS.items():
         total_score = 0
         count = 0
-        for symbol in stocks[:5]:  # Only analyze top 5 stocks per sector
+        for symbol in stocks[:1]:  # Only analyze top 5 stocks per sector
             data = fetch_stock_data_cached(symbol)
             if data.empty:
                 continue
