@@ -1048,12 +1048,13 @@ def generate_recommendations(data, symbol=None):
         st.warning(f"⚠️ Error generating recommendations: {str(e)}")
     return recommendations
 
-def analyze_sector_performance(rate_limit_delay=2):
+@st.cache_data(ttl=3600)  # Cache results for 1 hour to avoid repeated API hits
+def get_top_sectors_cached(rate_limit_delay=2, stocks_per_sector=2):
     sector_scores = {}
     for sector, stocks in SECTORS.items():
         total_score = 0
         count = 0
-        for symbol in stocks[:1]:  # Only analyze top 5 stocks per sector
+        for symbol in stocks[:stocks_per_sector]:  # Only analyze top N stocks per sector
             data = fetch_stock_data_cached(symbol)
             if data.empty:
                 continue
@@ -1061,10 +1062,12 @@ def analyze_sector_performance(rate_limit_delay=2):
             rec = generate_recommendations(data, symbol)
             total_score += rec.get("Score", 0)
             count += 1
-            time.sleep(rate_limit_delay)  # prevent hitting API limits
+            time.sleep(rate_limit_delay)  # Delay per API call
         avg_score = total_score / count if count else 0
         sector_scores[sector] = avg_score
+        time.sleep(1)  # Optional: delay between sectors
     return sorted(sector_scores.items(), key=lambda x: x[1], reverse=True)[:3]
+
 
 def backtest_stock(data, strategy="Swing"):
     if data.empty or len(data) < 200:
@@ -1288,10 +1291,11 @@ def display_dashboard(symbol=None, data=None, recommendations=None, selected_sto
         return
         
     with st.spinner("🔍 Analyzing top performing sectors..."):
-        top_sectors = analyze_sector_performance(rate_limit_delay=2)
+        top_sectors = get_top_sectors_cached(rate_limit_delay=2, stocks_per_sector=2)
         st.subheader("🔝 Top 3 Performing Sectors Today")
         for name, score in top_sectors:
             st.markdown(f"- **{name}**: {score:.2f}/7")
+
 
     if st.button("🚀 Generate Daily Top Picks"):
         progress_bar = st.progress(0)
