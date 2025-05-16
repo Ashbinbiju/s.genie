@@ -1288,10 +1288,10 @@ def display_dashboard(symbol=None, data=None, recommendations=None, selected_sto
         return
         
     with st.spinner("🔍 Analyzing top performing sectors..."):
-    top_sectors = analyze_sector_performance(rate_limit_delay=2)
-    st.subheader("🔝 Top 3 Performing Sectors Today")
-    for name, score in top_sectors:
-        st.markdown(f"- **{name}**: {score:.2f}/7")
+        top_sectors = analyze_sector_performance(rate_limit_delay=2)
+        st.subheader("🔝 Top 3 Performing Sectors Today")
+        for name, score in top_sectors:
+            st.markdown(f"- **{name}**: {score:.2f}/7")
 
     if st.button("🚀 Generate Daily Top Picks"):
         progress_bar = st.progress(0)
