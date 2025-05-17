@@ -1290,12 +1290,12 @@ def display_dashboard(symbol=None, data=None, recommendations=None, selected_sto
         st.warning("⚠️ No stocks selected. Please choose at least one sector.")
         return
         
-    with st.spinner("🔍 Analyzing top performing sectors..."):
-        top_sectors = get_top_sectors_cached(rate_limit_delay=2, stocks_per_sector=2)
-        st.subheader("🔝 Top 3 Performing Sectors Today")
-        for name, score in top_sectors:
-            st.markdown(f"- **{name}**: {score:.2f}/7")
-
+    if st.button("🔎 Analyze Top Performing Sectors"):
+        with st.spinner("🔍 Crunching sector data ..."):
+            top_sectors = get_top_sectors_cached(rate_limit_delay=2, stocks_per_sector=2)
+            st.subheader("🔝 Top 3 Performing Sectors Today")
+            for name, score in top_sectors:
+                st.markdown(f"- **{name}**: {score:.2f}/7")
 
     if st.button("🚀 Generate Daily Top Picks"):
         progress_bar = st.progress(0)
