@@ -1517,16 +1517,17 @@ def main():
     init_database()
     st.sidebar.title("🔍 Stock Selection")
     stock_list = fetch_nse_stock_list()
-    symbol = st.sidebar.selectbox("Select Stock", stock_list, index=0)
-    
-    if symbol:
-        data = fetch_stock_data_cached(symbol)
-        if not data.empty:
-            data = analyze_stock(data)
-            recommendations = generate_recommendations(data, symbol)
-            display_dashboard(symbol, data, recommendations)
-        else:
-            st.warning("⚠️ No data available for the selected stock.")
+    symbol = st.sidebar.selectbox("Select Stock", stock_list)
+
+    if st.sidebar.button("Analyze Selected Stock"):
+        if symbol:
+            data = fetch_stock_data_cached(symbol)
+            if not data.empty:
+                data = analyze_stock(data)
+                recommendations = generate_recommendations(data, symbol)
+                display_dashboard(symbol, data, recommendations)
+            else:
+                st.warning("⚠️ No data available for the selected stock.")
     else:
         display_dashboard()
 
