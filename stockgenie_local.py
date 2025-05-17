@@ -1371,17 +1371,26 @@ def display_dashboard(symbol=None, data=None, recommendations=None, selected_sto
         conn = sqlite3.connect('stock_picks.db')
         history_df = pd.read_sql_query("SELECT * FROM daily_picks ORDER BY date DESC", conn)
         conn.close()
-        if not history_df.empty:
-            st.subheader("📜 Historical Top Picks")
-            pick_type_filter = st.selectbox("Filter by Pick Type", ["All", "daily", "intraday"])
-            if pick_type_filter != "All":
-                history_df = history_df[history_df['pick_type'] == pick_type_filter]
-            date_filter = st.selectbox("Filter by Date", ["All"] + sorted(history_df['date'].unique(), reverse=True))
-            if date_filter != "All":
-                history_df = history_df[history_df['date'] == date_filter]
-            st.dataframe(history_df)
-        else:
-            st.warning("⚠️ No historical data available.")
+    
+    if not history_df.empty:
+        st.subheader("📜 Historical Top Picks")
+
+        # Keep all dates for dropdown
+        all_dates = sorted(history_df['date'].unique(), reverse=True)
+        date_filter = st.selectbox("Filter by Date", ["All"] + all_dates)
+
+        pick_type_filter = st.selectbox("Filter by Pick Type", ["All", "daily", "intraday"])
+
+        # Apply filters AFTER capturing dropdown options
+        filtered_df = history_df.copy()
+        if pick_type_filter != "All":
+            filtered_df = filtered_df[filtered_df['pick_type'] == pick_type_filter]
+        if date_filter != "All":
+            filtered_df = filtered_df[filtered_df['date'] == date_filter]
+
+        st.dataframe(filtered_df)
+    else:
+        st.warning("⚠️ No historical data available.")
     
     if symbol and data is not None and recommendations is not None:
         st.header(f"📋 {symbol.split('-')[0]} Analysis")
