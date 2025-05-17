@@ -1269,7 +1269,7 @@ def update_progress(progress_bar, loading_text, progress_value, loading_messages
     dots = "." * int((progress_value * 10) % 4)
     loading_text.text(f"{loading_message}{dots}")
 
-def display_dashboard(symbol=None, data=None, recommendations=None, selected_stocks=None):
+def display_dashboard(symbol=None, data=None, recommendations=None):
     st.title("📊 StockGenie Pro - NSE Analysis")
     st.subheader(f"📅 Analysis for {datetime.now().strftime('%d %b %Y')}")
     
@@ -1371,27 +1371,24 @@ def display_dashboard(symbol=None, data=None, recommendations=None, selected_sto
         conn = sqlite3.connect('stock_picks.db')
         history_df = pd.read_sql_query("SELECT * FROM daily_picks ORDER BY date DESC", conn)
         conn.close()
-    
-    if not history_df.empty:
-        st.subheader("📜 Historical Top Picks")
 
-        # Keep all dates for dropdown
-        all_dates = sorted(history_df['date'].unique(), reverse=True)
-        date_filter = st.selectbox("Filter by Date", ["All"] + all_dates)
+        if not history_df.empty:
+            st.subheader("📜 Historical Top Picks")
 
-        pick_type_filter = st.selectbox("Filter by Pick Type", ["All", "daily", "intraday"])
+            all_dates = sorted(history_df['date'].unique(), reverse=True)
+            date_filter = st.selectbox("Filter by Date", ["All"] + all_dates)
+            pick_type_filter = st.selectbox("Filter by Pick Type", ["All", "daily", "intraday"])
 
-        # Apply filters AFTER capturing dropdown options
-        filtered_df = history_df.copy()
-        if pick_type_filter != "All":
-            filtered_df = filtered_df[filtered_df['pick_type'] == pick_type_filter]
-        if date_filter != "All":
-            filtered_df = filtered_df[filtered_df['date'] == date_filter]
+            filtered_df = history_df.copy()
+            if pick_type_filter != "All":
+                filtered_df = filtered_df[filtered_df['pick_type'] == pick_type_filter]
+            if date_filter != "All":
+                filtered_df = filtered_df[filtered_df['date'] == date_filter]
 
-        st.dataframe(filtered_df)
-    else:
-        st.warning("⚠️ No historical data available.")
-    
+            st.dataframe(filtered_df)
+        else:
+            st.warning("⚠️ No historical data available.")
+            
     if symbol and data is not None and recommendations is not None:
         st.header(f"📋 {symbol.split('-')[0]} Analysis")
         col1, col2, col3, col4 = st.columns(4)
