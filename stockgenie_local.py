@@ -1069,68 +1069,338 @@ def get_top_sectors_cached(rate_limit_delay=2, stocks_per_sector=2):
     return sorted(sector_scores.items(), key=lambda x: x[1], reverse=True)[:3]
 
 
-def backtest_stock(data, strategy="Swing"):
+def backtest_strategy(data, strategy="Swing", initial_capital=25000, commission=0.001, slippage=0.001):
+    """
+    Enhanced backtesting function with multiple strategies and detailed metrics
+    
+    Parameters:
+    - data: DataFrame with stock data and indicators
+    - strategy: One of ["Swing", "Intraday", "MeanReversion", "Breakout", "Ichimoku"]
+    - initial_capital: Starting capital for backtest
+    - commission: Percentage commission per trade (0.1% default)
+    - slippage: Percentage slippage per trade (0.1% default)
+    
+    Returns:
+    - Dictionary with detailed backtest results
+    """
     if data.empty or len(data) < 200:
         return None
 
     data = data.copy()
     data = analyze_stock(data)
-
-    key_cols = ['Open', 'Close', 'RSI', 'MACD', 'MACD_signal', 'ATR', 'ADX', 'TRIX', 'VPT', 'OBV']
-    for col in key_cols:
+    
+    # Ensure required columns exist
+    required_cols = [
+        'Open', 'Close', 'High', 'Low', 'Volume', 'RSI', 'MACD', 'MACD_signal',
+        'ATR', 'ADX', 'Upper_Band', 'Lower_Band', 'Ichimoku_Span_A', 'Ichimoku_Span_B',
+        'Donchian_Upper', 'Donchian_Lower', 'VWAP', 'Parabolic_SAR'
+    ]
+    
+    for col in required_cols:
         if col not in data.columns:
             data[col] = None
-    data = data.dropna(subset=['Open', 'Close'])
-
+    
+    # Clean data
+    data = data.dropna(subset=['Open', 'Close', 'High', 'Low', 'Volume'])
+    
     if len(data) < 27:
         return None
 
-    initial_capital = 25000
+    # Initialize variables
     capital = initial_capital
     position = 0
     trades = []
-
-    min_rows = 200
+    equity_curve = [initial_capital]
+    max_drawdown = 0
+    peak_equity = initial_capital
+    trade_count = 0
+    winning_trades = 0
+    losing_trades = 0
+    total_profit = 0
+    total_loss = 0
+    
+    # Strategy parameters
+    min_rows = 200  # Minimum rows needed for indicators to stabilize
+    risk_per_trade = 0.01  # Risk 1% of capital per trade
+    
     for i in range(min_rows, len(data) - 1):
         row = data.iloc[i]
         next_row = data.iloc[i + 1]
         sliced_data = data.iloc[:i+1]
-        if len(sliced_data['RSI'].dropna()) < 1 or len(sliced_data['MACD'].dropna()) < 1:
-            continue
-        recommendations = generate_recommendations(sliced_data, symbol="test")
-
-        if position == 0 and recommendations[strategy] in ["Buy", "Strong Buy"]:
-            entry_price = next_row['Open']
-            shares = capital // entry_price
+        
+        # Generate recommendations for current slice
+        recommendations = generate_recommendations(sliced_data, symbol="backtest")
+        
+        # Calculate position size based on risk management
+        if 'ATR' in row and pd.notnull(row['ATR']):
+            position_size = (capital * risk_per_trade) / (row['ATR'] * 2.5)
+            position_size = int(position_size)
+        else:
+            position_size = capital // row['Close']
+        
+        # Strategy-specific entry/exit signals
+        entry_signal = False
+        exit_signal = False
+        
+        if strategy == "Swing":
+            entry_signal = (
+                recommendations["Swing"] in ["Buy", "Strong Buy"] and 
+                position == 0 and 
+                capital > row['Close'] * position_size
+            )
+            exit_signal = (
+                recommendations["Swing"] in ["Sell", "Strong Sell"] and 
+                position > 0
+            )
+            
+        elif strategy == "Intraday":
+            entry_signal = (
+                recommendations["Intraday"] in ["Buy", "Strong Buy"] and 
+                position == 0 and 
+                capital > row['Close'] * position_size
+            )
+            exit_signal = (
+                recommendations["Intraday"] in ["Sell", "Strong Sell"] and 
+                position > 0
+            )
+            
+        elif strategy == "MeanReversion":
+            entry_signal = (
+                recommendations["Mean_Reversion"] in ["Buy", "Strong Buy"] and 
+                position == 0 and 
+                capital > row['Close'] * position_size
+            )
+            exit_signal = (
+                recommendations["Mean_Reversion"] in ["Sell", "Strong Sell"] and 
+                position > 0
+            )
+            
+        elif strategy == "Breakout":
+            entry_signal = (
+                recommendations["Breakout"] in ["Buy", "Strong Buy"] and 
+                position == 0 and 
+                capital > row['Close'] * position_size
+            )
+            exit_signal = (
+                recommendations["Breakout"] in ["Sell", "Strong Sell"] and 
+                position > 0
+            )
+            
+        elif strategy == "Ichimoku":
+            entry_signal = (
+                recommendations["Ichimoku_Trend"] in ["Buy", "Strong Buy"] and 
+                position == 0 and 
+                capital > row['Close'] * position_size
+            )
+            exit_signal = (
+                recommendations["Ichimoku_Trend"] in ["Sell", "Strong Sell"] and 
+                position > 0
+            )
+        
+        # Entry logic
+        if entry_signal and position == 0:
+            entry_price = next_row['Open'] * (1 + slippage)
+            shares = min(position_size, capital // entry_price)
+            
             if shares > 0:
                 position = shares
-                capital -= shares * entry_price
-                trades.append({"entry_date": next_row.name, "entry_price": entry_price})
-
-        elif position > 0 and recommendations[strategy] in ["Sell", "Strong Sell"]:
-            exit_price = next_row['Open']
-            capital += position * exit_price
-            trades[-1]["exit_date"] = next_row.name
-            trades[-1]["exit_price"] = exit_price
+                capital -= shares * entry_price * (1 + commission)
+                trades.append({
+                    "entry_date": next_row.name,
+                    "entry_price": entry_price,
+                    "shares": shares,
+                    "exit_date": None,
+                    "exit_price": None,
+                    "pnl": None,
+                    "return_pct": None,
+                    "holding_period": None
+                })
+                trade_count += 1
+        
+        # Exit logic
+        elif exit_signal and position > 0:
+            exit_price = next_row['Open'] * (1 - slippage)
+            capital += position * exit_price * (1 - commission)
+            
+            # Calculate trade metrics
+            entry_price = trades[-1]["entry_price"]
+            pnl = (exit_price - entry_price) * position
+            return_pct = (exit_price - entry_price) / entry_price * 100
+            holding_period = (next_row.name - trades[-1]["entry_date"]).days
+            
+            # Update trade record
+            trades[-1].update({
+                "exit_date": next_row.name,
+                "exit_price": exit_price,
+                "pnl": pnl,
+                "return_pct": return_pct,
+                "holding_period": holding_period
+            })
+            
+            # Update performance metrics
+            if pnl > 0:
+                winning_trades += 1
+                total_profit += pnl
+            else:
+                losing_trades += 1
+                total_loss += abs(pnl)
+            
             position = 0
-
+        
+        # Update equity curve
+        current_equity = capital + (position * row['Close'])
+        equity_curve.append(current_equity)
+        
+        # Update max drawdown
+        if current_equity > peak_equity:
+            peak_equity = current_equity
+        current_drawdown = (peak_equity - current_equity) / peak_equity * 100
+        if current_drawdown > max_drawdown:
+            max_drawdown = current_drawdown
+    
+    # Close any open position at last price
     if position > 0:
-        exit_price = data['Close'].iloc[-1]
-        capital += position * exit_price
-        trades[-1]["exit_date"] = data.index[-1]
-        trades[-1]["exit_price"] = exit_price
-
-    final_value = capital
-    total_return = (final_value - initial_capital) / initial_capital * 100
-    wins = sum(1 for trade in trades if trade["exit_price"] > trade["entry_price"])
-    win_rate = (wins / len(trades) * 100) if trades else 0
-
+        exit_price = data['Close'].iloc[-1] * (1 - slippage)
+        capital += position * exit_price * (1 - commission)
+        
+        # Calculate final trade metrics
+        entry_price = trades[-1]["entry_price"]
+        pnl = (exit_price - entry_price) * position
+        return_pct = (exit_price - entry_price) / entry_price * 100
+        holding_period = (data.index[-1] - trades[-1]["entry_date"]).days
+        
+        trades[-1].update({
+            "exit_date": data.index[-1],
+            "exit_price": exit_price,
+            "pnl": pnl,
+            "return_pct": return_pct,
+            "holding_period": holding_period
+        })
+        
+        if pnl > 0:
+            winning_trades += 1
+            total_profit += pnl
+        else:
+            losing_trades += 1
+            total_loss += abs(pnl)
+    
+    # Calculate performance metrics
+    final_equity = capital
+    total_return = (final_equity - initial_capital) / initial_capital * 100
+    annualized_return = (1 + total_return/100)**(365/(len(data)/252)) - 1 if len(data) > 0 else 0
+    annualized_return *= 100
+    
+    win_rate = (winning_trades / trade_count * 100) if trade_count > 0 else 0
+    avg_win = (total_profit / winning_trades) if winning_trades > 0 else 0
+    avg_loss = (total_loss / losing_trades) if losing_trades > 0 else 0
+    profit_factor = (total_profit / total_loss) if total_loss > 0 else float('inf')
+    
+    # Calculate risk-adjusted metrics
+    returns = pd.Series(equity_curve).pct_change().dropna()
+    sharpe_ratio = (returns.mean() / returns.std()) * np.sqrt(252) if len(returns) > 1 else 0
+    sortino_ratio = (returns.mean() / returns[returns < 0].std()) * np.sqrt(252) if len(returns[returns < 0]) > 0 else 0
+    
+    # Prepare trade statistics
+    trade_returns = [t['return_pct'] for t in trades if t['return_pct'] is not None]
+    avg_trade_return = np.mean(trade_returns) if trade_returns else 0
+    max_trade_return = max(trade_returns) if trade_returns else 0
+    min_trade_return = min(trade_returns) if trade_returns else 0
+    
+    holding_periods = [t['holding_period'] for t in trades if t['holding_period'] is not None]
+    avg_holding_period = np.mean(holding_periods) if holding_periods else 0
+    
     return {
         "total_return": total_return,
-        "trades": len(trades),
+        "annualized_return": annualized_return,
+        "sharpe_ratio": sharpe_ratio,
+        "sortino_ratio": sortino_ratio,
+        "max_drawdown": max_drawdown,
         "win_rate": win_rate,
+        "profit_factor": profit_factor,
+        "trades": trade_count,
+        "winning_trades": winning_trades,
+        "losing_trades": losing_trades,
+        "avg_win": avg_win,
+        "avg_loss": avg_loss,
+        "avg_trade_return": avg_trade_return,
+        "max_trade_return": max_trade_return,
+        "min_trade_return": min_trade_return,
+        "avg_holding_period": avg_holding_period,
+        "equity_curve": equity_curve,
         "trade_details": trades
     }
+
+def display_backtest_results(backtest_results, strategy_name):
+    """
+    Display comprehensive backtest results with visualizations
+    
+    Parameters:
+    - backtest_results: Dictionary returned by backtest_strategy()
+    - strategy_name: Name of the strategy being displayed
+    """
+    if not backtest_results:
+        st.warning("⚠️ No backtest results to display")
+        return
+    
+    st.subheader(f"📊 {strategy_name} Backtest Results")
+    
+    # Performance metrics
+    col1, col2, col3 = st.columns(3)
+    with col1:
+        st.metric("Total Return", f"{backtest_results['total_return']:.2f}%")
+        st.metric("Annualized Return", f"{backtest_results['annualized_return']:.2f}%")
+        st.metric("Max Drawdown", f"{backtest_results['max_drawdown']:.2f}%")
+    with col2:
+        st.metric("Sharpe Ratio", f"{backtest_results['sharpe_ratio']:.2f}")
+        st.metric("Sortino Ratio", f"{backtest_results['sortino_ratio']:.2f}")
+        st.metric("Profit Factor", f"{backtest_results['profit_factor']:.2f}")
+    with col3:
+        st.metric("Win Rate", f"{backtest_results['win_rate']:.2f}%")
+        st.metric("Avg Win/Avg Loss", f"{backtest_results['avg_win']:.2f}/{backtest_results['avg_loss']:.2f}")
+        st.metric("Trades", backtest_results['trades'])
+    
+    # Equity curve visualization
+    st.subheader("📈 Equity Curve")
+    fig_equity = px.line(
+        x=range(len(backtest_results['equity_curve'])),
+        y=backtest_results['equity_curve'],
+        labels={'x': 'Period', 'y': 'Equity'},
+        title=f"{strategy_name} Strategy Equity Curve"
+    )
+    st.plotly_chart(fig_equity)
+    
+    # Trade returns distribution
+    if backtest_results['trade_details']:
+        trade_returns = [t['return_pct'] for t in backtest_results['trade_details'] if t['return_pct'] is not None]
+        if trade_returns:
+            st.subheader("📊 Trade Returns Distribution")
+            fig_returns = px.histogram(
+                x=trade_returns,
+                nbins=20,
+                labels={'x': 'Return %'},
+                title="Distribution of Trade Returns"
+            )
+            st.plotly_chart(fig_returns)
+    
+    # Trade details table
+    with st.expander("🔍 View Detailed Trades"):
+        trades_df = pd.DataFrame(backtest_results['trade_details'])
+        if not trades_df.empty:
+            trades_df['PnL'] = trades_df['pnl'].apply(lambda x: f"₹{x:,.2f}")
+            trades_df['Return %'] = trades_df['return_pct'].apply(lambda x: f"{x:.2f}%")
+            trades_df['Holding Days'] = trades_df['holding_period']
+            trades_df['Entry Price'] = trades_df['entry_price'].apply(lambda x: f"₹{x:.2f}")
+            trades_df['Exit Price'] = trades_df['exit_price'].apply(lambda x: f"₹{x:.2f}")
+            
+            display_cols = [
+                'entry_date', 'exit_date', 'Entry Price', 'Exit Price',
+                'shares', 'PnL', 'Return %', 'Holding Days'
+            ]
+            st.dataframe(trades_df[display_cols].rename(columns={
+                'entry_date': 'Entry Date',
+                'exit_date': 'Exit Date',
+                'shares': 'Shares'
+            }))
 
 def init_database():
     conn = sqlite3.connect('stock_picks.db')
@@ -1420,33 +1690,46 @@ def display_dashboard(symbol=None, data=None, recommendations=None):
             st.write(f"**Ichimoku Trend**: {colored_recommendation(recommendations['Ichimoku_Trend'])}")
             st.write(f"**{tooltip('Score', TOOLTIPS['Score'])}**: {recommendations['Score']}/7")
         
-        if st.button("🔍 Backtest Swing Strategy"):
-            backtest_results = backtest_stock(data, strategy="Swing")
+        # --- Backtesting Section ---
+    if st.button("🔍 Backtest Swing Strategy"):
+        with st.spinner("Running backtest..."):
+            backtest_results = backtest_strategy(data, strategy="Swing")
             if backtest_results:
-                st.subheader("📈 Backtest Results (Swing Strategy)")
-                st.write(f"**Total Return**: {backtest_results['total_return']:.2f}%")
-                st.write(f"**Number of Trades**: {backtest_results['trades']}")
-                st.write(f"**Win Rate**: {backtest_results['win_rate']:.2f}%")
-                with st.expander("Trade Details"):
-                    for trade in backtest_results["trade_details"]:
-                        st.write(f"Entry: {trade['entry_date']} @ ₹{trade['entry_price']:.2f}, "
-                                 f"Exit: {trade['exit_date']} @ ₹{trade['exit_price']:.2f}")
+                display_backtest_results(backtest_results, "Swing")
             else:
                 st.warning("⚠️ Insufficient data for backtesting.")
-        
-        if st.button("🔍 Backtest Intraday Strategy"):
-            backtest_results = backtest_stock(data, strategy="Intraday")
+
+    if st.button("🔍 Backtest Intraday Strategy"):
+        with st.spinner("Running backtest..."):
+            backtest_results = backtest_strategy(data, strategy="Intraday")
             if backtest_results:
-                st.subheader("📈 Backtest Results (Intraday Strategy)")
-                st.write(f"**Total Return**: {backtest_results['total_return']:.2f}%")
-                st.write(f"**Number of Trades**: {backtest_results['trades']}")
-                st.write(f"**Win Rate**: {backtest_results['win_rate']:.2f}%")
-                with st.expander("Trade Details"):
-                    for trade in backtest_results["trade_details"]:
-                        st.write(f"Entry: {trade['entry_date']} @ ₹{trade['entry_price']:.2f}, "
-                                 f"Exit: {trade['exit_date']} @ ₹{trade['exit_price']:.2f}")
+                display_backtest_results(backtest_results, "Intraday")
             else:
                 st.warning("⚠️ Insufficient data for backtesting.")
+
+# --- Advanced Strategy Backtesting ---
+        st.subheader("📊 Advanced Strategy Backtesting")
+        strategy_options = {
+            "Mean Reversion": "MeanReversion",
+            "Breakout": "Breakout",
+            "Ichimoku": "Ichimoku"
+        }
+        selected_strategy = st.selectbox(
+            "Select Strategy to Backtest",
+            options=list(strategy_options.keys())
+        )
+
+    if st.button(f"🔍 Backtest {selected_strategy} Strategy"):
+        with st.spinner(f"Running {selected_strategy} backtest..."):
+            backtest_results = backtest_strategy(
+            data, 
+            strategy=strategy_options[selected_strategy]
+        )
+        if backtest_results:
+            display_backtest_results(backtest_results, selected_strategy)
+        else:
+            st.warning("⚠️ Insufficient data for backtesting.")
+            
         
         st.subheader("📊 Technical Indicators")
         indicators = [
