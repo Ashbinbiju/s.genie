@@ -1537,46 +1537,36 @@ def main():
     else:
         display_dashboard()
 
-if __name__ == "__main__":
+    # 🔁 Backtesting Section (Newly Added)
+    st.header("📈 Backtest Your Strategy")
 
-# ------------------------------
-# 📈 Streamlit UI for Backtesting
-# ------------------------------
-import matplotlib.pyplot as plt
+    backtest_symbol = st.text_input("Enter NSE Symbol (e.g., TCS.NS)", "TCS.NS")
 
-st.header("📈 Backtest Your Strategy")
+    if st.button("Run Backtest"):
+        with st.spinner("Running backtest..."):
+            try:
+                data = fetch_stock_data_cached(backtest_symbol)
+                if data.empty:
+                    st.error("No data found for this symbol.")
+                else:
+                    data = analyze_stock(data)
+                    bt = Backtester(data, symbol=backtest_symbol)
+                    bt.run(generate_recommendations)
 
-symbol = st.text_input("Enter NSE Symbol (e.g., TCS.NS)", "TCS.NS")
+                    fig, ax = plt.subplots(figsize=(10, 4))
+                    ax.plot(bt.df.index, bt.df['Equity'], label='Equity Curve')
+                    ax.set_title(f"Backtest Equity Curve for {backtest_symbol}")
+                    ax.set_xlabel("Date")
+                    ax.set_ylabel("Portfolio Value")
+                    ax.grid(True)
+                    ax.legend()
+                    st.pyplot(fig)
 
-if st.button("Run Backtest"):
-    with st.spinner("Running backtest..."):
-        try:
-            data = fetch_stock_data_cached(symbol)
-            if data.empty:
-                st.error("No data found for this symbol.")
-            else:
-                data = analyze_stock(data)
-                bt = Backtester(data, symbol=symbol)
-                bt.run(generate_recommendations)
-
-                # Plot in Streamlit
-                fig, ax = plt.subplots(figsize=(10, 4))
-                ax.plot(bt.df.index, bt.df['Equity'], label='Equity Curve')
-                ax.set_title(f"Backtest Equity Curve for {symbol}")
-                ax.set_xlabel("Date")
-                ax.set_ylabel("Portfolio Value")
-                ax.grid(True)
-                ax.legend()
-                st.pyplot(fig)
-
-                # Show stats
-                start_value = bt.equity_curve[0] if bt.equity_curve else bt.initial_balance
-                end_value = bt.equity_curve[-1] if bt.equity_curve else bt.initial_balance
-                returns = (end_value - start_value) / start_value * 100
-                st.success(f"Final Portfolio Value: ₹{end_value:.2f}")
-                st.info(f"Total Return: {returns:.2f}%")
-                st.write(f"Total Trades: {len(bt.trades)}")
-        except Exception as e:
-            st.error(f\"❌ Error during backtest: {str(e)}\")
-
-    main()
+                    start_value = bt.equity_curve[0] if bt.equity_curve else bt.initial_balance
+                    end_value = bt.equity_curve[-1] if bt.equity_curve else bt.initial_balance
+                    returns = (end_value - start_value) / start_value * 100
+                    st.success(f"Final Portfolio Value: ₹{end_value:.2f}")
+                    st.info(f"Total Return: {returns:.2f}%")
+                    st.write(f"Total Trades: {len(bt.trades)}")
+            except Exception as e:
+                st.error(f"❌ Error during backtest: {str(e)}")
