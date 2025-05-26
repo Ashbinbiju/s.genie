@@ -837,6 +837,10 @@ def compute_signal_score(data):
         'Breakout': 1.2,
     }
     
+    # Skip low volume days
+    if data['Volume'].iloc[-1] < data['Avg_Volume'].iloc[-1] * 0.5:
+        return -10  # force a "no trade" scenario
+
     # RSI
     rsi = data['RSI'].iloc[-1]
     if rsi < 30:
@@ -880,6 +884,10 @@ def adaptive_recommendation(data):
     regime = classify_market_regime(data)
     score = compute_signal_score(data)
 
+    # Position sizing
+    base_amount = 1000  # example base capital per trade
+    position_size = max(0, min(1, score / 7.0)) * base_amount
+
     if regime == 'volatile':
         threshold = 2.0
     elif regime == 'bullish':
@@ -893,10 +901,16 @@ def adaptive_recommendation(data):
     elif score <= -threshold:
         recommendation = 'Sell'
 
+    # Trailing Stop Loss using Chandelier Exit
+    highest_close = data['Close'].rolling(22).max().iloc[-1]
+    chandelier_stop = highest_close - data['ATR'].iloc[-1] * 3
+
     return {
         'Regime': regime,
         'Score': round(score, 2),
-        'Recommendation': recommendation
+        'Recommendation': recommendation,
+        'Position Size': round(position_size, 2),
+        'Trailing Stop': round(chandelier_stop, 2)
     }
 
 
