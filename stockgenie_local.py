@@ -813,6 +813,93 @@ def fetch_fundamentals(symbol):
     except Exception:
         return {'P/E': float('inf'), 'EPS': 0, 'RevenueGrowth': 0}
 
+# Improved strategy logic using adaptive regime detection, signal scoring, and volatility-aware filters
+
+def classify_market_regime(data):
+    """Classifies regime based on volatility and trend"""
+    data['ATR_pct'] = data['ATR'] / data['Close']
+    if data['ATR_pct'].iloc[-1] > 0.03:
+        return 'volatile'
+    elif data['Close'].iloc[-1] > data['SMA_50'].iloc[-1]:
+        return 'bullish'
+    else:
+        return 'neutral'
+
+def compute_signal_score(data):
+    """Computes weighted score based on indicator strength"""
+    score = 0.0
+    weights = {
+        'RSI': 1.5,
+        'MACD': 1.2,
+        'Ichimoku': 1.5,
+        'CMF': 0.5,
+        'ATR_Volatility': 1.0,
+        'Breakout': 1.2,
+    }
+    
+    # RSI
+    rsi = data['RSI'].iloc[-1]
+    if rsi < 30:
+        score += weights['RSI'] * 1
+    elif rsi > 70:
+        score -= weights['RSI'] * 1
+
+    # MACD
+    if data['MACD'].iloc[-1] > data['MACD_signal'].iloc[-1]:
+        score += weights['MACD']
+    else:
+        score -= weights['MACD']
+
+    # Ichimoku Trend
+    close = data['Close'].iloc[-1]
+    if close > max(data['Ichimoku_Span_A'].iloc[-1], data['Ichimoku_Span_B'].iloc[-1]):
+        score += weights['Ichimoku']
+    elif close < min(data['Ichimoku_Span_A'].iloc[-1], data['Ichimoku_Span_B'].iloc[-1]):
+        score -= weights['Ichimoku']
+
+    # CMF (money flow)
+    if data['CMF'].iloc[-1] > 0:
+        score += weights['CMF']
+    else:
+        score -= weights['CMF']
+
+    # ATR Volatility
+    atr_pct = data['ATR'].iloc[-1] / data['Close'].iloc[-1]
+    if atr_pct > 0.04:
+        score -= weights['ATR_Volatility']
+
+    # Donchian Breakout
+    if data['Close'].iloc[-1] > data['Donchian_Upper'].iloc[-1]:
+        score += weights['Breakout']
+    elif data['Close'].iloc[-1] < data['Donchian_Lower'].iloc[-1]:
+        score -= weights['Breakout']
+
+    return score
+
+def adaptive_recommendation(data):
+    regime = classify_market_regime(data)
+    score = compute_signal_score(data)
+
+    if regime == 'volatile':
+        threshold = 2.0
+    elif regime == 'bullish':
+        threshold = 1.0
+    else:
+        threshold = 1.5
+
+    recommendation = 'Hold'
+    if score >= threshold:
+        recommendation = 'Buy'
+    elif score <= -threshold:
+        recommendation = 'Sell'
+
+    return {
+        'Regime': regime,
+        'Score': round(score, 2),
+        'Recommendation': recommendation
+    }
+
+
 def generate_recommendations(data, symbol=None):
     recommendations = {
         "Intraday": "Hold", "Swing": "Hold",
