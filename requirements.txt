@@ -17,3 +17,4 @@ python-dotenv
 pyotp
 chromedriver-py
 selenium
+webdriver-manager
