@@ -467,6 +467,41 @@ def monte_carlo_simulation(data, simulations=1000, days=30):
         simulation_results.append(price_series)
     return simulation_results
 
+from selenium import webdriver
+from selenium.webdriver.chrome.options import Options
+from selenium.webdriver.common.by import By
+
+@st.cache_data(ttl=86400)
+def fetch_top_3_sectors_from_trendlyne():
+    options = Options()
+    options.headless = True
+    options.add_argument("--disable-gpu")
+    options.add_argument("--no-sandbox")
+
+    driver = webdriver.Chrome(options=options)
+    driver.get("https://trendlyne.com/equity/sector-industry-analysis/sector/day/")
+    time.sleep(5)
+
+    try:
+        table = driver.find_element(By.TAG_NAME, "table")
+        rows = table.find_elements(By.TAG_NAME, "tr")
+        headers = [th.text.strip() for th in rows[0].find_elements(By.TAG_NAME, "th")]
+        data = []
+        for row in rows[1:]:
+            cols = [td.text.strip() for td in row.find_elements(By.TAG_NAME, "td")]
+            if cols:
+                data.append(cols)
+        df = pd.DataFrame(data, columns=headers)
+        df = df.rename(columns={"Name": "Sector", "Day Change %": "% Change"})
+        df = df[["Sector", "% Change", "Advances", "Declines"]]
+        return df.head(3)
+    except Exception as e:
+        st.warning(f"⚠️ Error fetching sector data: {e}")
+        return pd.DataFrame()
+    finally:
+        driver.quit()
+
+
 def extract_entities(text):
     nlp = spacy.load("en_core_web_sm")
     doc = nlp(text)
@@ -1149,27 +1184,6 @@ def generate_recommendations(data, symbol=None):
         st.warning(f"⚠️ Error generating recommendations: {str(e)}")
     return recommendations
 
-@st.cache_data(ttl=3600)  # Cache results for 1 hour to avoid repeated API hits
-def get_top_sectors_cached(rate_limit_delay=2, stocks_per_sector=2):
-    sector_scores = {}
-    for sector, stocks in SECTORS.items():
-        total_score = 0
-        count = 0
-        for symbol in stocks[:stocks_per_sector]:  # Only analyze top N stocks per sector
-            data = fetch_stock_data_cached(symbol)
-            if data.empty:
-                continue
-            data = analyze_stock(data)
-            rec = generate_recommendations(data, symbol)
-            total_score += rec.get("Score", 0)
-            count += 1
-            time.sleep(rate_limit_delay)  # Delay per API call
-        avg_score = total_score / count if count else 0
-        sector_scores[sector] = avg_score
-        time.sleep(1)  # Optional: delay between sectors
-    return sorted(sector_scores.items(), key=lambda x: x[1], reverse=True)[:3]
-
-
 def backtest_stock(data, strategy="Swing"):
     if data.empty or len(data) < 200:
         return None
@@ -1373,7 +1387,17 @@ def update_progress(progress_bar, loading_text, progress_value, loading_messages
 def display_dashboard(symbol=None, data=None, recommendations=None):
     st.title("📊 StockGenie Pro - NSE Analysis")
     st.subheader(f"📅 Analysis for {datetime.now().strftime('%d %b %Y')}")
-    
+    st.subheader(f"📅 Analysis for {datetime.now().strftime('%d %b %Y')}")
+
+
+    with st.container():
+    st.markdown("### 🔝 Top 3 Performing Sectors (Source: Trendlyne)")
+    df_sectors = fetch_top_3_sectors_from_trendlyne()
+    if df_sectors.empty:
+        st.warning("⚠️ Unable to load sector data.")
+    else:
+        st.dataframe(df_sectors, use_container_width=True)
+
     sector_options = ["All"] + list(SECTORS.keys())
     selected_sectors = st.sidebar.multiselect(
         "Select Sectors",
@@ -1390,13 +1414,6 @@ def display_dashboard(symbol=None, data=None, recommendations=None):
     if not selected_stocks:
         st.warning("⚠️ No stocks selected. Please choose at least one sector.")
         return
-        
-    if st.button("🔎 Analyze Top Performing Sectors"):
-        with st.spinner("🔍 Crunching sector data ..."):
-            top_sectors = get_top_sectors_cached(rate_limit_delay=2, stocks_per_sector=2)
-            st.subheader("🔝 Top 3 Performing Sectors Today")
-            for name, score in top_sectors:
-                st.markdown(f"- **{name}**: {score:.2f}/7")
 
     if st.button("🚀 Generate Daily Top Picks"):
         progress_bar = st.progress(0)
