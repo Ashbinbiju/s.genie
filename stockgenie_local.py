@@ -1391,12 +1391,12 @@ def display_dashboard(symbol=None, data=None, recommendations=None):
 
 
     with st.container():
-    st.markdown("### 🔝 Top 3 Performing Sectors (Source: Trendlyne)")
-    df_sectors = fetch_top_3_sectors_from_trendlyne()
-    if df_sectors.empty:
-        st.warning("⚠️ Unable to load sector data.")
-    else:
-        st.dataframe(df_sectors, use_container_width=True)
+        st.markdown("### 🔝 Top 3 Performing Sectors (Source: Trendlyne)")
+        df_sectors = fetch_top_3_sectors_from_trendlyne()
+        if df_sectors.empty:
+            st.warning("⚠️ Unable to load sector data.")
+        else:
+            st.dataframe(df_sectors, use_container_width=True)
 
     sector_options = ["All"] + list(SECTORS.keys())
     selected_sectors = st.sidebar.multiselect(
