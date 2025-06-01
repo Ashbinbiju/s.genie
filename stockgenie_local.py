@@ -2,7 +2,7 @@ import pandas as pd
 import ta
 import streamlit as st
 from datetime import datetime, timedelta
-from concurrent.futures import backtest_stockThreadPoolExecutor, as_completed
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from functools import lru_cache
 from tqdm import tqdm
 import plotly.express as px
