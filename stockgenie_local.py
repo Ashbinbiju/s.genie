@@ -68,22 +68,13 @@ TOOLTIPS = {
     "RSI": "Relative Strength Index (30=Oversold, 70=Overbought)",
     "ATR": "Average True Range - Measures market volatility",
     "MACD": "Moving Average Convergence Divergence - Trend following",
-    "ADX": "Average Directional Index (25+ = Strong Trend)",
     "Bollinger": "Price volatility bands around moving average",
-    "Stop Loss": "Risk management price level based on ATR",
     "VWAP": "Volume Weighted Average Price - Intraday trend indicator",
-    "Parabolic_SAR": "Parabolic Stop and Reverse - Trend reversal indicator",
-    "Fib_Retracements": "Fibonacci Retracements - Support and resistance levels",
     "Ichimoku": "Ichimoku Cloud - Comprehensive trend indicator",
-    "CMF": "Chaikin Money Flow - Buying/selling pressure",
-    "Donchian": "Donchian Channels - Breakout detection",
-    "Keltner": "Keltner Channels - Volatility bands based on EMA and ATR",
-    "TRIX": "Triple Exponential Average - Momentum oscillator with triple smoothing",
-    "Ultimate_Osc": "Ultimate Oscillator - Combines short, medium, and long-term momentum",
-    "CMO": "Chande Momentum Oscillator - Measures raw momentum (-100 to 100)",
-    "VPT": "Volume Price Trend - Tracks trend strength with price and volume",
-    "Score": "Measured by RSI, MACD, Ichimoku Cloud, and ATR volatility. Low score = weak signal, high score = strong signal."
+    "Stop Loss": "Risk management price level based on ATR",
+    "Score": "Measured by RSI, MACD, Ichimoku Cloud, and ATR volatility. Low = weak signal, high = strong signal"
 }
+
 
 
 SECTORS = {
@@ -1243,24 +1234,17 @@ def display_dashboard(symbol=None, data=None, recommendations=None):
         
         st.subheader("📊 Technical Indicators")
         indicators = [
-            ("RSI", data['RSI'].iloc[-1], TOOLTIPS['RSI']),
-            ("MACD", data['MACD'].iloc[-1], TOOLTIPS['MACD']),
-            ("ATR", data['ATR'].iloc[-1], TOOLTIPS['ATR']),
-            ("ADX", data['ADX'].iloc[-1], TOOLTIPS['ADX']),
-            ("Bollinger Upper", data['Upper_Band'].iloc[-1], TOOLTIPS['Bollinger']),
-            ("Bollinger Lower", data['Lower_Band'].iloc[-1], TOOLTIPS['Bollinger']),
-            ("VWAP", data['VWAP'].iloc[-1], TOOLTIPS['VWAP']),
-            ("Parabolic SAR", data['Parabolic_SAR'].iloc[-1], TOOLTIPS['Parabolic_SAR']),
-            ("Fib 61.8%", data['Fib_61.8'].iloc[-1], TOOLTIPS['Fib_Retracements']),
-            ("Ichimoku Span A", data['Ichimoku_Span_A'].iloc[-1], TOOLTIPS['Ichimoku']),
-            ("CMF", data['CMF'].iloc[-1], TOOLTIPS['CMF']),
-            ("Donchian Upper", data['Donchian_Upper'].iloc[-1], TOOLTIPS['Donchian']),
-            ("Keltner Upper", data['Keltner_Upper'].iloc[-1], TOOLTIPS['Keltner']),
-            ("TRIX", data['TRIX'].iloc[-1], TOOLTIPS['TRIX']),
-            ("Ultimate Oscillator", data['Ultimate_Osc'].iloc[-1], TOOLTIPS['Ultimate_Osc']),
-            ("CMO", data['CMO'].iloc[-1], TOOLTIPS['CMO']),
-            ("VPT", data['VPT'].iloc[-1], TOOLTIPS['VPT']),
-        ]
+    ("RSI", data['RSI'].iloc[-1], TOOLTIPS['RSI']),
+    ("MACD", data['MACD'].iloc[-1], TOOLTIPS['MACD']),
+    ("ATR", data['ATR'].iloc[-1], TOOLTIPS['ATR']),
+    ("Bollinger Upper", data['Upper_Band'].iloc[-1], TOOLTIPS['Bollinger']),
+    ("Bollinger Lower", data['Lower_Band'].iloc[-1], TOOLTIPS['Bollinger']),
+    ("VWAP", data['VWAP'].iloc[-1], TOOLTIPS['VWAP']),
+    ("Ichimoku Span A", data['Ichimoku_Span_A'].iloc[-1], TOOLTIPS['Ichimoku']),
+    ("Ichimoku Span B", data['Ichimoku_Span_B'].iloc[-1], TOOLTIPS['Ichimoku']),
+    ("OBV", data['OBV'].iloc[-1], "On-Balance Volume - Volume-based trend confirmation")
+    ]
+    
         col1, col2 = st.columns(2)
         for i, (name, value, tooltip_text) in enumerate(indicators):
             if i % 2 == 0:
@@ -1303,14 +1287,6 @@ def display_dashboard(symbol=None, data=None, recommendations=None):
 
         fig_macd = px.line(data, x=data.index, y=['MACD', 'MACD_signal'], title="MACD")
         st.plotly_chart(fig_macd)
-
-        st.subheader("📊 Volume Analysis")
-        fig_vol = px.bar(data, x=data.index, y='Volume', title="Volume")
-        if 'Volume_Spike' in data.columns:
-            spike_data = data[data['Volume_Spike'] == True]
-            if not spike_data.empty:
-                fig_vol.add_scatter(x=spike_data.index, y=spike_data['Volume'], mode='markers', name='Volume Spike', marker=dict(color='red', size=10))
-        st.plotly_chart(fig_vol)
 
 def main():
     init_database()
