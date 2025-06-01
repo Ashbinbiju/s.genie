@@ -2,7 +2,7 @@ import pandas as pd
 import ta
 import streamlit as st
 from datetime import datetime, timedelta
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from concurrent.futures import backtest_stockThreadPoolExecutor, as_completed
 from functools import lru_cache
 from tqdm import tqdm
 import plotly.express as px
@@ -22,6 +22,7 @@ from SmartApi import SmartConnect
 import pyotp
 import os
 from dotenv import load_dotenv
+from streamlit import cache_data
 
 load_dotenv()
 
@@ -1186,7 +1187,8 @@ def get_top_sectors_cached(rate_limit_delay=2, stocks_per_sector=2):
     return sorted(sector_scores.items(), key=lambda x: x[1], reverse=True)[:3]
 
 
-def backtest_stock(data, symbol, strategy="Swing"):
+@st.cache_data
+def backtest_stock(data, symbol, strategy="Swing", _data_hash=None):
     if data.empty or len(data) < 200:
         st.warning(f"⚠️ Insufficient data for backtesting {symbol}.")
         return None
@@ -1224,13 +1226,11 @@ def backtest_stock(data, symbol, strategy="Swing"):
 
         recommendations = generate_recommendations(sliced_data, symbol=symbol)
 
-        # Record signals for visualization
         if recommendations[strategy] in ["Buy", "Strong Buy"]:
             buy_signals.append((next_row.name, next_row['Open']))
         elif recommendations[strategy] in ["Sell", "Strong Sell"]:
             sell_signals.append((next_row.name, next_row['Open']))
 
-        # Execute trades
         if position == 0 and recommendations[strategy] in ["Buy", "Strong Buy"]:
             entry_price = next_row['Open'] * (1 + slippage + commission)
             shares = capital // entry_price
@@ -1251,7 +1251,6 @@ def backtest_stock(data, symbol, strategy="Swing"):
             trades[-1]["profit"] = (exit_price - trades[-1]["entry_price"]) * position
             position = 0
 
-    # Close any open position at the end
     if position > 0:
         exit_price = data['Close'].iloc[-1] * (1 - slippage - commission)
         capital += position * exit_price
@@ -1264,7 +1263,6 @@ def backtest_stock(data, symbol, strategy="Swing"):
     wins = sum(1 for trade in trades if trade.get("profit", 0) > 0)
     win_rate = (wins / len(trades) * 100) if trades else 0
 
-    # Calculate additional metrics
     annual_return = ((final_value / initial_capital) ** (252 / len(data))) - 1 if len(data) > 0 else 0
     returns = pd.Series([trade["profit"] / initial_capital for trade in trades if "profit" in trade])
     sharpe_ratio = (returns.mean() / returns.std() * np.sqrt(252)) if returns.std() != 0 else 0
@@ -1288,7 +1286,7 @@ def backtest_stock(data, symbol, strategy="Swing"):
         "buy_signals": buy_signals,
         "sell_signals": sell_signals
     }
-
+    
 def init_database():
     conn = sqlite3.connect('stock_picks.db')
     conn.execute('''
@@ -1427,26 +1425,32 @@ def update_progress(progress_bar, loading_text, progress_value, loading_messages
     loading_text.text(f"{loading_message}{dots}")
 
 def display_dashboard(symbol=None, data=None, recommendations=None):
+    # Initialize session state
+    if 'selected_sectors' not in st.session_state:
+        st.session_state.selected_sectors = ["Bank"]
+    if 'symbol' not in st.session_state:
+        st.session_state.symbol = symbol
+
     st.title("📊 StockGenie Pro - NSE Analysis")
     st.subheader(f"📅 Analysis for {datetime.now().strftime('%d %b %Y')}")
-    
+
     sector_options = ["All"] + list(SECTORS.keys())
-    selected_sectors = st.sidebar.multiselect(
+    st.session_state.selected_sectors = st.sidebar.multiselect(
         "Select Sectors",
         options=sector_options,
-        default=["Bank"],
+        default=st.session_state.selected_sectors,
         help="Choose one or more sectors to analyze. Select 'All' to include all sectors."
     )
-    
-    if "All" in selected_sectors:
+
+    if "All" in st.session_state.selected_sectors:
         selected_stocks = list(set([stock for sector in SECTORS.values() for stock in sector]))
     else:
-        selected_stocks = list(set([stock for sector in selected_sectors for stock in SECTORS.get(sector, [])]))
-    
+        selected_stocks = list(set([stock for sector in st.session_state.selected_sectors for stock in SECTORS.get(sector, [])]))
+
     if not selected_stocks:
         st.warning("⚠️ No stocks selected. Please choose at least one sector.")
         return
-        
+
     if st.button("🔎 Analyze Top Performing Sectors"):
         with st.spinner("🔍 Crunching sector data ..."):
             top_sectors = get_top_sectors_cached(rate_limit_delay=2, stocks_per_sector=2)
@@ -1491,7 +1495,7 @@ def display_dashboard(symbol=None, data=None, recommendations=None):
                     """, unsafe_allow_html=True)
         else:
             st.warning("⚠️ No top picks available due to data issues.")
-    
+
     if st.button("⚡ Generate Intraday Top 5 Picks"):
         progress_bar = st.progress(0)
         loading_text = st.empty()
@@ -1523,7 +1527,7 @@ def display_dashboard(symbol=None, data=None, recommendations=None):
                     """, unsafe_allow_html=True)
         else:
             st.warning("⚠️ No intraday picks available due to data issues.")
-    
+
     if st.button("📜 View Historical Picks"):
         conn = sqlite3.connect('stock_picks.db')
         history_df = pd.read_sql_query("SELECT * FROM daily_picks ORDER BY date DESC", conn)
@@ -1544,8 +1548,9 @@ def display_dashboard(symbol=None, data=None, recommendations=None):
             st.dataframe(filtered_df)
         else:
             st.warning("⚠️ No historical data available.")
-            
+
     if symbol and data is not None and recommendations is not None:
+        st.session_state.symbol = symbol
         st.header(f"📋 {symbol.split('-')[0]} Analysis")
         col1, col2, col3, col4 = st.columns(4)
         with col1:
@@ -1560,7 +1565,7 @@ def display_dashboard(symbol=None, data=None, recommendations=None):
         with col4:
             target = recommendations['Target'] if recommendations['Target'] is not None else "N/A"
             st.metric("Target", f"₹{target}")
-        
+
         st.subheader("📈 Trading Recommendations")
         col1, col2, col3, col4 = st.columns(4)
         with col1:
@@ -1575,11 +1580,13 @@ def display_dashboard(symbol=None, data=None, recommendations=None):
         with col4:
             st.write(f"**Ichimoku Trend**: {colored_recommendation(recommendations['Ichimoku_Trend'])}")
             st.write(f"**{tooltip('Score', TOOLTIPS['Score'])}**: {recommendations['Score']}/7")
-        
+
         # Backtest Swing Strategy
-        if st.button("🔍 Backtest Swing Strategy"):
+        if st.button("🔍 Backtest Swing Strategy", key="backtest_swing"):
             with st.spinner("Running Swing Strategy backtest..."):
-                backtest_results = backtest_stock(data, symbol, strategy="Swing")
+                # Compute a hash for the data to ensure caching works
+                data_hash = hash(data.to_string())
+                backtest_results = backtest_stock(data, symbol, strategy="Swing", _data_hash=data_hash)
                 if backtest_results:
                     st.subheader("📈 Backtest Results (Swing Strategy)")
                     st.write(f"**Total Return**: {backtest_results['total_return']:.2f}%")
@@ -1594,7 +1601,7 @@ def display_dashboard(symbol=None, data=None, recommendations=None):
                             st.write(f"Entry: {trade['entry_date']} @ ₹{trade['entry_price']:.2f}, "
                                      f"Exit: {trade['exit_date']} @ ₹{trade['exit_price']:.2f}, "
                                      f"Profit: ₹{profit:.2f}")
-                    
+
                     # Visualize Buy/Sell Signals
                     fig = px.line(data, x=data.index, y='Close', title=f"{symbol.split('-')[0]} Price with Signals")
                     if backtest_results["buy_signals"]:
@@ -1606,11 +1613,12 @@ def display_dashboard(symbol=None, data=None, recommendations=None):
                     st.plotly_chart(fig)
                 else:
                     st.warning("⚠️ Insufficient data for backtesting.")
-        
+
         # Backtest Intraday Strategy
-        if st.button("🔍 Backtest Intraday Strategy"):
+        if st.button("🔍 Backtest Intraday Strategy", key="backtest_intraday"):
             with st.spinner("Running Intraday Strategy backtest..."):
-                backtest_results = backtest_stock(data, symbol, strategy="Intraday")
+                data_hash = hash(data.to_string())
+                backtest_results = backtest_stock(data, symbol, strategy="Intraday", _data_hash=data_hash)
                 if backtest_results:
                     st.subheader("📈 Backtest Results (Intraday Strategy)")
                     st.write(f"**Total Return**: {backtest_results['total_return']:.2f}%")
@@ -1625,7 +1633,7 @@ def display_dashboard(symbol=None, data=None, recommendations=None):
                             st.write(f"Entry: {trade['entry_date']} @ ₹{trade['entry_price']:.2f}, "
                                      f"Exit: {trade['exit_date']} @ ₹{trade['exit_price']:.2f}, "
                                      f"Profit: ₹{profit:.2f}")
-                    
+
                     # Visualize Buy/Sell Signals
                     fig = px.line(data, x=data.index, y='Close', title=f"{symbol.split('-')[0]} Price with Signals")
                     if backtest_results["buy_signals"]:
@@ -1637,7 +1645,7 @@ def display_dashboard(symbol=None, data=None, recommendations=None):
                     st.plotly_chart(fig)
                 else:
                     st.warning("⚠️ Insufficient data for backtesting.")
-        
+
         st.subheader("📊 Technical Indicators")
         indicators = [
             ("RSI", data['RSI'].iloc[-1], TOOLTIPS['RSI']),
@@ -1713,11 +1721,11 @@ def main():
     init_database()
     st.sidebar.title("🔍 Stock Selection")
     stock_list = fetch_nse_stock_list()
-    symbol = st.sidebar.selectbox("Select Stock", stock_list)
+    symbol = st.sidebar.selectbox("Select Stock", stock_list, key="stock_select", index=stock_list.index(st.session_state.get('symbol', stock_list[0])) if st.session_state.get('symbol') in stock_list else 0)
 
     if st.sidebar.button("Analyze Selected Stock"):
         if symbol:
-            data = fetch_stock_data_with_auth(symbol)  # Use SmartAPI directly
+            data = fetch_stock_data_with_auth(symbol)
             if not data.empty:
                 data = analyze_stock(data)
                 recommendations = generate_recommendations(data, symbol)
