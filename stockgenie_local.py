@@ -1288,6 +1288,14 @@ def display_dashboard(symbol=None, data=None, recommendations=None):
         fig_macd = px.line(data, x=data.index, y=['MACD', 'MACD_signal'], title="MACD")
         st.plotly_chart(fig_macd)
 
+        st.subheader("📊 Volume Analysis")Add commentMore actions
+        fig_vol = px.bar(data, x=data.index, y='Volume', title="Volume")
+        if 'Volume_Spike' in data.columns:
+            spike_data = data[data['Volume_Spike'] == True]
+            if not spike_data.empty:
+                fig_vol.add_scatter(x=spike_data.index, y=spike_data['Volume'], mode='markers', name='Volume Spike', marker=dict(color='red', size=10))
+        st.plotly_chart(fig_vol)
+
 def main():
     init_database()
     st.sidebar.title("🔍 Stock Selection")
