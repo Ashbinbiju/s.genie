@@ -773,7 +773,15 @@ def generate_recommendations(data, symbol=None):
         "Current Price": None,
         "Buy At": None,
         "Stop Loss": None,
-        "Target": None
+        "Target": None,
+        "Intraday": "Hold",
+        "Swing": "Hold",
+        "Short-Term": "Hold",
+        "Long-Term": "Hold",
+        "Mean_Reversion": "Hold",
+        "Breakout": "Hold",
+        "Ichimoku_Trend": "Hold",
+        "Score": 0
     }
 
     if data.empty or 'Close' not in data.columns or data['Close'].iloc[-1] is None:
@@ -782,50 +790,104 @@ def generate_recommendations(data, symbol=None):
 
     try:
         price = data['Close'].iloc[-1]
-        recommendations["Current Price"] = price
-        score = 0
+        recommendations["Current Price"] = round(price, 2)
+        
+        # Initialize scores
+        intraday_score = 0
+        swing_score = 0
+        short_term_score = 0
+        long_term_score = 0
+        mean_reversion_score = 0
+        breakout_score = 0
+        ichimoku_score = 0
 
-        if data['RSI'].iloc[-1] < 30:
-            score += 1
-        elif data['RSI'].iloc[-1] > 70:
-            score -= 1
+        # RSI-based logic
+        if 'RSI' in data.columns and pd.notnull(data['RSI'].iloc[-1]):
+            rsi_short = ta.momentum.RSIIndicator(data['Close'], window=7).rsi().iloc[-1]
+            rsi_swing = data['RSI'].iloc[-1]  # Assuming RSI in data is window=14
+            rsi_long = ta.momentum.RSIIndicator(data['Close'], window=21).rsi().iloc[-1]
+            if rsi_short < 30:
+                intraday_score += 1
+            elif rsi_short > 70:
+                intraday_score -= 1
+            if rsi_swing < 30:
+                swing_score += 1
+            elif rsi_swing > 70:
+                swing_score -= 1
+            if rsi_long < 30:
+                long_term_score += 1
+            elif rsi_long > 70:
+                long_term_score -= 1
 
-        if data['MACD'].iloc[-1] > data['MACD_signal'].iloc[-1]:
-            score += 1
-        else:
-            score -= 1
+        # MACD-based logic
+        if 'MACD' in data.columns and 'MACD_signal' in data.columns and pd.notnull(data['MACD'].iloc[-1]):
+            macd_val = data['MACD'].iloc[-1]
+            macd_signal = data['MACD_signal'].iloc[-1]
+            if macd_val > macd_signal:
+                swing_score += 1
+                short_term_score += 1
+            else:
+                swing_score -= 1
+                short_term_score -= 1
 
-        if price < data['Lower_Band'].iloc[-1]:
-            score += 1
-        elif price > data['Upper_Band'].iloc[-1]:
-            score -= 1
+        # Bollinger Bands for Mean Reversion
+        if 'Lower_Band' in data.columns and 'Upper_Band' in data.columns and pd.notnull(data['Lower_Band'].iloc[-1]):
+            if price < data['Lower_Band'].iloc[-1]:
+                mean_reversion_score += 1
+            elif price > data['Upper_Band'].iloc[-1]:
+                mean_reversion_score -= 1
 
-        if price > data['VWAP'].iloc[-1]:
-            score += 1
-        else:
-            score -= 1
+        # VWAP for Intraday
+        if 'VWAP' in data.columns and pd.notnull(data['VWAP'].iloc[-1]):
+            if price > data['VWAP'].iloc[-1]:
+                intraday_score += 1
+            else:
+                intraday_score -= 1
 
-        if data['OBV'].iloc[-1] > data['OBV'].iloc[-2]:
-            score += 1
+        # OBV for trend confirmation
+        if 'OBV' in data.columns and pd.notnull(data['OBV'].iloc[-1]) and pd.notnull(data['OBV'].iloc[-2]):
+            if data['OBV'].iloc[-1] > data['OBV'].iloc[-2]:
+                short_term_score += 1
+                long_term_score += 1
 
-        if price > max(data['Ichimoku_Span_A'].iloc[-1], data['Ichimoku_Span_B'].iloc[-1]):
-            score += 1
-        elif price < min(data['Ichimoku_Span_A'].iloc[-1], data['Ichimoku_Span_B'].iloc[-1]):
-            score -= 1
+        # Ichimoku for Long-Term and Ichimoku Trend
+        if 'Ichimoku_Span_A' in data.columns and 'Ichimoku_Span_B' in data.columns and pd.notnull(data['Ichimoku_Span_A'].iloc[-1]):
+            if price > max(data['Ichimoku_Span_A'].iloc[-1], data['Ichimoku_Span_B'].iloc[-1]):
+                long_term_score += 1
+                ichimoku_score += 1
+            elif price < min(data['Ichimoku_Span_A'].iloc[-1], data['Ichimoku_Span_B'].iloc[-1]):
+                long_term_score -= 1
+                ichimoku_score -= 1
 
-        if score >= 3:
-            recommendations["Recommendation"] = "Buy"
-        elif score <= -2:
-            recommendations["Recommendation"] = "Sell"
+        # Breakout based on recent highs/lows
+        if len(data['Close'][-20:]) >= 20:
+            recent_high = data['Close'][-20:].max()
+            recent_low = data['Close'][-20:].min()
+            if price > recent_high:
+                breakout_score += 1
+            elif price < recent_low:
+                breakout_score -= 1
 
+        # Set recommendations based on scores
+        recommendations["Intraday"] = "Buy" if intraday_score >= 2 else "Sell" if intraday_score <= -2 else "Hold"
+        recommendations["Swing"] = "Buy" if swing_score >= 2 else "Sell" if swing_score <= -2 else "Hold"
+        recommendations["Short-Term"] = "Buy" if short_term_score >= 2 else "Sell" if short_term_score <= -2 else "Hold"
+        recommendations["Long-Term"] = "Buy" if long_term_score >= 2 else "Sell" if long_term_score <= -2 else "Hold"
+        recommendations["Mean_Reversion"] = "Buy" if mean_reversion_score >= 1 else "Sell" if mean_reversion_score <= -1 else "Hold"
+        recommendations["Breakout"] = "Buy" if breakout_score >= 1 else "Sell" if breakout_score <= -1 else "Hold"
+        recommendations["Ichimoku_Trend"] = "Buy" if ichimoku_score >= 1 else "Sell" if ichimoku_score <= -1 else "Hold"
+
+        # Overall recommendation
+        overall_score = (intraday_score + swing_score + short_term_score + long_term_score) / 4
+        recommendations["Recommendation"] = "Buy" if overall_score >= 1.5 else "Sell" if overall_score <= -1.5 else "Hold"
+        recommendations["Score"] = round(overall_score * 3.5, 2)  # Scale to 0-7
+
+        # Calculate Buy At, Stop Loss, and Target
         recommendations["Buy At"] = round(price * 0.99, 2)
-
-        if data['ATR'].iloc[-1]:
+        if 'ATR' in data.columns and pd.notnull(data['ATR'].iloc[-1]):
             atr = data['ATR'].iloc[-1]
-            stop_loss = round(price - 1.5 * atr, 2)
-            target = round(price + 2.5 * atr, 2)
-            recommendations["Stop Loss"] = stop_loss
-            recommendations["Target"] = target
+            recommendations["Stop Loss"] = round(price - 1.5 * atr, 2)
+            recommendations["Target"] = round(price + 2.5 * atr, 2)
 
     except Exception as e:
         st.warning(f"Error generating recommendations: {e}")
