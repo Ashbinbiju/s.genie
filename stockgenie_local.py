@@ -1288,7 +1288,7 @@ def display_dashboard(symbol=None, data=None, recommendations=None):
         fig_macd = px.line(data, x=data.index, y=['MACD', 'MACD_signal'], title="MACD")
         st.plotly_chart(fig_macd)
 
-        st.subheader("📊 Volume Analysis")Add commentMore actions
+        st.subheader("📊 Volume Analysis")
         fig_vol = px.bar(data, x=data.index, y='Volume', title="Volume")
         if 'Volume_Spike' in data.columns:
             spike_data = data[data['Volume_Spike'] == True]
