@@ -44,7 +44,7 @@ CLIENT_ID = os.getenv("CLIENT_ID")
 PASSWORD = os.getenv("PASSWORD")
 TOTP_SECRET = os.getenv("TOTP_SECRET")
 API_KEYS = {
-    "Historical": os.getenv("HISTORICAL_API_KEY"),
+    "Historical": "c3C0tMGn",
     "Trading": os.getenv("TRADING_API_KEY"),
     "Market": os.getenv("MARKET_API_KEY")
 }
@@ -1186,8 +1186,9 @@ def get_top_sectors_cached(rate_limit_delay=2, stocks_per_sector=2):
     return sorted(sector_scores.items(), key=lambda x: x[1], reverse=True)[:3]
 
 
-def backtest_stock(data, strategy="Swing"):
+def backtest_stock(data, symbol, strategy="Swing"):
     if data.empty or len(data) < 200:
+        st.warning(f"⚠️ Insufficient data for backtesting {symbol}.")
         return None
 
     data = data.copy()
@@ -1200,53 +1201,92 @@ def backtest_stock(data, strategy="Swing"):
     data = data.dropna(subset=['Open', 'Close'])
 
     if len(data) < 27:
+        st.warning(f"⚠️ Not enough valid data for backtesting {symbol}.")
         return None
 
     initial_capital = 25000
     capital = initial_capital
     position = 0
     trades = []
+    buy_signals = []
+    sell_signals = []
+    slippage = 0.002  # 0.2% slippage per trade
+    commission = 0.001  # 0.1% commission per trade
 
     min_rows = 200
     for i in range(min_rows, len(data) - 1):
         row = data.iloc[i]
         next_row = data.iloc[i + 1]
         sliced_data = data.iloc[:i+1]
+
         if len(sliced_data['RSI'].dropna()) < 1 or len(sliced_data['MACD'].dropna()) < 1:
             continue
-        recommendations = generate_recommendations(sliced_data, symbol="test")
 
+        recommendations = generate_recommendations(sliced_data, symbol=symbol)
+
+        # Record signals for visualization
+        if recommendations[strategy] in ["Buy", "Strong Buy"]:
+            buy_signals.append((next_row.name, next_row['Open']))
+        elif recommendations[strategy] in ["Sell", "Strong Sell"]:
+            sell_signals.append((next_row.name, next_row['Open']))
+
+        # Execute trades
         if position == 0 and recommendations[strategy] in ["Buy", "Strong Buy"]:
-            entry_price = next_row['Open']
+            entry_price = next_row['Open'] * (1 + slippage + commission)
             shares = capital // entry_price
             if shares > 0:
                 position = shares
                 capital -= shares * entry_price
-                trades.append({"entry_date": next_row.name, "entry_price": entry_price})
+                trades.append({
+                    "entry_date": next_row.name,
+                    "entry_price": entry_price,
+                    "shares": shares
+                })
 
         elif position > 0 and recommendations[strategy] in ["Sell", "Strong Sell"]:
-            exit_price = next_row['Open']
+            exit_price = next_row['Open'] * (1 - slippage - commission)
             capital += position * exit_price
             trades[-1]["exit_date"] = next_row.name
             trades[-1]["exit_price"] = exit_price
+            trades[-1]["profit"] = (exit_price - trades[-1]["entry_price"]) * position
             position = 0
 
+    # Close any open position at the end
     if position > 0:
-        exit_price = data['Close'].iloc[-1]
+        exit_price = data['Close'].iloc[-1] * (1 - slippage - commission)
         capital += position * exit_price
         trades[-1]["exit_date"] = data.index[-1]
         trades[-1]["exit_price"] = exit_price
+        trades[-1]["profit"] = (exit_price - trades[-1]["entry_price"]) * position
 
     final_value = capital
     total_return = (final_value - initial_capital) / initial_capital * 100
-    wins = sum(1 for trade in trades if trade["exit_price"] > trade["entry_price"])
+    wins = sum(1 for trade in trades if trade.get("profit", 0) > 0)
     win_rate = (wins / len(trades) * 100) if trades else 0
 
+    # Calculate additional metrics
+    annual_return = ((final_value / initial_capital) ** (252 / len(data))) - 1 if len(data) > 0 else 0
+    returns = pd.Series([trade["profit"] / initial_capital for trade in trades if "profit" in trade])
+    sharpe_ratio = (returns.mean() / returns.std() * np.sqrt(252)) if returns.std() != 0 else 0
+    max_drawdown = 0
+    peak = initial_capital
+    for trade in trades:
+        if "profit" in trade:
+            capital += trade["profit"]
+            peak = max(peak, capital)
+            drawdown = (peak - capital) / peak
+            max_drawdown = max(max_drawdown, drawdown)
+
     return {
-        "total_return": total_return,
+        "total_return": round(total_return, 2),
+        "annual_return": round(annual_return * 100, 2),
+        "sharpe_ratio": round(sharpe_ratio, 2),
+        "max_drawdown": round(max_drawdown * 100, 2),
         "trades": len(trades),
-        "win_rate": win_rate,
-        "trade_details": trades
+        "win_rate": round(win_rate, 2),
+        "trade_details": trades,
+        "buy_signals": buy_signals,
+        "sell_signals": sell_signals
     }
 
 def init_database():
@@ -1491,7 +1531,6 @@ def display_dashboard(symbol=None, data=None, recommendations=None):
 
         if not history_df.empty:
             st.subheader("📜 Historical Top Picks")
-
             all_dates = sorted(history_df['date'].unique(), reverse=True)
             date_filter = st.selectbox("Filter by Date", ["All"] + all_dates)
             pick_type_filter = st.selectbox("Filter by Pick Type", ["All", "daily", "intraday"])
@@ -1537,33 +1576,67 @@ def display_dashboard(symbol=None, data=None, recommendations=None):
             st.write(f"**Ichimoku Trend**: {colored_recommendation(recommendations['Ichimoku_Trend'])}")
             st.write(f"**{tooltip('Score', TOOLTIPS['Score'])}**: {recommendations['Score']}/7")
         
+        # Backtest Swing Strategy
         if st.button("🔍 Backtest Swing Strategy"):
-            backtest_results = backtest_stock(data, strategy="Swing")
-            if backtest_results:
-                st.subheader("📈 Backtest Results (Swing Strategy)")
-                st.write(f"**Total Return**: {backtest_results['total_return']:.2f}%")
-                st.write(f"**Number of Trades**: {backtest_results['trades']}")
-                st.write(f"**Win Rate**: {backtest_results['win_rate']:.2f}%")
-                with st.expander("Trade Details"):
-                    for trade in backtest_results["trade_details"]:
-                        st.write(f"Entry: {trade['entry_date']} @ ₹{trade['entry_price']:.2f}, "
-                                 f"Exit: {trade['exit_date']} @ ₹{trade['exit_price']:.2f}")
-            else:
-                st.warning("⚠️ Insufficient data for backtesting.")
+            with st.spinner("Running Swing Strategy backtest..."):
+                backtest_results = backtest_stock(data, symbol, strategy="Swing")
+                if backtest_results:
+                    st.subheader("📈 Backtest Results (Swing Strategy)")
+                    st.write(f"**Total Return**: {backtest_results['total_return']:.2f}%")
+                    st.write(f"**Annualized Return**: {backtest_results['annual_return']:.2f}%")
+                    st.write(f"**Sharpe Ratio**: {backtest_results['sharpe_ratio']:.2f}")
+                    st.write(f"**Max Drawdown**: {backtest_results['max_drawdown']:.2f}%")
+                    st.write(f"**Number of Trades**: {backtest_results['trades']}")
+                    st.write(f"**Win Rate**: {backtest_results['win_rate']:.2f}%")
+                    with st.expander("Trade Details"):
+                        for trade in backtest_results["trade_details"]:
+                            profit = trade.get("profit", 0)
+                            st.write(f"Entry: {trade['entry_date']} @ ₹{trade['entry_price']:.2f}, "
+                                     f"Exit: {trade['exit_date']} @ ₹{trade['exit_price']:.2f}, "
+                                     f"Profit: ₹{profit:.2f}")
+                    
+                    # Visualize Buy/Sell Signals
+                    fig = px.line(data, x=data.index, y='Close', title=f"{symbol.split('-')[0]} Price with Signals")
+                    if backtest_results["buy_signals"]:
+                        buy_dates, buy_prices = zip(*backtest_results["buy_signals"])
+                        fig.add_scatter(x=buy_dates, y=buy_prices, mode='markers', name='Buy Signals', marker=dict(color='green', symbol='triangle-up', size=10))
+                    if backtest_results["sell_signals"]:
+                        sell_dates, sell_prices = zip(*backtest_results["sell_signals"])
+                        fig.add_scatter(x=sell_dates, y=sell_prices, mode='markers', name='Sell Signals', marker=dict(color='red', symbol='triangle-down', size=10))
+                    st.plotly_chart(fig)
+                else:
+                    st.warning("⚠️ Insufficient data for backtesting.")
         
+        # Backtest Intraday Strategy
         if st.button("🔍 Backtest Intraday Strategy"):
-            backtest_results = backtest_stock(data, strategy="Intraday")
-            if backtest_results:
-                st.subheader("📈 Backtest Results (Intraday Strategy)")
-                st.write(f"**Total Return**: {backtest_results['total_return']:.2f}%")
-                st.write(f"**Number of Trades**: {backtest_results['trades']}")
-                st.write(f"**Win Rate**: {backtest_results['win_rate']:.2f}%")
-                with st.expander("Trade Details"):
-                    for trade in backtest_results["trade_details"]:
-                        st.write(f"Entry: {trade['entry_date']} @ ₹{trade['entry_price']:.2f}, "
-                                 f"Exit: {trade['exit_date']} @ ₹{trade['exit_price']:.2f}")
-            else:
-                st.warning("⚠️ Insufficient data for backtesting.")
+            with st.spinner("Running Intraday Strategy backtest..."):
+                backtest_results = backtest_stock(data, symbol, strategy="Intraday")
+                if backtest_results:
+                    st.subheader("📈 Backtest Results (Intraday Strategy)")
+                    st.write(f"**Total Return**: {backtest_results['total_return']:.2f}%")
+                    st.write(f"**Annualized Return**: {backtest_results['annual_return']:.2f}%")
+                    st.write(f"**Sharpe Ratio**: {backtest_results['sharpe_ratio']:.2f}")
+                    st.write(f"**Max Drawdown**: {backtest_results['max_drawdown']:.2f}%")
+                    st.write(f"**Number of Trades**: {backtest_results['trades']}")
+                    st.write(f"**Win Rate**: {backtest_results['win_rate']:.2f}%")
+                    with st.expander("Trade Details"):
+                        for trade in backtest_results["trade_details"]:
+                            profit = trade.get("profit", 0)
+                            st.write(f"Entry: {trade['entry_date']} @ ₹{trade['entry_price']:.2f}, "
+                                     f"Exit: {trade['exit_date']} @ ₹{trade['exit_price']:.2f}, "
+                                     f"Profit: ₹{profit:.2f}")
+                    
+                    # Visualize Buy/Sell Signals
+                    fig = px.line(data, x=data.index, y='Close', title=f"{symbol.split('-')[0]} Price with Signals")
+                    if backtest_results["buy_signals"]:
+                        buy_dates, buy_prices = zip(*backtest_results["buy_signals"])
+                        fig.add_scatter(x=buy_dates, y=buy_prices, mode='markers', name='Buy Signals', marker=dict(color='green', symbol='triangle-up', size=10))
+                    if backtest_results["sell_signals"]:
+                        sell_dates, sell_prices = zip(*backtest_results["sell_signals"])
+                        fig.add_scatter(x=sell_dates, y=sell_prices, mode='markers', name='Sell Signals', marker=dict(color='red', symbol='triangle-down', size=10))
+                    st.plotly_chart(fig)
+                else:
+                    st.warning("⚠️ Insufficient data for backtesting.")
         
         st.subheader("📊 Technical Indicators")
         indicators = [
@@ -1635,7 +1708,7 @@ def display_dashboard(symbol=None, data=None, recommendations=None):
             if not spike_data.empty:
                 fig_vol.add_scatter(x=spike_data.index, y=spike_data['Volume'], mode='markers', name='Volume Spike', marker=dict(color='red', size=10))
         st.plotly_chart(fig_vol)
-
+        
 def main():
     init_database()
     st.sidebar.title("🔍 Stock Selection")
@@ -1644,7 +1717,7 @@ def main():
 
     if st.sidebar.button("Analyze Selected Stock"):
         if symbol:
-            data = fetch_stock_data_cached(symbol)
+            data = fetch_stock_data_with_auth(symbol)  # Use SmartAPI directly
             if not data.empty:
                 data = analyze_stock(data)
                 recommendations = generate_recommendations(data, symbol)
