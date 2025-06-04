@@ -901,6 +901,41 @@ def adaptive_recommendation(data):
     regime = classify_market_regime(data)
     score = compute_signal_score(data)
 
+    # 💥 Filter: Require expected move of at least ₹10 based on ATR or recent range
+    min_expected_move = 10
+
+    atr = data['ATR'].iloc[-1] if 'ATR' in data.columns else None
+    if atr is None or atr < min_expected_move:
+        return {
+            'Regime': regime,
+            'Score': round(score, 2),
+            'Recommendation': 'Skip',
+            'Reason': f'Low ATR (< ₹{min_expected_move})',
+            'Position Size': 0,
+            'Trailing Stop': None
+        }
+
+    recent_range = (data['High'] - data['Low']).tail(3).mean()
+    if recent_range < min_expected_move:
+        return {
+            'Regime': regime,
+            'Score': round(score, 2),
+            'Recommendation': 'Skip',
+            'Reason': f'Recent range too small (< ₹{min_expected_move})',
+            'Position Size': 0,
+            'Trailing Stop': None
+        }
+
+    if data['Close'].iloc[-1] < 100:
+        return {
+            'Regime': regime,
+            'Score': round(score, 2),
+            'Recommendation': 'Skip',
+            'Reason': 'Stock price < ₹100',
+            'Position Size': 0,
+            'Trailing Stop': None
+        }
+
     # Position sizing
     base_amount = 1000  # example base capital per trade
     position_size = max(0, min(1, score / 7.0)) * base_amount
