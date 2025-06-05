@@ -978,6 +978,21 @@ def generate_recommendations(data, symbol=None):
     if data.empty or len(data) < 27 or 'Close' not in data.columns or data['Close'].iloc[-1] is None:
         st.warning("⚠️ Insufficient data for recommendations.")
         return recommendations
+return {"Recommendation": "Skip", "Reason": "Insufficient data"}
+
+# 💥 Filter for ₹10 move potential
+if 'ATR' in data.columns and data['ATR'].iloc[-1] < 10:
+    return {"Recommendation": "Skip", "Reason": "ATR < ₹10"}
+
+recent_range = (data['High'] - data['Low']).tail(3).mean()
+if recent_range < 10:
+    return {"Recommendation": "Skip", "Reason": "Low recent range"}
+
+if data['Close'].iloc[-1] < 100:
+    return {"Recommendation": "Skip", "Reason": "Price < ₹100"}
+
+
+
 
     try:
         recommendations["Current Price"] = float(data['Close'].iloc[-1])
