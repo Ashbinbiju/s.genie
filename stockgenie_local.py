@@ -86,7 +86,6 @@ TOOLTIPS = {
     "Score": "Measured by RSI, MACD, Ichimoku Cloud, and ATR volatility. Low score = weak signal, high score = strong signal."
 }
 
-
 SECTORS = {
  "TOP PICKS": [
   "IEX.NS", "MARICO.NS", "NAM-INDIA.NS", "BLUEJET.NS", "BEL.NS", "LLOYDSME.NS", "ITC.NS", "ABSLAMC.NS", "HEXWARE.NS",
@@ -113,8 +112,6 @@ SECTORS = {
     "TMB.NS", "KTKBANK.NS", "EQUITASBNK.NS", "UJJIVANSFB.NS"
   ],
 
-
-
   "Software & IT Services": [
     "TCS.NS", "INFY.NS", "HCLTECH.NS", "WIPRO.NS", "TECHM.NS", "LTIM.NS",
     "MPHASIS.NS", "FSL.NS", "BSOFT.NS", "NEWGEN.NS", "ZENSARTECH.NS",
@@ -124,8 +121,6 @@ SECTORS = {
     "RSYSTEMS.NS", "XCHANGING.NS", "OFSS.NS", "AURIONPRO.NS", "DATAMATICS.NS",
     "QUICKHEAL.NS", "CIGNITITEC.NS","SAGILITY.NS" "ALLSEC.NS"
   ],
-
-
 
   "Finance": [
     "HDFCBANK.NS", "ICICIBANK.NS", "SBIN.NS", "KOTAKBANK.NS", "BAJFINANCE.NS",
@@ -147,8 +142,6 @@ SECTORS = {
     "SATIN.NS", "CREDAGRI.NS"
   ],
 
-
-
   "Automobile & Ancillaries": [
     "MARUTI.NS", "TATAMOTORS.NS", "M&M.NS", "BAJAJ-AUTO.NS", "HEROMOTOCO.NS",
     "EICHERMOT.NS", "TVSMOTOR.NS", "ASHOKLEY.NS", "MRF.NS", "BALKRISIND.NS",
@@ -159,8 +152,6 @@ SECTORS = {
     "ATULAUTO.NS", "OLECTRA.NS", "GREAVESCOT.NS", "SMLISUZU.NS", "VSTTILLERS.NS",
     "HINDMOTORS.NS", "MAHSCOOTER.NS"
   ],
-
-
 
   "Healthcare": [
     "SUNPHARMA.NS", "CIPLA.NS", "DRREDDY.NS", "APOLLOHOSP.NS", "LUPIN.NS",
@@ -176,7 +167,6 @@ SECTORS = {
     "NETMEDS.NS", "BLISSGVS.NS", "MOREPENLAB.NS", "RPGLIFE.NS"
   ],
 
-
   "Metals & Mining": [
     "TATASTEEL.NS", "JSWSTEEL.NS", "HINDALCO.NS", "VEDL.NS", "SAIL.NS",
     "NMDC.NS", "HINDZINC.NS", "NALCO.NS", "JINDALSTEL.NS", "MOIL.NS",
@@ -185,7 +175,6 @@ SECTORS = {
     "JTLIND.NS", "RAMASTEEL.NS", "MAITHANALL.NS", "KIOCL.NS", "IMFA.NS",
     "GMDCLTD.NS", "VISHNU.NS", "SANDUMA.NS","VRAJ.NS","COALINDIA.NS ","NILE.BO"
   ],
-
 
   "FMCG": [
     "HINDUNILVR.NS", "ITC.NS", "NESTLEIND.NS", "VARBEV.NS", "BRITANNIA.NS",
@@ -196,8 +185,6 @@ SECTORS = {
     "GODREJAGRO.NS", "SAPPHIRE.NS", "VENKEYS.NS", "BECTORFOOD.NS", "KRBL.NS"
   ],
 
-
-
   "Power": [
     "NTPC.NS", "POWERGRID.NS", "ADANIPOWER.NS", "TATAPOWER.NS", "JSWENERGY.NS",
     "NHPC.NS", "SJVN.NS", "TORNTPOWER.NS", "CESC.NS", "ADANIENSOL.NS",
@@ -205,7 +192,6 @@ SECTORS = {
     "SUZLON.NS", "BHEL.NS", "THERMAX.NS", "GEPIL.NS", "VOLTAMP.NS",
     "TRIL.NS", "TDPOWERSYS.NS", "JYOTISTRUC.NS", "IWEL.NS"
   ],
-
 
   "Capital Goods": [
     "LT.NS", "SIEMENS.NS", "ABB.NS", "BEL.NS", "BHEL.NS", "HAL.NS",
@@ -221,14 +207,12 @@ SECTORS = {
     "VGUARD.NS", "WABAG.NS","AZAD"
   ],
 
-
   "Oil & Gas": [
     "RELIANCE.NS", "ONGC.NS", "IOC.NS", "BPCL.NS", "HPCL.NS", "GAIL.NS",
     "PETRONET.NS", "OIL.NS", "IGL.NS", "MGL.NS", "GUJGASLTD.NS", "GSPL.NS",
     "AEGISCHEM.NS", "CHENNPETRO.NS", "MRPL.NS", "GULFOILLUB.NS", "CASTROLIND.NS",
     "SOTL.NS", "PANAMAPET.NS", "GOCLCORP.NS"
   ],
-
 
   "Chemicals": [
     "PIDILITIND.NS", "SRF.NS", "DEEPAKNTR.NS", "ATUL.NS", "AARTIIND.NS",
@@ -241,12 +225,10 @@ SECTORS = {
     "VISHNU.NS", "IGPL.NS", "TIRUMALCHM.NS"
   ],
 
-
   "Telecom": [
     "BHARTIARTL.NS", "VODAFONEIDEA.NS", "INDUSTOWER.NS", "TATACOMM.NS",
     "HFCL.NS", "TEJASNET.NS", "STLTECH.NS", "ITI.NS", "ASTEC.NS"
   ],
-
 
   "Infrastructure": [
     "LT.NS", "GMRINFRA.NS", "IRB.NS", "NBCC.NS", "RVNL.NS", "KEC.NS",
@@ -257,20 +239,16 @@ SECTORS = {
     "DBREALTY.NS", "JWL.NS"
   ],
 
-
-
   "Insurance": [
     "SBILIFE.NS", "HDFCLIFE.NS", "ICICIGI.NS", "ICICIPRULI.NS", "LICI.NS",
     "GICRE.NS", "NIACL.NS", "STARHEALTH.NS", "BAJAJFINSV.NS", "MAXFIN.NS"
   ],
-
 
   "Diversified": [
     "ITC.NS", "RELIANCE.NS", "ADANIENT.NS", "GRASIM.NS", "HINDUNILVR.NS",
     "DCMSHRIRAM.NS", "3MINDIA.NS", "CENTURYPLY.NS", "KFINTECH.NS", "BALMERLAWRI.NS",
     "GODREJIND.NS", "VBL.NS", "BIRLACORPN.NS"
   ],
-
 
   "Construction Materials": [
     "ULTRACEMCO.NS", "SHREECEM.NS", "AMBUJACEM.NS", "ACC.NS", "JKCEMENT.NS",
@@ -280,7 +258,6 @@ SECTORS = {
     "VISAKAIND.NS", "BIGBLOC.NS"
   ],
 
-
   "Real Estate": [
     "DLF.NS", "GODREJPROP.NS", "OBEROIRLTY.NS", "PHOENIXLTD.NS", "PRESTIGE.NS",
     "BRIGADE.NS", "SOBHA.NS", "SUNTECK.NS", "MAHLIFE.NS", "ANANTRAJ.NS",
@@ -288,11 +265,9 @@ SECTORS = {
     "IBREALEST.NS", "OMAXE.NS", "ASHIANA.NS", "ELDEHSG.NS", "TARC.NS"
   ],
 
-
   "Aviation": [
     "INDIGO.NS", "SPICEJET.NS", "AAI.NS", "GMRINFRA.NS"
   ],
-
 
   "Retailing": [
     "DMART.NS", "TRENT.NS", "ABFRL.NS", "VMART.NS", "SHOPERSTOP.NS",
@@ -300,7 +275,6 @@ SECTORS = {
     "NYKAA.NS", "MANYAVAR.NS", "ELECTRONICSMRKT.NS", "LANDMARK.NS", "V2RETAIL.NS",
     "THANGAMAYL.NS", "KALYANKJIL.NS", "TITAN.NS"
   ],
-
 
   "Miscellaneous": [
     "PIDILITIND.NS", "BSE.NS", "CDSL.NS", "MCX.NS", "NAUKRI.NS",
@@ -312,8 +286,6 @@ SECTORS = {
     "HMAAGRO.NS", "RKFORGE.NS", "CAMPUS.NS", "SENCO.NS", "CONCORDBIO.NS"
   ]
 }
-
-
 
 def init_smartapi_client():
     try:
@@ -901,41 +873,6 @@ def adaptive_recommendation(data):
     regime = classify_market_regime(data)
     score = compute_signal_score(data)
 
-    # 💥 Filter: Require expected move of at least ₹10 based on ATR or recent range
-    min_expected_move = 10
-
-    atr = data['ATR'].iloc[-1] if 'ATR' in data.columns else None
-    if atr is None or atr < min_expected_move:
-        return {
-            'Regime': regime,
-            'Score': round(score, 2),
-            'Recommendation': 'Skip',
-            'Reason': f'Low ATR (< ₹{min_expected_move})',
-            'Position Size': 0,
-            'Trailing Stop': None
-        }
-
-    recent_range = (data['High'] - data['Low']).tail(3).mean()
-    if recent_range < min_expected_move:
-        return {
-            'Regime': regime,
-            'Score': round(score, 2),
-            'Recommendation': 'Skip',
-            'Reason': f'Recent range too small (< ₹{min_expected_move})',
-            'Position Size': 0,
-            'Trailing Stop': None
-        }
-
-    if data['Close'].iloc[-1] < 100:
-        return {
-            'Regime': regime,
-            'Score': round(score, 2),
-            'Recommendation': 'Skip',
-            'Reason': 'Stock price < ₹100',
-            'Position Size': 0,
-            'Trailing Stop': None
-        }
-
     # Position sizing
     base_amount = 1000  # example base capital per trade
     position_size = max(0, min(1, score / 7.0)) * base_amount
@@ -965,7 +902,6 @@ def adaptive_recommendation(data):
         'Trailing Stop': round(chandelier_stop, 2)
     }
 
-
 def generate_recommendations(data, symbol=None):
     recommendations = {
         "Intraday": "Hold", "Swing": "Hold",
@@ -978,21 +914,6 @@ def generate_recommendations(data, symbol=None):
     if data.empty or len(data) < 27 or 'Close' not in data.columns or data['Close'].iloc[-1] is None:
         st.warning("⚠️ Insufficient data for recommendations.")
         return recommendations
-return {"Recommendation": "Skip", "Reason": "Insufficient data"}
-
-# 💥 Filter for ₹10 move potential
-if 'ATR' in data.columns and data['ATR'].iloc[-1] < 10:
-    return {"Recommendation": "Skip", "Reason": "ATR < ₹10"}
-
-recent_range = (data['High'] - data['Low']).tail(3).mean()
-if recent_range < 10:
-    return {"Recommendation": "Skip", "Reason": "Low recent range"}
-
-if data['Close'].iloc[-1] < 100:
-    return {"Recommendation": "Skip", "Reason": "Price < ₹100"}
-
-
-
 
     try:
         recommendations["Current Price"] = float(data['Close'].iloc[-1])
@@ -1235,7 +1156,6 @@ def get_top_sectors_cached(rate_limit_delay=2, stocks_per_sector=2):
         sector_scores[sector] = avg_score
         time.sleep(1)  # Optional: delay between sectors
     return sorted(sector_scores.items(), key=lambda x: x[1], reverse=True)[:3]
-
 
 @st.cache_data
 @st.cache_data(ttl=3600)
