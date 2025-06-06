@@ -805,14 +805,67 @@ def fetch_fundamentals(symbol):
 # Improved strategy logic using adaptive regime detection, signal scoring, and volatility-aware filters
 
 def classify_market_regime(data):
-    """Classifies regime based on volatility and trend"""
-    data['ATR_pct'] = data['ATR'] / data['Close']
-    if data['ATR_pct'].iloc[-1] > 0.03:
-        return 'volatile'
-    elif data['Close'].iloc[-1] > data['SMA_50'].iloc[-1]:
+    """Classifies the market regime based on multiple indicators."""
+    if data.empty:
+        return 'unknown'
+
+    # Calculate moving averages
+    data['SMA_50'] = ta.trend.SMAIndicator(data['Close'], window=50).sma_indicator()
+    data['SMA_200'] = ta.trend.SMAIndicator(data['Close'], window=200).sma_indicator()
+
+    # Calculate RSI
+    data['RSI'] = ta.momentum.RSIIndicator(data['Close'], window=14).rsi()
+
+    # Calculate MACD
+    macd = ta.trend.MACD(data['Close'], window_slow=26, window_fast=12, window_sign=9)
+    data['MACD'] = macd.macd()
+    data['MACD_signal'] = macd.macd_signal()
+
+    # Calculate ATR
+    data['ATR'] = ta.volatility.AverageTrueRange(data['High'], data['Low'], data['Close'], window=14).average_true_range()
+
+    # Calculate ADX
+    data['ADX'] = ta.trend.ADXIndicator(data['High'], data['Low'], data['Close'], window=14).adx()
+
+    # Determine market regime
+    if data['Close'].iloc[-1] > data['SMA_50'].iloc[-1] and data['Close'].iloc[-1] > data['SMA_200'].iloc[-1]:
+        trend = 'bullish'
+    elif data['Close'].iloc[-1] < data['SMA_50'].iloc[-1] and data['Close'].iloc[-1] < data['SMA_200'].iloc[-1]:
+        trend = 'bearish'
+    else:
+        trend = 'neutral'
+
+    if data['RSI'].iloc[-1] < 30:
+        rsi_status = 'oversold'
+    elif data['RSI'].iloc[-1] > 70:
+        rsi_status = 'overbought'
+    else:
+        rsi_status = 'neutral'
+
+    if data['MACD'].iloc[-1] > data['MACD_signal'].iloc[-1]:
+        macd_status = 'bullish'
+    elif data['MACD'].iloc[-1] < data['MACD_signal'].iloc[-1]:
+        macd_status = 'bearish'
+    else:
+        macd_status = 'neutral'
+
+    if data['ADX'].iloc[-1] > 25:
+        adx_status = 'strong'
+    else:
+        adx_status = 'weak'
+
+    # Combine indicators to determine overall regime
+    if trend == 'bullish' and rsi_status == 'neutral' and macd_status == 'bullish' and adx_status == 'strong':
+        return 'strong_bullish'
+    elif trend == 'bullish' and rsi_status == 'neutral' and macd_status == 'bullish':
         return 'bullish'
+    elif trend == 'bearish' and rsi_status == 'neutral' and macd_status == 'bearish' and adx_status == 'strong':
+        return 'strong_bearish'
+    elif trend == 'bearish' and rsi_status == 'neutral' and macd_status == 'bearish':
+        return 'bearish'
     else:
         return 'neutral'
+
 
 def compute_signal_score(data):
     """Computes weighted score based on indicator strength"""
@@ -877,12 +930,18 @@ def adaptive_recommendation(data):
     base_amount = 1000  # example base capital per trade
     position_size = max(0, min(1, score / 7.0)) * base_amount
 
-    if regime == 'volatile':
-        threshold = 2.0
-    elif regime == 'bullish':
+    if regime == 'strong_bullish':
         threshold = 1.0
-    else:
+    elif regime == 'bullish':
         threshold = 1.5
+    elif regime == 'neutral':
+        threshold = 2.0
+    elif regime == 'bearish':
+        threshold = 2.5
+    elif regime == 'strong_bearish':
+        threshold = 3.0
+    else:
+        threshold = 2.0
 
     recommendation = 'Hold'
     if score >= threshold:
@@ -1394,7 +1453,7 @@ def update_progress(progress_bar, loading_text, progress_value, loading_messages
     loading_message = next(loading_messages)
     dots = "." * int((progress_value * 10) % 4)
     loading_text.text(f"{loading_message}{dots}")
-
+    
 def display_dashboard(symbol=None, data=None, recommendations=None):
     # Initialize session state
     if 'selected_sectors' not in st.session_state:
@@ -1437,266 +1496,148 @@ def display_dashboard(symbol=None, data=None, recommendations=None):
         st.warning("⚠️ No stocks selected. Please choose at least one sector.")
         return
 
-    # Top sectors button
-    if st.button("🔎 Analyze Top Performing Sectors"):
-        with st.spinner("🔍 Crunching sector data ..."):
-            top_sectors = get_top_sectors_cached(rate_limit_delay=2, stocks_per_sector=2)
-            st.subheader("🔝 Top 3 Performing Sectors Today")
-            for name, score in top_sectors:
-                st.markdown(f"- **{name}**: {score:.2f}/7")
-
-    # Daily top picks button
-    if st.button("🚀 Generate Daily Top Picks"):
-        progress_bar = st.progress(0)
-        loading_text = st.empty()
-        loading_messages = itertools.cycle([
-            "Analyzing trends...", "Fetching data...", "Crunching numbers...",
-            "Evaluating indicators...", "Finalizing results..."
-        ])
-        results_df = analyze_all_stocks(
-            selected_stocks,
-            batch_size=10,
-            progress_callback=lambda x: update_progress(progress_bar, loading_text, x, loading_messages)
-        )
-        insert_top_picks(results_df, pick_type="daily")
-        progress_bar.empty()
-        loading_text.empty()
-        if not results_df.empty:
-            st.subheader("🏆 Today's Top 5 Stocks")
-            for _, row in results_df.iterrows():
-                with st.expander(f"{row['Symbol']} - {tooltip('Score', TOOLTIPS['Score'])}: {row['Score']}/7"):
-                    current_price = row['Current Price'] if pd.notnull(row['Current Price']) else "N/A"
-                    buy_at = row['Buy At'] if pd.notnull(row['Buy At']) else "N/A"
-                    stop_loss = row['Stop Loss'] if pd.notnull(row['Stop Loss']) else "N/A"
-                    target = row['Target'] if pd.notnull(row['Target']) else "N/A"
-                    st.markdown(f"""
-                    {tooltip('Current Price', TOOLTIPS['Stop Loss'])}: ₹{current_price}  
-                    Buy At: ₹{buy_at} | Stop Loss: ₹{stop_loss}  
-                    Target: ₹{target}  
-                    Intraday: {colored_recommendation(row['Intraday'])}  
-                    Swing: {colored_recommendation(row['Swing'])}  
-                    Short-Term: {colored_recommendation(row['Short-Term'])}  
-                    Long-Term: {colored_recommendation(row['Long-Term'])}  
-                    Mean Reversion: {colored_recommendation(row['Mean_Reversion'])}  
-                    Breakout: {colored_recommendation(row['Breakout'])}  
-                    Ichimoku Trend: {colored_recommendation(row['Ichimoku_Trend'])}
-                    """)
-        else:
-            st.warning("⚠️ No top picks available due to data issues.")
-
-    # Intraday top picks button
-    if st.button("⚡ Generate Intraday Top 5 Picks"):
-        progress_bar = st.progress(0)
-        loading_text = st.empty()
-        loading_messages = itertools.cycle([
-            "Scanning intraday trends...", "Detecting buy signals...", "Calculating stop-loss levels...",
-            "Optimizing targets...", "Finalizing top picks..."
-        ])
-        intraday_results = analyze_intraday_stocks(
-            selected_stocks,
-            batch_size=10,
-            progress_callback=lambda x: update_progress(progress_bar, loading_text, x, loading_messages)
-        )
-        insert_top_picks(intraday_results, pick_type="intraday")
-        progress_bar.empty()
-        loading_text.empty()
-        if not intraday_results.empty:
-            st.subheader("🏆 Top 5 Intraday Stocks")
-            for _, row in intraday_results.iterrows():
-                with st.expander(f"{row['Symbol']} - {tooltip('Score', TOOLTIPS['Score'])}: {row['Score']}/7"):
-                    current_price = row['Current Price'] if pd.notnull(row['Current Price']) else "N/A"
-                    buy_at = row['Buy At'] if pd.notnull(row['Buy At']) else "N/A"
-                    stop_loss = row['Stop Loss'] if pd.notnull(row['Stop Loss']) else "N/A"
-                    target = row['Target'] if pd.notnull(row['Target']) else "N/A"
-                    st.markdown(f"""
-                    {tooltip('Current Price', TOOLTIPS['Stop Loss'])}: ₹{current_price}  
-                    Buy At: ₹{buy_at} | Stop Loss: ₹{stop_loss}  
-                    Target: ₹{target}  
-                    Intraday: {colored_recommendation(row['Intraday'])}  
-                    """)
-        else:
-            st.warning("⚠️ No intraday picks available due to data issues.")
-
-    # Historical picks button
-    if st.button("📜 View Historical Picks"):
-        conn = sqlite3.connect('stock_picks.db')
-        history_df = pd.read_sql_query("SELECT * FROM daily_picks ORDER BY date DESC", conn)
-        conn.close()
-        if not history_df.empty:
-            st.subheader("📜 Historical Top Picks")
-            all_dates = sorted(history_df['date'].unique(), reverse=True)
-            date_filter = st.selectbox("Filter by Date", ["All"] + all_dates)
-            pick_type_filter = st.selectbox("Filter by Pick Type", ["All", "daily", "intraday"])
-            filtered_df = history_df.copy()
-            if pick_type_filter != "All":
-                filtered_df = filtered_df[filtered_df['pick_type'] == pick_type_filter]
-            if date_filter != "All":
-                filtered_df = filtered_df[filtered_df['date'] == date_filter]
-            st.dataframe(filtered_df)
-        else:
-            st.warning("⚠️ No historical data available.")
-
     # Display stock analysis if symbol is available
-    if st.session_state.symbol and st.session_state.data is not None and st.session_state.recommendations is not None:
+    if st.session_state.symbol:
         symbol = st.session_state.symbol
-        data = st.session_state.data
-        recommendations = st.session_state.recommendations
 
-        st.header(f"📋 {symbol.split('-')[0]} Analysis")
-        col1, col2, col3, col4 = st.columns(4)
-        with col1:
-            current_price = recommendations['Current Price'] if recommendations['Current Price'] is not None else "N/A"
-            st.metric(tooltip("Current Price", TOOLTIPS['RSI']), f"₹{current_price}")
-        with col2:
-            buy_at = recommendations['Buy At'] if recommendations['Buy At'] is not None else "N/A"
-            st.metric("Buy At", f"₹{buy_at}")
-        with col3:
-            stop_loss = recommendations['Stop Loss'] if recommendations['Stop Loss'] is not None else "N/A"
-            st.metric(tooltip("Stop Loss", TOOLTIPS['Stop Loss']), f"₹{stop_loss}")
-        with col4:
-            target = recommendations['Target'] if recommendations['Target'] is not None else "N/A"
-            st.metric("Target", f"₹{target}")
+        # Fetch and analyze stock data
+        with st.spinner("Loading stock data..."):
+            data = fetch_stock_data_with_auth(symbol)
+            if not data.empty:
+                data = analyze_stock(data)
+                recommendations = adaptive_recommendation(data)  # Use adaptive_recommendation
+                st.session_state.data = data
+                st.session_state.recommendations = recommendations
 
-        st.subheader("📈 Trading Recommendations")
-        col1, col2, col3, col4 = st.columns(4)
-        with col1:
-            st.write(f"**Intraday**: {colored_recommendation(recommendations['Intraday'])}")
-            st.write(f"**Swing**: {colored_recommendation(recommendations['Swing'])}")
-        with col2:
-            st.write(f"**Short-Term**: {colored_recommendation(recommendations['Short-Term'])}")
-            st.write(f"**Long-Term**: {colored_recommendation(recommendations['Long-Term'])}")
-        with col3:
-            st.write(f"**Mean Reversion**: {colored_recommendation(recommendations['Mean_Reversion'])}")
-            st.write(f"**Breakout**: {colored_recommendation(recommendations['Breakout'])}")
-        with col4:
-            st.write(f"**Ichimoku Trend**: {colored_recommendation(recommendations['Ichimoku_Trend'])}")
-            st.write(f"**{tooltip('Score', TOOLTIPS['Score'])}**: {recommendations['Score']}/7")
-
-        # Backtest form to isolate button actions
-        with st.form(key="backtest_form"):
-            col1, col2 = st.columns(2)
+        # Display recommendations
+        if recommendations:
+            st.header(f"📋 {symbol.split('-')[0]} Analysis")
+            col1, col2, col3, col4 = st.columns(4)
             with col1:
-                swing_button = st.form_submit_button("🔍 Backtest Swing Strategy")
+                current_price = recommendations['Current Price'] if recommendations['Current Price'] is not None else "N/A"
+                st.metric(tooltip("Current Price", TOOLTIPS['RSI']), f"₹{current_price}")
             with col2:
-                intraday_button = st.form_submit_button("🔍 Backtest Intraday Strategy")
-            
-            if swing_button or intraday_button:
-                strategy = "Swing" if swing_button else "Intraday"
-                with st.spinner(f"Running {strategy} Strategy backtest..."):
-                    # Simplified hash for caching
-                    data_hash = hash(data.to_string())
-                    backtest_results = backtest_stock(data, symbol, strategy=strategy, _data_hash=data_hash)
-                    if strategy == "Swing":
-                        st.session_state.backtest_results_swing = backtest_results
-                    else:
-                        st.session_state.backtest_results_intraday = backtest_results
+                buy_at = recommendations['Buy At'] if recommendations['Buy At'] is not None else "N/A"
+                st.metric("Buy At", f"₹{buy_at}")
+            with col3:
+                stop_loss = recommendations['Stop Loss'] if recommendations['Stop Loss'] is not None else "N/A"
+                st.metric(tooltip("Stop Loss", TOOLTIPS['Stop Loss']), f"₹{stop_loss}")
+            with col4:
+                target = recommendations['Target'] if recommendations['Target'] is not None else "N/A"
+                st.metric("Target", f"₹{target}")
 
-        # Display backtest results if available
-        for strategy, results_key in [("Swing", "backtest_results_swing"), ("Intraday", "backtest_results_intraday")]:
-            backtest_results = st.session_state.get(results_key)
-            if backtest_results:
-                st.subheader(f"📈 Backtest Results ({strategy} Strategy)")
-                st.write(f"**Total Return**: {backtest_results['total_return']:.2f}%")
-                st.write(f"**Annualized Return**: {backtest_results['annual_return']:.2f}%")
-                st.write(f"**Sharpe Ratio**: {backtest_results['sharpe_ratio']:.2f}")
-                st.write(f"**Max Drawdown**: {backtest_results['max_drawdown']:.2f}%")
-                st.write(f"**Number of Trades**: {backtest_results['trades']}")
-                st.write(f"**Win Rate**: {backtest_results['win_rate']:.2f}%")
-                with st.expander("Trade Details"):
-                    for trade in backtest_results["trade_details"]:
-                        profit = trade.get("profit", 0)
-                        st.write(f"Entry: {trade['entry_date']} @ ₹{trade['entry_price']:.2f}, "
-                                 f"Exit: {trade['exit_date']} @ ₹{trade['exit_price']:.2f}, "
-                                 f"Profit: ₹{profit:.2f}")
+            st.subheader("📈 Trading Recommendations")
+            col1, col2, col3, col4 = st.columns(4)
+            with col1:
+                st.write(f"**Intraday**: {colored_recommendation(recommendations['Intraday'])}")
+                st.write(f"**Swing**: {colored_recommendation(recommendations['Swing'])}")
+            with col2:
+                st.write(f"**Short-Term**: {colored_recommendation(recommendations['Short-Term'])}")
+                st.write(f"**Long-Term**: {colored_recommendation(recommendations['Long-Term'])}")
+            with col3:
+                st.write(f"**Mean Reversion**: {colored_recommendation(recommendations['Mean_Reversion'])}")
+                st.write(f"**Breakout**: {colored_recommendation(recommendations['Breakout'])}")
+            with col4:
+                st.write(f"**Ichimoku Trend**: {colored_recommendation(recommendations['Ichimoku_Trend'])}")
+                st.write(f"**{tooltip('Score', TOOLTIPS['Score'])}**: {recommendations['Score']}/7")
 
-                # Visualize Buy/Sell Signals
-                fig = px.line(data, x=data.index, y='Close', title=f"{symbol.split('-')[0]} Price with Signals")
-                if backtest_results["buy_signals"]:
-                    buy_dates, buy_prices = zip(*backtest_results["buy_signals"])
-                    fig.add_scatter(x=buy_dates, y=buy_prices, mode='markers', name='Buy Signals',
-                                   marker=dict(color='green', symbol='triangle-up', size=10))
-                if backtest_results["sell_signals"]:
-                    sell_dates, sell_prices = zip(*backtest_results["sell_signals"])
-                    fig.add_scatter(x=sell_dates, y=sell_prices, mode='markers', name='Sell Signals',
-                                   marker=dict(color='red', symbol='triangle-down', size=10))
-                st.plotly_chart(fig, use_container_width=True)
+            # Additional analysis and visualization can be added here
+            # For example, you can add a price chart, RSI chart, etc.
 
-        # Technical Indicators
-        st.subheader("📊 Technical Indicators")
-        indicators = [
-            ("RSI", data['RSI'].iloc[-1], TOOLTIPS['RSI']),
-            ("MACD", data['MACD'].iloc[-1], TOOLTIPS['MACD']),
-            ("ATR", data['ATR'].iloc[-1], TOOLTIPS['ATR']),
-            ("ADX", data['ADX'].iloc[-1], TOOLTIPS['ADX']),
-            ("Bollinger Upper", data['Upper_Band'].iloc[-1], TOOLTIPS['Bollinger']),
-            ("Bollinger Lower", data['Lower_Band'].iloc[-1], TOOLTIPS['Bollinger']),
-            ("VWAP", data['VWAP'].iloc[-1], TOOLTIPS['VWAP']),
-            ("Parabolic SAR", data['Parabolic_SAR'].iloc[-1], TOOLTIPS['Parabolic_SAR']),
-            ("Fib 61.8%", data['Fib_61.8'].iloc[-1], TOOLTIPS['Fib_Retracements']),
-            ("Ichimoku Span A", data['Ichimoku_Span_A'].iloc[-1], TOOLTIPS['Ichimoku']),
-            ("CMF", data['CMF'].iloc[-1], TOOLTIPS['CMF']),
-            ("Donchian Upper", data['Donchian_Upper'].iloc[-1], TOOLTIPS['Donchian']),
-            ("Keltner Upper", data['Keltner_Upper'].iloc[-1], TOOLTIPS['Keltner']),
-            ("TRIX", data['TRIX'].iloc[-1], TOOLTIPS['TRIX']),
-            ("Ultimate Oscillator", data['Ultimate_Osc'].iloc[-1], TOOLTIPS['Ultimate_Osc']),
-            ("CMO", data['CMO'].iloc[-1], TOOLTIPS['CMO']),
-            ("VPT", data['VPT'].iloc[-1], TOOLTIPS['VPT']),
-        ]
-        col1, col2 = st.columns(2)
-        for i, (name, value, tooltip_text) in enumerate(indicators):
-            if i % 2 == 0:
+            # Price Chart
+            st.subheader("📈 Price Chart with Indicators")
+            fig = px.line(data, x=data.index, y='Close', title=f"{symbol.split('-')[0]} Price")
+            if 'SMA_50' in data.columns and data['SMA_50'].notnull().any():
+                fig.add_scatter(x=data.index, y=data['SMA_50'], mode='lines', name='SMA 50', line=dict(color='orange'))
+            if 'SMA_200' in data.columns and data['SMA_200'].notnull().any():
+                fig.add_scatter(x=data.index, y=data['SMA_200'], mode='lines', name='SMA 200', line=dict(color='red'))
+            if 'Upper_Band' in data.columns and data['Upper_Band'].notnull().any():
+                fig.add_scatter(x=data.index, y=data['Upper_Band'], mode='lines', name='Bollinger Upper', line=dict(color='green', dash='dash'))
+            if 'Lower_Band' in data.columns and data['Lower_Band'].notnull().any():
+                fig.add_scatter(x=data.index, y=data['Lower_Band'], mode='lines', name='Bollinger Lower', line=dict(color='green', dash='dash'))
+            if 'Ichimoku_Span_A' in data.columns and data['Ichimoku_Span_A'].notnull().any():
+                fig.add_scatter(x=data.index, y=data['Ichimoku_Span_A'], mode='lines', name='Ichimoku Span A', line=dict(color='purple'))
+            if 'Ichimoku_Span_B' in data.columns and data['Ichimoku_Span_B'].notnull().any():
+                fig.add_scatter(x=data.index, y=data['Ichimoku_Span_B'], mode='lines', name='Ichimoku Span B', line=dict(color='purple', dash='dash'))
+            st.plotly_chart(fig, use_container_width=True)
+
+            # RSI and MACD
+            st.subheader("📊 RSI and MACD")
+            fig_ind = px.line(data, x=data.index, y='RSI', title="RSI")
+            fig_ind.add_hline(y=70, line_dash="dash", line_color="red")
+            fig_ind.add_hline(y=30, line_dash="dash", line_color="green")
+            st.plotly_chart(fig_ind, use_container_width=True)
+
+            fig_macd = px.line(data, x=data.index, y=['MACD', 'MACD_signal'], title="MACD")
+            st.plotly_chart(fig_macd, use_container_width=True)
+
+            # Volume Analysis
+            st.subheader("📊 Volume Analysis")
+            fig_vol = px.bar(data, x=data.index, y='Volume', title="Volume")
+            if 'Volume_Spike' in data.columns:
+                spike_data = data[data['Volume_Spike'] == True]
+                if not spike_data.empty:
+                    fig_vol.add_scatter(x=spike_data.index, y=spike_data['Volume'], mode='markers', name='Volume Spike',
+                                       marker=dict(color='red', size=10))
+            st.plotly_chart(fig_vol, use_container_width=True)
+
+            # Monte Carlo Simulation
+            st.subheader("📊 Monte Carlo Simulation")
+            simulations = monte_carlo_simulation(data)
+            sim_df = pd.DataFrame(simulations).T
+            sim_df.index = [data.index[-1] + timedelta(days=i) for i in range(len(sim_df))]
+            fig_sim = px.line(sim_df, title="Monte Carlo Price Projections (30 Days)")
+            st.plotly_chart(fig_sim, use_container_width=True)
+
+            # Backtest form to isolate button actions
+            with st.form(key="backtest_form"):
+                col1, col2 = st.columns(2)
                 with col1:
-                    value = round(value, 2) if pd.notnull(value) else "N/A"
-                    st.write(f"**{tooltip(name, tooltip_text)}**: {value}")
-            else:
+                    swing_button = st.form_submit_button("🔍 Backtest Swing Strategy")
                 with col2:
-                    value = round(value, 2) if pd.notnull(value) else "N/A"
-                    st.write(f"**{tooltip(name, tooltip_text)}**: {value}")
+                    intraday_button = st.form_submit_button("🔍 Backtest Intraday Strategy")
+                
+                if swing_button or intraday_button:
+                    strategy = "Swing" if swing_button else "Intraday"
+                    with st.spinner(f"Running {strategy} Strategy backtest..."):
+                        # Simplified hash for caching
+                        data_hash = hash(data.to_string())
+                        backtest_results = backtest_stock(data, symbol, strategy=strategy, _data_hash=data_hash)
+                        if strategy == "Swing":
+                            st.session_state.backtest_results_swing = backtest_results
+                        else:
+                            st.session_state.backtest_results_intraday = backtest_results
 
-        # Price Chart
-        st.subheader("📈 Price Chart with Indicators")
-        fig = px.line(data, x=data.index, y='Close', title=f"{symbol.split('-')[0]} Price")
-        if 'SMA_50' in data.columns and data['SMA_50'].notnull().any():
-            fig.add_scatter(x=data.index, y=data['SMA_50'], mode='lines', name='SMA 50', line=dict(color='orange'))
-        if 'SMA_200' in data.columns and data['SMA_200'].notnull().any():
-            fig.add_scatter(x=data.index, y=data['SMA_200'], mode='lines', name='SMA 200', line=dict(color='red'))
-        if 'Upper_Band' in data.columns and data['Upper_Band'].notnull().any():
-            fig.add_scatter(x=data.index, y=data['Upper_Band'], mode='lines', name='Bollinger Upper', line=dict(color='green', dash='dash'))
-        if 'Lower_Band' in data.columns and data['Lower_Band'].notnull().any():
-            fig.add_scatter(x=data.index, y=data['Lower_Band'], mode='lines', name='Bollinger Lower', line=dict(color='green', dash='dash'))
-        if 'Ichimoku_Span_A' in data.columns and data['Ichimoku_Span_A'].notnull().any():
-            fig.add_scatter(x=data.index, y=data['Ichimoku_Span_A'], mode='lines', name='Ichimoku Span A', line=dict(color='purple'))
-        if 'Ichimoku_Span_B' in data.columns and data['Ichimoku_Span_B'].notnull().any():
-            fig.add_scatter(x=data.index, y=data['Ichimoku_Span_B'], mode='lines', name='Ichimoku Span B', line=dict(color='purple', dash='dash'))
-        st.plotly_chart(fig, use_container_width=True)
+            # Display backtest results if available
+            for strategy, results_key in [("Swing", "backtest_results_swing"), ("Intraday", "backtest_results_intraday")]:
+                backtest_results = st.session_state.get(results_key)
+                if backtest_results:
+                    st.subheader(f"📈 Backtest Results ({strategy} Strategy)")
+                    st.write(f"**Total Return**: {backtest_results['total_return']:.2f}%")
+                    st.write(f"**Annualized Return**: {backtest_results['annual_return']:.2f}%")
+                    st.write(f"**Sharpe Ratio**: {backtest_results['sharpe_ratio']:.2f}")
+                    st.write(f"**Max Drawdown**: {backtest_results['max_drawdown']:.2f}%")
+                    st.write(f"**Number of Trades**: {backtest_results['trades']}")
+                    st.write(f"**Win Rate**: {backtest_results['win_rate']:.2f}%")
+                    with st.expander("Trade Details"):
+                        for trade in backtest_results["trade_details"]:
+                            profit = trade.get("profit", 0)
+                            st.write(f"Entry: {trade['entry_date']} @ ₹{trade['entry_price']:.2f}, "
+                                     f"Exit: {trade['exit_date']} @ ₹{trade['exit_price']:.2f}, "
+                                     f"Profit: ₹{profit:.2f}")
 
-        # Monte Carlo Simulation
-        st.subheader("📊 Monte Carlo Simulation")
-        simulations = monte_carlo_simulation(data)
-        sim_df = pd.DataFrame(simulations).T
-        sim_df.index = [data.index[-1] + timedelta(days=i) for i in range(len(sim_df))]
-        fig_sim = px.line(sim_df, title="Monte Carlo Price Projections (30 Days)")
-        st.plotly_chart(fig_sim, use_container_width=True)
+                    # Visualize Buy/Sell Signals
+                    fig = px.line(data, x=data.index, y='Close', title=f"{symbol.split('-')[0]} Price with Signals")
+                    if backtest_results["buy_signals"]:
+                        buy_dates, buy_prices = zip(*backtest_results["buy_signals"])
+                        fig.add_scatter(x=buy_dates, y=buy_prices, mode='markers', name='Buy Signals',
+                                       marker=dict(color='green', symbol='triangle-up', size=10))
+                    if backtest_results["sell_signals"]:
+                        sell_dates, sell_prices = zip(*backtest_results["sell_signals"])
+                        fig.add_scatter(x=sell_dates, y=sell_prices, mode='markers', name='Sell Signals',
+                                       marker=dict(color='red', symbol='triangle-down', size=10))
+                    st.plotly_chart(fig, use_container_width=True)
 
-        # RSI and MACD
-        st.subheader("📊 RSI and MACD")
-        fig_ind = px.line(data, x=data.index, y='RSI', title="RSI")
-        fig_ind.add_hline(y=70, line_dash="dash", line_color="red")
-        fig_ind.add_hline(y=30, line_dash="dash", line_color="green")
-        st.plotly_chart(fig_ind, use_container_width=True)
-
-        fig_macd = px.line(data, x=data.index, y=['MACD', 'MACD_signal'], title="MACD")
-        st.plotly_chart(fig_macd, use_container_width=True)
-
-        # Volume Analysis
-        st.subheader("📊 Volume Analysis")
-        fig_vol = px.bar(data, x=data.index, y='Volume', title="Volume")
-        if 'Volume_Spi' in data.columns:
-            spike_data = data[data['Volume_Spike'] == True]
-            if not spike_data.empty:
-                fig_vol.add_scatter(x=spike_data.index, y=spike_data['Volume'], mode='markers', name='Volume Spike',
-                                   marker=dict(color='red', size=10))
-        st.plotly_chart(fig_vol, use_container_width=True)
         
 def main():
     init_database()
