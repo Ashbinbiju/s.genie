@@ -870,36 +870,97 @@ def compute_signal_score(data):
     return score
 
 def adaptive_recommendation(data):
+    default_recommendation = {
+        'Regime': 'unknown',
+        'Score': 0,
+        'Recommendation': 'Skip',
+        'Reason': '',
+        'Position Size': 0,
+        'Trailing Stop': None,
+        'Current Price': None,
+        'Buy At': None,
+        'Stop Loss': None,
+        'Target': None
+    }
+
+    if data.empty or 'Close' not in data.columns or len(data['Close']) < 30:
+        default_recommendation['Reason'] = 'Insufficient data'
+        return default_recommendation
+
     regime = classify_market_regime(data)
     score = compute_signal_score(data)
 
-    # Position sizing
-    base_amount = 1000  # example base capital per trade
+    # Price check
+    current_price = data['Close'].iloc[-1]
+    if current_price < 100:
+        default_recommendation.update({
+            'Regime': regime,
+            'Reason': 'Price below ₹100',
+            'Current Price': current_price
+        })
+        return default_recommendation
+
+    # ATR filter
+    atr = data.get('ATR', pd.Series([0])).iloc[-1]
+    if atr < 10:
+        default_recommendation.update({
+            'Regime': regime,
+            'Reason': 'ATR < ₹10 (low expected move)',
+            'Current Price': current_price
+        })
+        return default_recommendation
+
+    # Recent range filter (last 3 candles)
+    recent_range = (data['High'] - data['Low']).tail(3).mean()
+    if recent_range < 10:
+        default_recommendation.update({
+            'Regime': regime,
+            'Reason': 'Recent range < ₹10',
+            'Current Price': current_price
+        })
+        return default_recommendation
+
+    # Volume filter
+    if 'Volume' in data.columns and 'Avg_Volume' in data.columns:
+        if data['Volume'].iloc[-1] < data['Avg_Volume'].iloc[-1] * 0.5:
+            default_recommendation.update({
+                'Regime': regime,
+                'Reason': 'Low volume',
+                'Current Price': current_price
+            })
+            return default_recommendation
+
+    # Passed filters — generate actionable recommendation
+    base_amount = 1000
     position_size = max(0, min(1, score / 7.0)) * base_amount
 
-    if regime == 'volatile':
-        threshold = 2.0
-    elif regime == 'bullish':
-        threshold = 1.0
-    else:
-        threshold = 1.5
+    # Chandelier stop (trailing stop-loss)
+    highest_close = data['Close'].rolling(22).max().iloc[-1]
+    chandelier_stop = highest_close - atr * 3
+
+    stop_loss = calculate_stop_loss(data)
+    target = calculate_target(data)
+    buy_at = calculate_buy_at(data)
 
     recommendation = 'Hold'
+    threshold = 2.0 if regime == 'volatile' else (1.0 if regime == 'bullish' else 1.5)
+
     if score >= threshold:
         recommendation = 'Buy'
     elif score <= -threshold:
         recommendation = 'Sell'
 
-    # Trailing Stop Loss using Chandelier Exit
-    highest_close = data['Close'].rolling(22).max().iloc[-1]
-    chandelier_stop = highest_close - data['ATR'].iloc[-1] * 3
-
     return {
         'Regime': regime,
         'Score': round(score, 2),
         'Recommendation': recommendation,
+        'Reason': 'Passed filters and thresholds',
         'Position Size': round(position_size, 2),
-        'Trailing Stop': round(chandelier_stop, 2)
+        'Trailing Stop': round(chandelier_stop, 2),
+        'Current Price': round(current_price, 2),
+        'Buy At': buy_at,
+        'Stop Loss': stop_loss,
+        'Target': target
     }
 
 def generate_recommendations(data, symbol=None):
