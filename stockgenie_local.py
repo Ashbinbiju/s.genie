@@ -1375,26 +1375,30 @@ def analyze_batch(stock_batch):
     for error in errors:
         st.warning(error)
     return results
-
+    
 def analyze_stock_parallel(symbol):
     data = fetch_stock_data_cached(symbol)
     if not data.empty:
         data = analyze_stock(data)
-        recommendations = generate_recommendations(data, symbol)
+        # Use adaptive_recommendation instead of generate_recommendations
+        rec = adaptive_recommendation(data)
         return {
             "Symbol": symbol,
-            "Current Price": recommendations["Current Price"],
-            "Buy At": recommendations["Buy At"],
-            "Stop Loss": recommendations["Stop Loss"],
-            "Target": recommendations["Target"],
-            "Intraday": recommendations["Intraday"],
-            "Swing": recommendations["Swing"],
-            "Short-Term": recommendations["Short-Term"],
-            "Long-Term": recommendations["Long-Term"],
-            "Mean_Reversion": recommendations["Mean_Reversion"],
-            "Breakout": recommendations["Breakout"],
-            "Ichimoku_Trend": recommendations["Ichimoku_Trend"],
-            "Score": recommendations.get("Score", 0),
+            "Current Price": rec["Current Price"],
+            "Buy At": rec["Buy At"],
+            "Stop Loss": rec["Stop Loss"],
+            "Target": rec["Target"],
+            "Intraday": rec["Recommendation"],  # Map to Intraday for compatibility
+            "Swing": rec["Recommendation"],     # Map to Swing for compatibility
+            "Short-Term": rec["Recommendation"],
+            "Long-Term": rec["Recommendation"],
+            "Mean_Reversion": rec["Recommendation"],
+            "Breakout": rec["Recommendation"],
+            "Ichimoku_Trend": rec["Recommendation"],
+            "Score": rec["Score"],
+            "Regime": rec["Regime"],  # New field
+            "Position Size": rec["Position Size"],  # New field
+            "Trailing Stop": rec["Trailing Stop"],  # New field
         }
     return None
 
@@ -1618,6 +1622,15 @@ def display_dashboard(symbol=None, data=None, recommendations=None):
             target = recommendations['Target'] if recommendations['Target'] is not None else "N/A"
             st.metric("Target", f"₹{target}")
 
+        # Add new metrics for adaptive recommendation
+        col5, col6 = st.columns(2)
+        with col5:
+            st.metric("Market Regime", recommendations.get('Regime', 'N/A'))
+        with col6:
+            st.metric("Position Size (₹)", recommendations.get('Position Size', 'N/A'))
+            st.metric("Trailing Stop", f"₹{recommendations.get('Trailing Stop', 'N/A')}")
+
+
         st.subheader("📈 Trading Recommendations")
         col1, col2, col3, col4 = st.columns(4)
         with col1:
@@ -1633,6 +1646,7 @@ def display_dashboard(symbol=None, data=None, recommendations=None):
             st.write(f"**Ichimoku Trend**: {colored_recommendation(recommendations['Ichimoku_Trend'])}")
             st.write(f"**{tooltip('Score', TOOLTIPS['Score'])}**: {recommendations['Score']}/7")
 
+        
         # Backtest form to isolate button actions
         with st.form(key="backtest_form"):
             col1, col2 = st.columns(2)
@@ -1780,7 +1794,7 @@ def main():
                 data = fetch_stock_data_with_auth(symbol)
                 if not data.empty:
                     data = analyze_stock(data)
-                    recommendations = generate_recommendations(data, symbol)
+                    recommendations = adaptive_recommendation(data)
                     st.session_state.symbol = symbol
                     st.session_state.data = data
                     st.session_state.recommendations = recommendations
