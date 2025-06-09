@@ -1221,103 +1221,70 @@ def get_top_sectors_cached(rate_limit_delay=2, stocks_per_sector=2):
 @st.cache_data
 @st.cache_data(ttl=3600)
 def backtest_stock(data, symbol, strategy="Swing", _data_hash=None):
-    if data.empty or len(data) < 200:
-        st.warning(f"⚠️ Insufficient data for backtesting {symbol}.")
-        return None
-
-    data = data.copy()
-    data = analyze_stock(data)
-
-    key_cols = ['Open', 'Close', 'RSI', 'MACD', 'MACD_signal', 'ATR', 'ADX', 'TRIX', 'VPT', 'OBV']
-    for col in key_cols:
-        if col not in data.columns:
-            data[col] = None
-    data = data.dropna(subset=['Open', 'Close'])
-
-    if len(data) < 27:
-        st.warning(f"⚠️ Not enough valid data for backtesting {symbol}.")
-        return None
-
-    initial_capital = 25000
-    capital = initial_capital
-    position = 0
-    trades = []
-    buy_signals = []
-    sell_signals = []
-    slippage = 0.002
-    commission = 0.001
-
-    min_rows = 200
-    for i in range(min_rows, len(data) - 1):
-        row = data.iloc[i]
-        next_row = data.iloc[i + 1]
-        sliced_data = data.iloc[:i+1]
-
-        if len(sliced_data['RSI'].dropna()) < 1 or len(sliced_data['MACD'].dropna()) < 1:
-            continue
-
-        recommendations = generate_recommendations(sliced_data, symbol=symbol)
-
-        if recommendations[strategy] in ["Buy", "Strong Buy"]:
-            buy_signals.append((next_row.name, next_row['Open']))
-        elif recommendations[strategy] in ["Sell", "Strong Sell"]:
-            sell_signals.append((next_row.name, next_row['Open']))
-
-        if position == 0 and recommendations[strategy] in ["Buy", "Strong Buy"]:
-            entry_price = next_row['Open'] * (1 + slippage + commission)
-            shares = capital // entry_price
-            if shares > 0:
-                position = shares
-                capital -= shares * entry_price
-                trades.append({
-                    "entry_date": next_row.name,
-                    "entry_price": entry_price,
-                    "shares": shares
-                })
-
-        elif position > 0 and recommendations[strategy] in ["Sell", "Strong Sell"]:
-            exit_price = next_row['Open'] * (1 - slippage - commission)
-            capital += position * exit_price
-            trades[-1]["exit_date"] = next_row.name
-            trades[-1]["exit_price"] = exit_price
-            trades[-1]["profit"] = (exit_price - trades[-1]["entry_price"]) * position
-            position = 0
-
-    if position > 0:
-        exit_price = data['Close'].iloc[-1] * (1 - slippage - commission)
-        capital += position * exit_price
-        trades[-1]["exit_date"] = data.index[-1]
-        trades[-1]["exit_price"] = exit_price
-        trades[-1]["profit"] = (exit_price - trades[-1]["entry_price"]) * position
-
-    final_value = capital
-    total_return = (final_value - initial_capital) / initial_capital * 100
-    wins = sum(1 for trade in trades if trade.get("profit", 0) > 0)
-    win_rate = (wins / len(trades) * 100) if trades else 0
-
-    annual_return = ((final_value / initial_capital) ** (252 / len(data))) - 1 if len(data) > 0 else 0
-    returns = pd.Series([trade["profit"] / initial_capital for trade in trades if "profit" in trade])
-    sharpe_ratio = (returns.mean() / returns.std() * np.sqrt(252)) if returns.std() != 0 else 0
-    max_drawdown = 0
-    peak = initial_capital
-    for trade in trades:
-        if "profit" in trade:
-            capital += trade["profit"]
-            peak = max(peak, capital)
-            drawdown = (peak - capital) / peak
-            max_drawdown = max(max_drawdown, drawdown)
-
-    return {
-        "total_return": round(total_return, 2),
-        "annual_return": round(annual_return * 100, 2),
-        "sharpe_ratio": round(sharpe_ratio, 2),
-        "max_drawdown": round(max_drawdown * 100, 2),
-        "trades": len(trades),
-        "win_rate": round(win_rate, 2),
-        "trade_details": trades,
-        "buy_signals": buy_signals,
-        "sell_signals": sell_signals
+    results = {
+        "total_return": 0,
+        "annual_return": 0,
+        "sharpe_ratio": 0,
+        "max_drawdown": 0,
+        "trades": 0,
+        "win_rate": 0,
+        "buy_signals": [],
+        "sell_signals": [],
+        "trade_details": []
     }
+    recommendation_mode = st.session_state.get('recommendation_mode', 'Standard')
+    
+    position = None
+    entry_price = 0
+    entry_date = None
+    trades = []
+    returns = []
+    
+    for i in range(1, len(data)):
+        sliced_data = data.iloc[:i+1]
+        if recommendation_mode == "Adaptive":
+            rec = adaptive_recommendation(sliced_data)
+            signal = rec["Recommendation"]
+        else:
+            rec = generate_recommendations(sliced_data, symbol)
+            signal = rec[strategy] if strategy in rec else "Hold"
+        
+        current_price = data['Close'].iloc[i]
+        current_date = data.index[i]
+        
+        if signal == "Buy" and position is None:
+            position = "Long"
+            entry_price = current_price
+            entry_date = current_date
+            results["buy_signals"].append((current_date, current_price))
+        
+        elif signal == "Sell" and position == "Long":
+            position = None
+            profit = current_price - entry_price
+            returns.append(profit / entry_price)
+            trades.append({
+                "entry_date": entry_date,
+                "entry_price": entry_price,
+                "exit_date": current_date,
+                "exit_price": current_price,
+                "profit": profit
+            })
+            results["sell_signals"].append((current_date, current_price))
+            entry_price = 0
+            entry_date = None
+    
+    if trades:
+        results["trade_details"] = trades
+        results["trades"] = len(trades)
+        results["total_return"] = sum([t["profit"]/t["entry_price"] for t in trades]) * 100
+        results["win_rate"] = len([t for t in trades if t["profit"] > 0]) / len(trades) * 100
+        if returns:
+            results["annual_return"] = (np.mean(returns) * 252) * 100
+            results["sharpe_ratio"] = np.mean(returns) / np.std(returns) * np.sqrt(252) if np.std(returns) != 0 else 0
+        drawdowns = [t["profit"]/t["entry_price"] for t in trades]
+        results["max_drawdown"] = min(drawdowns, default=0) * 100 if drawdowns else 0
+    
+    return results
     
 def init_database():
     conn = sqlite3.connect('stock_picks.db')
