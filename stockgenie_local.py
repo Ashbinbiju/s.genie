@@ -925,7 +925,7 @@ def adaptive_recommendation(data):
         score = sum(buy_signals) - sum(sell_signals)
 
         # Filters
-        if current_price < 100 or atr < 10 or data['Volume'].iloc[-1] < 10000:
+        if current_price < 100 or atr < 5 or data['Volume'].iloc[-1] < 5000:
             logging.info("Stock filtered out due to low price, ATR, or volume")
             return {
                 "Current Price": current_price,
@@ -941,7 +941,7 @@ def adaptive_recommendation(data):
             }
 
         # Recommendation logic
-        recommendation = ("Buy" if score > 1 else "Sell" if score < -1 else "Hold")
+        recommendation = ("Buy" if score > 0.5 else "Sell" if score < -0.5 else "Hold")  # Lowered from 1/-1
         reason = f"Based on RSI ({rsi:.2f}) and MACD ({macd:.2f}) in {regime} regime"
 
         # Trading parameters
