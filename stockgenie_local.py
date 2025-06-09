@@ -1,5 +1,7 @@
 import pandas as pd
 import ta
+import logging
+import numpy as np
 import streamlit as st
 from datetime import datetime, timedelta
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -869,100 +871,112 @@ def compute_signal_score(data):
 
     return score
 
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+
 def adaptive_recommendation(data):
-    default_recommendation = {
-        'Regime': 'unknown',
-        'Score': 0,
-        'Recommendation': 'Skip',
-        'Reason': '',
-        'Position Size': 0,
-        'Trailing Stop': None,
-        'Current Price': None,
-        'Buy At': None,
-        'Stop Loss': None,
-        'Target': None
-    }
+    """
+    Generate a trading recommendation based on market regime and technical indicators.
+    Returns a dictionary with all required fields, even in edge cases.
+    """
+    try:
+        if data.empty or len(data) < 50:
+            logging.warning("Insufficient data for adaptive recommendation")
+            return {
+                "Current Price": None,
+                "Buy At": None,
+                "Stop Loss": None,
+                "Target": None,
+                "Recommendation": "Hold",
+                "Score": 0,
+                "Regime": "Unknown",
+                "Position Size": None,
+                "Trailing Stop": None,
+                "Reason": "Insufficient data"
+            }
 
-    if data.empty or 'Close' not in data.columns or len(data['Close']) < 30:
-        default_recommendation['Reason'] = 'Insufficient data'
-        return default_recommendation
+        # Extract latest data
+        current_price = data['Close'].iloc[-1] if 'Close' in data else None
+        if current_price is None or pd.isna(current_price):
+            logging.warning("No valid close price available")
+            return {
+                "Current Price": None,
+                "Buy At": None,
+                "Stop Loss": None,
+                "Target": None,
+                "Recommendation": "Hold",
+                "Score": 0,
+                "Regime": "Unknown",
+                "Position Size": None,
+                "Trailing Stop": None,
+                "Reason": "No valid close price"
+            }
 
-    regime = classify_market_regime(data)
-    score = compute_signal_score(data)
+        # Market regime classification (example logic)
+        atr = data['ATR'].iloc[-1] if 'ATR' in data and pd.notnull(data['ATR'].iloc[-1]) else 0
+        sma_50 = data['SMA_50'].iloc[-1] if 'SMA_50' in data and pd.notnull(data['SMA_50'].iloc[-1]) else current_price
+        regime = ("High Volatility" if atr > 0.05 * current_price else
+                 "Bullish" if current_price > sma_50 else "Neutral")
 
-    # Price check
-    current_price = data['Close'].iloc[-1]
-    if current_price < 100:
-        default_recommendation.update({
-            'Regime': regime,
-            'Reason': 'Price below ₹100',
-            'Current Price': current_price
-        })
-        return default_recommendation
+        # Indicator signals (example logic)
+        rsi = data['RSI'].iloc[-1] if 'RSI' in data and pd.notnull(data['RSI'].iloc[-1]) else 50
+        macd = data['MACD'].iloc[-1] if 'MACD' in data and pd.notnull(data['MACD'].iloc[-1]) else 0
+        buy_signals = (rsi < 30, macd > 0)
+        sell_signals = (rsi > 70, macd < 0)
+        score = sum(buy_signals) - sum(sell_signals)
 
-    # ATR filter
-    atr = data.get('ATR', pd.Series([0])).iloc[-1]
-    if atr < 10:
-        default_recommendation.update({
-            'Regime': regime,
-            'Reason': 'ATR < ₹10 (low expected move)',
-            'Current Price': current_price
-        })
-        return default_recommendation
+        # Filters
+        if current_price < 100 or atr < 10 or data['Volume'].iloc[-1] < 10000:
+            logging.info("Stock filtered out due to low price, ATR, or volume")
+            return {
+                "Current Price": current_price,
+                "Buy At": None,
+                "Stop Loss": None,
+                "Target": None,
+                "Recommendation": "Hold",
+                "Score": 0,
+                "Regime": regime,
+                "Position Size": None,
+                "Trailing Stop": None,
+                "Reason": "Low price, ATR, or volume"
+            }
 
-    # Recent range filter (last 3 candles)
-    recent_range = (data['High'] - data['Low']).tail(3).mean()
-    if recent_range < 10:
-        default_recommendation.update({
-            'Regime': regime,
-            'Reason': 'Recent range < ₹10',
-            'Current Price': current_price
-        })
-        return default_recommendation
+        # Recommendation logic
+        recommendation = ("Buy" if score > 1 else "Sell" if score < -1 else "Hold")
+        reason = f"Based on RSI ({rsi:.2f}) and MACD ({macd:.2f}) in {regime} regime"
 
-    # Volume filter
-    if 'Volume' in data.columns and 'Avg_Volume' in data.columns:
-        if data['Volume'].iloc[-1] < data['Avg_Volume'].iloc[-1] * 0.5:
-            default_recommendation.update({
-                'Regime': regime,
-                'Reason': 'Low volume',
-                'Current Price': current_price
-            })
-            return default_recommendation
+        # Trading parameters
+        buy_at = current_price * 1.01 if recommendation == "Buy" else None
+        stop_loss = current_price * 0.95 if recommendation == "Buy" else current_price * 1.05 if recommendation == "Sell" else None
+        target = current_price * 1.05 if recommendation == "Buy" else current_price * 0.95 if recommendation == "Sell" else None
+        position_size = min(100000 / current_price, 100) if recommendation in ["Buy", "Sell"] else None
+        trailing_stop = current_price - (atr * 2) if recommendation == "Buy" else current_price + (atr * 2) if recommendation == "Sell" else None
 
-    # Passed filters — generate actionable recommendation
-    base_amount = 1000
-    position_size = max(0, min(1, score / 7.0)) * base_amount
-
-    # Chandelier stop (trailing stop-loss)
-    highest_close = data['Close'].rolling(22).max().iloc[-1]
-    chandelier_stop = highest_close - atr * 3
-
-    stop_loss = calculate_stop_loss(data)
-    target = calculate_target(data)
-    buy_at = calculate_buy_at(data)
-
-    recommendation = 'Hold'
-    threshold = 2.0 if regime == 'volatile' else (1.0 if regime == 'bullish' else 1.5)
-
-    if score >= threshold:
-        recommendation = 'Buy'
-    elif score <= -threshold:
-        recommendation = 'Sell'
-
-    return {
-        'Regime': regime,
-        'Score': round(score, 2),
-        'Recommendation': recommendation,
-        'Reason': 'Passed filters and thresholds',
-        'Position Size': round(position_size, 2),
-        'Trailing Stop': round(chandelier_stop, 2),
-        'Current Price': round(current_price, 2),
-        'Buy At': buy_at,
-        'Stop Loss': stop_loss,
-        'Target': target
-    }
-
+        return {
+            "Current Price": current_price,
+            "Buy At": buy_at,
+            "Stop Loss": stop_loss,
+            "Target": target,
+            "Recommendation": recommendation,
+            "Score": score,
+            "Regime": regime,
+            "Position Size": position_size,
+            "Trailing Stop": trailing_stop,
+            "Reason": reason
+        }
+    except Exception as e:
+        logging.error(f"Error in adaptive_recommendation: {str(e)}")
+        return {
+            "Current Price": None,
+            "Buy At": None,
+            "Stop Loss": None,
+            "Target": None,
+            "Recommendation": "Hold",
+            "Score": 0,
+            "Regime": "Unknown",
+            "Position Size": None,
+            "Trailing Stop": None,
+            "Reason": f"Error: {str(e)}"
+        }
 def generate_recommendations(data, symbol=None):
     recommendations = {
         "Intraday": "Hold", "Swing": "Hold",
@@ -1326,12 +1340,25 @@ def insert_top_picks(results_df, pick_type="daily"):
                 reason, pick_type
             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ''', (
-            datetime.now().strftime('%Y-%m-%d'), row['Symbol'], row['Score'],
-            row['Current Price'], row['Buy At'], row['Stop Loss'], row['Target'],
-            row.get('Intraday'), row.get('Swing'), row.get('Short-Term'),
-            row.get('Long-Term'), row.get('Mean_Reversion'), row.get('Breakout'),
-            row.get('Ichimoku_Trend'), row.get('Recommendation'), row.get('Regime'),
-            row.get('Position Size'), row.get('Trailing Stop'), row.get('Reason'),
+            datetime.now().strftime('%Y-%m-%d'),
+            row.get('Symbol'),
+            row.get('Score', 0),
+            row.get('Current Price'),
+            row.get('Buy At'),
+            row.get('Stop Loss'),
+            row.get('Target'),
+            row.get('Intraday'),
+            row.get('Swing'),
+            row.get('Short-Term'),
+            row.get('Long-Term'),
+            row.get('Mean_Reversion'),
+            row.get('Breakout'),
+            row.get('Ichimoku_Trend'),
+            row.get('Recommendation'),
+            row.get('Regime'),
+            row.get('Position Size'),
+            row.get('Trailing Stop'),
+            row.get('Reason'),
             pick_type
         ))
     conn.commit()
@@ -1353,26 +1380,36 @@ def analyze_batch(stock_batch):
     for error in errors:
         st.warning(error)
     return results
-    
+
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 def analyze_stock_parallel(symbol):
-    data = fetch_stock_data_cached(symbol)
-    if not data.empty:
+    try:
+        data = fetch_stock_data_cached(symbol)
+        if data.empty or len(data) < 50:
+            logging.warning(f"No sufficient data for {symbol}")
+            return None
+        
         data = analyze_stock(data)
         recommendation_mode = st.session_state.get('recommendation_mode', 'Standard')
+        logging.info(f"Analyzing {symbol} in {recommendation_mode} mode")
+        
         if recommendation_mode == "Adaptive":
             rec = adaptive_recommendation(data)
+            if not rec or not rec.get('Recommendation'):
+                logging.error(f"Invalid adaptive_recommendation output for {symbol}: {rec}")
+                return None
             return {
                 "Symbol": symbol,
-                "Current Price": rec["Current Price"],
-                "Buy At": rec["Buy At"],
-                "Stop Loss": rec["Stop Loss"],
-                "Target": rec["Target"],
-                "Recommendation": rec["Recommendation"],
-                "Score": rec["Score"],
-                "Regime": rec["Regime"],
-                "Position Size": rec["Position Size"],
-                "Trailing Stop": rec["Trailing Stop"],
-                "Reason": rec["Reason"],
+                "Current Price": rec.get("Current Price"),
+                "Buy At": rec.get("Buy At"),
+                "Stop Loss": rec.get("Stop Loss"),
+                "Target": rec.get("Target"),
+                "Recommendation": rec.get("Recommendation", "Hold"),
+                "Score": rec.get("Score", 0),
+                "Regime": rec.get("Regime"),
+                "Position Size": rec.get("Position Size"),
+                "Trailing Stop": rec.get("Trailing Stop"),
+                "Reason": rec.get("Reason"),
                 "Intraday": None,
                 "Swing": None,
                 "Short-Term": None,
@@ -1383,40 +1420,45 @@ def analyze_stock_parallel(symbol):
             }
         else:
             rec = generate_recommendations(data, symbol)
+            if not rec or not rec.get('Intraday'):
+                logging.error(f"Invalid generate_recommendations output for {symbol}: {rec}")
+                return None
             return {
                 "Symbol": symbol,
-                "Current Price": rec["Current Price"],
-                "Buy At": rec["Buy At"],
-                "Stop Loss": rec["Stop Loss"],
-                "Target": rec["Target"],
-                "Intraday": rec["Intraday"],
-                "Swing": rec["Swing"],
-                "Short-Term": rec["Short-Term"],
-                "Long-Term": rec["Long-Term"],
-                "Mean_Reversion": rec["Mean_Reversion"],
-                "Breakout": rec["Breakout"],
-                "Ichimoku_Trend": rec["Ichimoku_Trend"],
-                "Score": rec["Score"],
+                "Current Price": rec.get("Current Price"),
+                "Buy At": rec.get("Buy At"),
+                "Stop Loss": rec.get("Stop Loss"),
+                "Target": rec.get("Target"),
+                "Intraday": rec.get("Intraday", "Hold"),
+                "Swing": rec.get("Swing", "Hold"),
+                "Short-Term": rec.get("Short-Term", "Hold"),
+                "Long-Term": rec.get("Long-Term", "Hold"),
+                "Mean_Reversion": rec.get("Mean_Reversion", "Hold"),
+                "Breakout": rec.get("Breakout", "Hold"),
+                "Ichimoku_Trend": rec.get("Ichimoku_Trend", "Hold"),
+                "Score": rec.get("Score", 0),
                 "Recommendation": None,
                 "Regime": None,
                 "Position Size": None,
                 "Trailing Stop": None,
                 "Reason": None
             }
-    return None
+    except Exception as e:
+        logging.error(f"Error in analyze_stock_parallel for {symbol}: {str(e)}")
+        return None
 
-def analyze_all_stocks(stock_list, batch_size=10, progress_callback=None):
+[⚠️ Suspicious Content] def analyze_all_stocks(stock_list, batch_size=10, progress_callback=None):
     results = []
     total_batches = (len(stock_list) // batch_size) + (1 if len(stock_list) % batch_size != 0 else 0)
     for i in range(0, len(stock_list), batch_size):
         batch = stock_list[i:i + batch_size]
         batch_results = analyze_batch(batch)
-        results.extend(batch_results)
+        results.extend([r for r in batch_results if r is not None])
         if progress_callback:
             progress_callback((i + len(batch)) / len(stock_list))
         time.sleep(3)
     
-    results_df = pd.DataFrame([r for r in results if r is not None])
+    results_df = pd.DataFrame(results)
     if results_df.empty:
         st.warning("⚠️ No valid stock data retrieved.")
         return pd.DataFrame()
@@ -1424,6 +1466,9 @@ def analyze_all_stocks(stock_list, batch_size=10, progress_callback=None):
         results_df["Score"] = 0
     if "Current Price" not in results_df.columns:
         results_df["Current Price"] = None
+    recommendation_mode = st.session_state.get('recommendation_mode', 'Standard')
+    if recommendation_mode == "Adaptive":
+        results_df = results_df[results_df["Recommendation"].str.contains("Buy|Sell", na=False)]
     return results_df.sort_values(by="Score", ascending=False).head(5)
 
 def analyze_intraday_stocks(stock_list, batch_size=10, progress_callback=None):
@@ -1432,30 +1477,34 @@ def analyze_intraday_stocks(stock_list, batch_size=10, progress_callback=None):
     for i in range(0, len(stock_list), batch_size):
         batch = stock_list[i:i + batch_size]
         batch_results = analyze_batch(batch)
-        results.extend(batch_results)
+        results.extend([r for r in batch_results if r is not None])
         if progress_callback:
             progress_callback((i + len(batch)) / len(stock_list))
         time.sleep(3)
     
-    results_df = pd.DataFrame([r for r in results if r is not None])
+    results_df = pd.DataFrame(results)
     if results_df.empty:
         return pd.DataFrame()
     if "Score" not in results_df.columns:
         results_df["Score"] = 0
     if "Current Price" not in results_df.columns:
         results_df["Current Price"] = None
-    intraday_df = results_df[results_df["Intraday"].str.contains("Buy", na=False)]
-    return intraday_df.sort_values(by="Score", ascending=False).head(5)
+    recommendation_mode = st.session_state.get('recommendation_mode', 'Standard')
+    if recommendation_mode == "Adaptive":
+        results_df = results_df[results_df["Recommendation"].str.contains("Buy", na=False)]
+    else:
+        results_df = results_df[results_df["Intraday"].str.contains("Buy", na=False)]
+    return results_df.sort_values(by="Score", ascending=False).head(5)
 
 def colored_recommendation(recommendation):
+    if recommendation is None or not isinstance(recommendation, str):
+        return "⚪ N/A"
     if "Buy" in recommendation:
         return f"🟢 {recommendation}"
     elif "Sell" in recommendation:
         return f"🔴 {recommendation}"
-    elif "Hold" in recommendation:
-        return f"🟡 {recommendation}"
     else:
-        return recommendation
+        return f"⚪ {recommendation}"
 
 def update_progress(progress_bar, loading_text, progress_value, loading_messages):
     progress_bar.progress(progress_value)
@@ -1463,7 +1512,7 @@ def update_progress(progress_bar, loading_text, progress_value, loading_messages
     dots = "." * int((progress_value * 10) % 4)
     loading_text.text(f"{loading_message}{dots}")
 
-def display_dashboard(symbol=None, data=None, recommendations=None):
+[⚠️ Suspicious Content] def display_dashboard(symbol=None, data=None, recommendations=None):
     # Initialize session state
     if 'selected_sectors' not in st.session_state:
         st.session_state.selected_sectors = ["Bank"]
@@ -1507,7 +1556,7 @@ def display_dashboard(symbol=None, data=None, recommendations=None):
         st.warning("⚠️ No stocks selected. Please choose at least one sector.")
         return
 
-    # Top sectors button (unchanged)
+    # Top sectors button
     if st.button("🔎 Analyze Top Performing Sectors"):
         with st.spinner("🔍 Crunching sector data ..."):
             top_sectors = get_top_sectors_cached(rate_limit_delay=2, stocks_per_sector=2)
@@ -1535,33 +1584,33 @@ def display_dashboard(symbol=None, data=None, recommendations=None):
             st.subheader("🏆 Today's Top 5 Stocks")
             for _, row in results_df.iterrows():
                 with st.expander(f"{row['Symbol']} - {tooltip('Score', TOOLTIPS['Score'])}: {row['Score']}/7"):
-                    current_price = row['Current Price'] if pd.notnull(row['Current Price']) else "N/A"
-                    buy_at = row['Buy At'] if pd.notnull(row['Buy At']) else "N/A"
-                    stop_loss = row['Stop Loss'] if pd.notnull(row['Stop Loss']) else "N/A"
-                    target = row['Target'] if pd.notnull(row['Target']) else "N/A"
+                    current_price = row.get('Current Price', 'N/A')
+                    buy_at = row.get('Buy At', 'N/A')
+                    stop_loss = row.get('Stop Loss', 'N/A')
+                    target = row.get('Target', 'N/A')
                     if st.session_state.recommendation_mode == "Adaptive":
                         st.markdown(f"""
                         {tooltip('Current Price', TOOLTIPS['Stop Loss'])}: ₹{current_price}  
                         Buy At: ₹{buy_at} | Stop Loss: ₹{stop_loss}  
                         Target: ₹{target}  
-                        Recommendation: {colored_recommendation(row['Recommendation'])}  
-                        Regime: {row['Regime'] or 'N/A'}  
-                        Position Size (₹): {row['Position Size'] or 'N/A'}  
-                        Trailing Stop: ₹{row['Trailing Stop'] or 'N/A'}  
-                        Reason: {row['Reason'] or 'N/A'}
+                        Recommendation: {colored_recommendation(row.get('Recommendation', 'N/A'))}  
+                        Regime: {row.get('Regime', 'N/A')}  
+                        Position Size (₹): {row.get('Position Size', 'N/A')}  
+                        Trailing Stop: ₹{row.get('Trailing Stop', 'N/A')}  
+                        Reason: {row.get('Reason', 'N/A')}
                         """)
                     else:
                         st.markdown(f"""
                         {tooltip('Current Price', TOOLTIPS['Stop Loss'])}: ₹{current_price}  
                         Buy At: ₹{buy_at} | Stop Loss: ₹{stop_loss}  
                         Target: ₹{target}  
-                        Intraday: {colored_recommendation(row['Intraday'])}  
-                        Swing: {colored_recommendation(row['Swing'])}  
-                        Short-Term: {colored_recommendation(row['Short-Term'])}  
-                        Long-Term: {colored_recommendation(row['Long-Term'])}  
-                        Mean Reversion: {colored_recommendation(row['Mean_Reversion'])}  
-                        Breakout: {colored_recommendation(row['Breakout'])}  
-                        Ichimoku Trend: {colored_recommendation(row['Ichimoku_Trend'])}
+                        Intraday: {colored_recommendation(row.get('Intraday', 'N/A'))}  
+                        Swing: {colored_recommendation(row.get('Swing', 'N/A'))}  
+                        Short-Term: {colored_recommendation(row.get('Short-Term', 'N/A'))}  
+                        Long-Term: {colored_recommendation(row.get('Long-Term', 'N/A'))}  
+                        Mean Reversion: {colored_recommendation(row.get('Mean_Reversion', 'N/A'))}  
+                        Breakout: {colored_recommendation(row.get('Breakout', 'N/A'))}  
+                        Ichimoku Trend: {colored_recommendation(row.get('Ichimoku_Trend', 'N/A'))}
                         """)
         else:
             st.warning("⚠️ No top picks available due to data issues.")
@@ -1586,27 +1635,27 @@ def display_dashboard(symbol=None, data=None, recommendations=None):
             st.subheader("🏆 Top 5 Intraday Stocks")
             for _, row in intraday_results.iterrows():
                 with st.expander(f"{row['Symbol']} - {tooltip('Score', TOOLTIPS['Score'])}: {row['Score']}/7"):
-                    current_price = row['Current Price'] if pd.notnull(row['Current Price']) else "N/A"
-                    buy_at = row['Buy At'] if pd.notnull(row['Buy At']) else "N/A"
-                    stop_loss = row['Stop Loss'] if pd.notnull(row['Stop Loss']) else "N/A"
-                    target = row['Target'] if pd.notnull(row['Target']) else "N/A"
+                    current_price = row.get('Current Price', 'N/A')
+                    buy_at = row.get('Buy At', 'N/A')
+                    stop_loss = row.get('Stop Loss', 'N/A')
+                    target = row.get('Target', 'N/A')
                     if st.session_state.recommendation_mode == "Adaptive":
                         st.markdown(f"""
                         {tooltip('Current Price', TOOLTIPS['Stop Loss'])}: ₹{current_price}  
                         Buy At: ₹{buy_at} | Stop Loss: ₹{stop_loss}  
                         Target: ₹{target}  
-                        Recommendation: {colored_recommendation(row['Recommendation'])}  
-                        Regime: {row['Regime'] or 'N/A'}  
-                        Position Size (₹): {row['Position Size'] or 'N/A'}  
-                        Trailing Stop: ₹{row['Trailing Stop'] or 'N/A'}  
-                        Reason: {row['Reason'] or 'N/A'}
+                        Recommendation: {colored_recommendation(row.get('Recommendation', 'N/A'))}  
+                        Regime: {row.get('Regime', 'N/A')}  
+                        Position Size (₹): {row.get('Position Size', 'N/A')}  
+                        Trailing Stop: ₹{row.get('Trailing Stop', 'N/A')}  
+                        Reason: {row.get('Reason', 'N/A')}
                         """)
                     else:
                         st.markdown(f"""
                         {tooltip('Current Price', TOOLTIPS['Stop Loss'])}: ₹{current_price}  
                         Buy At: ₹{buy_at} | Stop Loss: ₹{stop_loss}  
                         Target: ₹{target}  
-                        Intraday: {colored_recommendation(row['Intraday'])}
+                        Intraday: {colored_recommendation(row.get('Intraday', 'N/A'))}
                         """)
         else:
             st.warning("⚠️ No intraday picks available due to data issues.")
@@ -1681,7 +1730,7 @@ def display_dashboard(symbol=None, data=None, recommendations=None):
             st.write(f"**{tooltip('Score', TOOLTIPS['Score'])}**: {recommendations.get('Score', 'N/A')}/7")
             st.write(f"**Volatility**: {assess_risk(data)}")
 
-        # Backtest form (update backtest_stock if needed)
+        # Backtest form
         with st.form(key="backtest_form"):
             col1, col2 = st.columns(2)
             with col1:
@@ -1699,7 +1748,7 @@ def display_dashboard(symbol=None, data=None, recommendations=None):
                     else:
                         st.session_state.backtest_results_intraday = backtest_results
 
-        # Backtest results (unchanged)
+        # Backtest results
         for strategy, results_key in [("Swing", "backtest_results_swing"), ("Intraday", "backtest_results_intraday")]:
             backtest_results = st.session_state.get(results_key)
             if backtest_results:
@@ -1728,7 +1777,7 @@ def display_dashboard(symbol=None, data=None, recommendations=None):
                                    marker=dict(color='red', symbol='triangle-down', size=10))
                 st.plotly_chart(fig, use_container_width=True)
 
-        # Technical Indicators (unchanged)
+        # Technical Indicators
         st.subheader("📊 Technical Indicators")
         indicators = [
             ("RSI", data['RSI'].iloc[-1], TOOLTIPS['RSI']),
@@ -1738,16 +1787,8 @@ def display_dashboard(symbol=None, data=None, recommendations=None):
             ("Bollinger Upper", data['Upper_Band'].iloc[-1], TOOLTIPS['Bollinger']),
             ("Bollinger Lower", data['Lower_Band'].iloc[-1], TOOLTIPS['Bollinger']),
             ("VWAP", data['VWAP'].iloc[-1], TOOLTIPS['VWAP']),
-            ("Parabolic SAR", data['Parabolic_SAR'].iloc[-1], TOOLTIPS['Parabolic_SAR']),
-            ("Fib 61.8%", data['Fib_61.8'].iloc[-1], TOOLTIPS['Fib_Retracements']),
             ("Ichimoku Span A", data['Ichimoku_Span_A'].iloc[-1], TOOLTIPS['Ichimoku']),
             ("CMF", data['CMF'].iloc[-1], TOOLTIPS['CMF']),
-            ("Donchian Upper", data['Donchian_Upper'].iloc[-1], TOOLTIPS['Donchian']),
-            ("Keltner Upper", data['Keltner_Upper'].iloc[-1], TOOLTIPS['Keltner']),
-            ("TRIX", data['TRIX'].iloc[-1], TOOLTIPS['TRIX']),
-            ("Ultimate Oscillator", data['Ultimate_Osc'].iloc[-1], TOOLTIPS['Ultimate_Osc']),
-            ("CMO", data['CMO'].iloc[-1], TOOLTIPS['CMO']),
-            ("VPT", data['VPT'].iloc[-1], TOOLTIPS['VPT']),
         ]
         col1, col2 = st.columns(2)
         for i, (name, value, tooltip_text) in enumerate(indicators):
@@ -1760,7 +1801,7 @@ def display_dashboard(symbol=None, data=None, recommendations=None):
                     value = round(value, 2) if pd.notnull(value) else "N/A"
                     st.write(f"**{tooltip(name, tooltip_text)}**: {value}")
 
-        # Price Chart (unchanged)
+        # Price Chart
         st.subheader("📈 Price Chart with Indicators")
         fig = px.line(data, x=data.index, y='Close', title=f"{symbol.split('-')[0]} Price")
         if 'SMA_50' in data.columns and data['SMA_50'].notnull().any():
@@ -1777,7 +1818,7 @@ def display_dashboard(symbol=None, data=None, recommendations=None):
             fig.add_scatter(x=data.index, y=data['Ichimoku_Span_B'], mode='lines', name='Ichimoku Span B', line=dict(color='purple', dash='dash'))
         st.plotly_chart(fig, use_container_width=True)
 
-        # Monte Carlo Simulation (unchanged)
+        # Monte Carlo Simulation
         st.subheader("📊 Monte Carlo Simulation")
         simulations = monte_carlo_simulation(data)
         sim_df = pd.DataFrame(simulations).T
@@ -1785,7 +1826,7 @@ def display_dashboard(symbol=None, data=None, recommendations=None):
         fig_sim = px.line(sim_df, title="Monte Carlo Price Projections (30 Days)")
         st.plotly_chart(fig_sim, use_container_width=True)
 
-        # RSI and MACD (unchanged)
+        # RSI and MACD
         st.subheader("📊 RSI and MACD")
         fig_ind = px.line(data, x=data.index, y='RSI', title="RSI")
         fig_ind.add_hline(y=70, line_dash="dash", line_color="red")
@@ -1795,7 +1836,7 @@ def display_dashboard(symbol=None, data=None, recommendations=None):
         fig_macd = px.line(data, x=data.index, y=['MACD', 'MACD_signal'], title="MACD")
         st.plotly_chart(fig_macd, use_container_width=True)
 
-        # Volume Analysis (unchanged)
+        # Volume Analysis
         st.subheader("📊 Volume Analysis")
         fig_vol = px.bar(data, x=data.index, y='Volume', title="Volume")
         if 'Volume_Spike' in data.columns:
