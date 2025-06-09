@@ -1780,6 +1780,8 @@ def main():
 
     if 'symbol' not in st.session_state:
         st.session_state.symbol = stock_list[0]
+    if 'recommendation_mode' not in st.session_state:
+        st.session_state.recommendation_mode = "Standard"
 
     symbol = st.sidebar.selectbox(
         "Select Stock",
@@ -1788,13 +1790,26 @@ def main():
         index=stock_list.index(st.session_state.symbol) if st.session_state.symbol in stock_list else 0
     )
 
+    # Add recommendation mode toggle
+    recommendation_mode = st.sidebar.radio(
+        "Recommendation Mode",
+        ["Standard", "Adaptive"],
+        index=0 if st.session_state.recommendation_mode == "Standard" else 1,
+        help="Choose 'Standard' for timeframe-specific recommendations or 'Adaptive' for regime-based recommendations with position sizing."
+    )
+    st.session_state.recommendation_mode = recommendation_mode
+
     if st.sidebar.button("Analyze Selected Stock"):
         if symbol:
             with st.spinner("Loading stock data..."):
                 data = fetch_stock_data_with_auth(symbol)
                 if not data.empty:
                     data = analyze_stock(data)
-                    recommendations = adaptive_recommendation(data)
+                    # Conditionally generate recommendations
+                    if recommendation_mode == "Adaptive":
+                        recommendations = adaptive_recommendation(data)
+                    else:
+                        recommendations = generate_recommendations(data, symbol)
                     st.session_state.symbol = symbol
                     st.session_state.data = data
                     st.session_state.recommendations = recommendations
