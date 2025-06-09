@@ -1447,7 +1447,7 @@ def analyze_stock_parallel(symbol):
         logging.error(f"Error in analyze_stock_parallel for {symbol}: {str(e)}")
         return None
 
-[⚠️ Suspicious Content] def analyze_all_stocks(stock_list, batch_size=10, progress_callback=None):
+def analyze_all_stocks(stock_list, batch_size=10, progress_callback=None):
     results = []
     total_batches = (len(stock_list) // batch_size) + (1 if len(stock_list) % batch_size != 0 else 0)
     for i in range(0, len(stock_list), batch_size):
