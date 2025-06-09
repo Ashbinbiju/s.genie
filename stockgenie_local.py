@@ -1512,7 +1512,7 @@ def update_progress(progress_bar, loading_text, progress_value, loading_messages
     dots = "." * int((progress_value * 10) % 4)
     loading_text.text(f"{loading_message}{dots}")
 
-[⚠️ Suspicious Content] def display_dashboard(symbol=None, data=None, recommendations=None):
+def display_dashboard(symbol=None, data=None, recommendations=None):
     # Initialize session state
     if 'selected_sectors' not in st.session_state:
         st.session_state.selected_sectors = ["Bank"]
