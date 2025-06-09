@@ -1337,6 +1337,11 @@ def init_database():
             mean_reversion TEXT,
             breakout TEXT,
             ichimoku_trend TEXT,
+            recommendation TEXT,
+            regime TEXT,
+            position_size REAL,
+            trailing_stop REAL,
+            reason TEXT,
             pick_type TEXT,
             PRIMARY KEY (date, symbol)
         )
@@ -1349,12 +1354,18 @@ def insert_top_picks(results_df, pick_type="daily"):
         conn.execute('''
             INSERT OR IGNORE INTO daily_picks (
                 date, symbol, score, current_price, buy_at, stop_loss, target,
-                intraday, swing, short_term, long_term, mean_reversion, breakout, ichimoku_trend, pick_type
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                intraday, swing, short_term, long_term, mean_reversion, breakout,
+                ichimoku_trend, recommendation, regime, position_size, trailing_stop,
+                reason, pick_type
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ''', (
-            datetime.now().strftime('%Y-%m-%d'), row['Symbol'], row['Score'], row['Current Price'],
-            row['Buy At'], row['Stop Loss'], row['Target'], row['Intraday'], row['Swing'],
-            row['Short-Term'], row['Long-Term'], row['Mean_Reversion'], row['Breakout'], row['Ichimoku_Trend'], pick_type
+            datetime.now().strftime('%Y-%m-%d'), row['Symbol'], row['Score'],
+            row['Current Price'], row['Buy At'], row['Stop Loss'], row['Target'],
+            row.get('Intraday'), row.get('Swing'), row.get('Short-Term'),
+            row.get('Long-Term'), row.get('Mean_Reversion'), row.get('Breakout'),
+            row.get('Ichimoku_Trend'), row.get('Recommendation'), row.get('Regime'),
+            row.get('Position Size'), row.get('Trailing Stop'), row.get('Reason'),
+            pick_type
         ))
     conn.commit()
     conn.close()
@@ -1380,26 +1391,51 @@ def analyze_stock_parallel(symbol):
     data = fetch_stock_data_cached(symbol)
     if not data.empty:
         data = analyze_stock(data)
-        # Use adaptive_recommendation instead of generate_recommendations
-        rec = adaptive_recommendation(data)
-        return {
-            "Symbol": symbol,
-            "Current Price": rec["Current Price"],
-            "Buy At": rec["Buy At"],
-            "Stop Loss": rec["Stop Loss"],
-            "Target": rec["Target"],
-            "Intraday": rec["Recommendation"],  # Map to Intraday for compatibility
-            "Swing": rec["Recommendation"],     # Map to Swing for compatibility
-            "Short-Term": rec["Recommendation"],
-            "Long-Term": rec["Recommendation"],
-            "Mean_Reversion": rec["Recommendation"],
-            "Breakout": rec["Recommendation"],
-            "Ichimoku_Trend": rec["Recommendation"],
-            "Score": rec["Score"],
-            "Regime": rec["Regime"],  # New field
-            "Position Size": rec["Position Size"],  # New field
-            "Trailing Stop": rec["Trailing Stop"],  # New field
-        }
+        recommendation_mode = st.session_state.get('recommendation_mode', 'Standard')
+        if recommendation_mode == "Adaptive":
+            rec = adaptive_recommendation(data)
+            return {
+                "Symbol": symbol,
+                "Current Price": rec["Current Price"],
+                "Buy At": rec["Buy At"],
+                "Stop Loss": rec["Stop Loss"],
+                "Target": rec["Target"],
+                "Recommendation": rec["Recommendation"],
+                "Score": rec["Score"],
+                "Regime": rec["Regime"],
+                "Position Size": rec["Position Size"],
+                "Trailing Stop": rec["Trailing Stop"],
+                "Reason": rec["Reason"],
+                "Intraday": None,
+                "Swing": None,
+                "Short-Term": None,
+                "Long-Term": None,
+                "Mean_Reversion": None,
+                "Breakout": None,
+                "Ichimoku_Trend": None
+            }
+        else:
+            rec = generate_recommendations(data, symbol)
+            return {
+                "Symbol": symbol,
+                "Current Price": rec["Current Price"],
+                "Buy At": rec["Buy At"],
+                "Stop Loss": rec["Stop Loss"],
+                "Target": rec["Target"],
+                "Intraday": rec["Intraday"],
+                "Swing": rec["Swing"],
+                "Short-Term": rec["Short-Term"],
+                "Long-Term": rec["Long-Term"],
+                "Mean_Reversion": rec["Mean_Reversion"],
+                "Breakout": rec["Breakout"],
+                "Ichimoku_Trend": rec["Ichimoku_Trend"],
+                "Score": rec["Score"],
+                "Recommendation": None,
+                "Regime": None,
+                "Position Size": None,
+                "Trailing Stop": None,
+                "Reason": None
+            }
     return None
 
 def analyze_all_stocks(stock_list, batch_size=10, progress_callback=None):
@@ -1474,6 +1510,8 @@ def display_dashboard(symbol=None, data=None, recommendations=None):
         st.session_state.backtest_results_swing = None
     if 'backtest_results_intraday' not in st.session_state:
         st.session_state.backtest_results_intraday = None
+    if 'recommendation_mode' not in st.session_state:
+        st.session_state.recommendation_mode = "Standard"
 
     # Update session state if new data is provided
     if symbol and data is not None and recommendations is not None:
@@ -1502,7 +1540,7 @@ def display_dashboard(symbol=None, data=None, recommendations=None):
         st.warning("⚠️ No stocks selected. Please choose at least one sector.")
         return
 
-    # Top sectors button
+    # Top sectors button (unchanged)
     if st.button("🔎 Analyze Top Performing Sectors"):
         with st.spinner("🔍 Crunching sector data ..."):
             top_sectors = get_top_sectors_cached(rate_limit_delay=2, stocks_per_sector=2)
@@ -1534,18 +1572,30 @@ def display_dashboard(symbol=None, data=None, recommendations=None):
                     buy_at = row['Buy At'] if pd.notnull(row['Buy At']) else "N/A"
                     stop_loss = row['Stop Loss'] if pd.notnull(row['Stop Loss']) else "N/A"
                     target = row['Target'] if pd.notnull(row['Target']) else "N/A"
-                    st.markdown(f"""
-                    {tooltip('Current Price', TOOLTIPS['Stop Loss'])}: ₹{current_price}  
-                    Buy At: ₹{buy_at} | Stop Loss: ₹{stop_loss}  
-                    Target: ₹{target}  
-                    Intraday: {colored_recommendation(row['Intraday'])}  
-                    Swing: {colored_recommendation(row['Swing'])}  
-                    Short-Term: {colored_recommendation(row['Short-Term'])}  
-                    Long-Term: {colored_recommendation(row['Long-Term'])}  
-                    Mean Reversion: {colored_recommendation(row['Mean_Reversion'])}  
-                    Breakout: {colored_recommendation(row['Breakout'])}  
-                    Ichimoku Trend: {colored_recommendation(row['Ichimoku_Trend'])}
-                    """)
+                    if st.session_state.recommendation_mode == "Adaptive":
+                        st.markdown(f"""
+                        {tooltip('Current Price', TOOLTIPS['Stop Loss'])}: ₹{current_price}  
+                        Buy At: ₹{buy_at} | Stop Loss: ₹{stop_loss}  
+                        Target: ₹{target}  
+                        Recommendation: {colored_recommendation(row['Recommendation'])}  
+                        Regime: {row['Regime'] or 'N/A'}  
+                        Position Size (₹): {row['Position Size'] or 'N/A'}  
+                        Trailing Stop: ₹{row['Trailing Stop'] or 'N/A'}  
+                        Reason: {row['Reason'] or 'N/A'}
+                        """)
+                    else:
+                        st.markdown(f"""
+                        {tooltip('Current Price', TOOLTIPS['Stop Loss'])}: ₹{current_price}  
+                        Buy At: ₹{buy_at} | Stop Loss: ₹{stop_loss}  
+                        Target: ₹{target}  
+                        Intraday: {colored_recommendation(row['Intraday'])}  
+                        Swing: {colored_recommendation(row['Swing'])}  
+                        Short-Term: {colored_recommendation(row['Short-Term'])}  
+                        Long-Term: {colored_recommendation(row['Long-Term'])}  
+                        Mean Reversion: {colored_recommendation(row['Mean_Reversion'])}  
+                        Breakout: {colored_recommendation(row['Breakout'])}  
+                        Ichimoku Trend: {colored_recommendation(row['Ichimoku_Trend'])}
+                        """)
         else:
             st.warning("⚠️ No top picks available due to data issues.")
 
@@ -1573,12 +1623,24 @@ def display_dashboard(symbol=None, data=None, recommendations=None):
                     buy_at = row['Buy At'] if pd.notnull(row['Buy At']) else "N/A"
                     stop_loss = row['Stop Loss'] if pd.notnull(row['Stop Loss']) else "N/A"
                     target = row['Target'] if pd.notnull(row['Target']) else "N/A"
-                    st.markdown(f"""
-                    {tooltip('Current Price', TOOLTIPS['Stop Loss'])}: ₹{current_price}  
-                    Buy At: ₹{buy_at} | Stop Loss: ₹{stop_loss}  
-                    Target: ₹{target}  
-                    Intraday: {colored_recommendation(row['Intraday'])}  
-                    """)
+                    if st.session_state.recommendation_mode == "Adaptive":
+                        st.markdown(f"""
+                        {tooltip('Current Price', TOOLTIPS['Stop Loss'])}: ₹{current_price}  
+                        Buy At: ₹{buy_at} | Stop Loss: ₹{stop_loss}  
+                        Target: ₹{target}  
+                        Recommendation: {colored_recommendation(row['Recommendation'])}  
+                        Regime: {row['Regime'] or 'N/A'}  
+                        Position Size (₹): {row['Position Size'] or 'N/A'}  
+                        Trailing Stop: ₹{row['Trailing Stop'] or 'N/A'}  
+                        Reason: {row['Reason'] or 'N/A'}
+                        """)
+                    else:
+                        st.markdown(f"""
+                        {tooltip('Current Price', TOOLTIPS['Stop Loss'])}: ₹{current_price}  
+                        Buy At: ₹{buy_at} | Stop Loss: ₹{stop_loss}  
+                        Target: ₹{target}  
+                        Intraday: {colored_recommendation(row['Intraday'])}
+                        """)
         else:
             st.warning("⚠️ No intraday picks available due to data issues.")
 
@@ -1608,46 +1670,51 @@ def display_dashboard(symbol=None, data=None, recommendations=None):
         recommendations = st.session_state.recommendations
 
         st.header(f"📋 {symbol.split('-')[0]} Analysis")
-        col1, col2, col3, col4 = st.columns(4)
+        col1, col2, col3, col4, col5 = st.columns(5)
         with col1:
-            current_price = recommendations['Current Price'] if recommendations['Current Price'] is not None else "N/A"
+            current_price = recommendations.get('Current Price', 'N/A')
             st.metric(tooltip("Current Price", TOOLTIPS['RSI']), f"₹{current_price}")
         with col2:
-            buy_at = recommendations['Buy At'] if recommendations['Buy At'] is not None else "N/A"
+            buy_at = recommendations.get('Buy At', 'N/A')
             st.metric("Buy At", f"₹{buy_at}")
         with col3:
-            stop_loss = recommendations['Stop Loss'] if recommendations['Stop Loss'] is not None else "N/A"
+            stop_loss = recommendations.get('Stop Loss', 'N/A')
             st.metric(tooltip("Stop Loss", TOOLTIPS['Stop Loss']), f"₹{stop_loss}")
         with col4:
-            target = recommendations['Target'] if recommendations['Target'] is not None else "N/A"
+            target = recommendations.get('Target', 'N/A')
             st.metric("Target", f"₹{target}")
-
-        # Add new metrics for adaptive recommendation
-        col5, col6 = st.columns(2)
         with col5:
-            st.metric("Market Regime", recommendations.get('Regime', 'N/A'))
-        with col6:
-            st.metric("Position Size (₹)", recommendations.get('Position Size', 'N/A'))
-            st.metric("Trailing Stop", f"₹{recommendations.get('Trailing Stop', 'N/A')}")
-
+            regime = recommendations.get('Regime', 'N/A') if st.session_state.recommendation_mode == "Adaptive" else 'N/A'
+            st.metric("Market Regime", regime)
 
         st.subheader("📈 Trading Recommendations")
-        col1, col2, col3, col4 = st.columns(4)
-        with col1:
-            st.write(f"**Intraday**: {colored_recommendation(recommendations['Intraday'])}")
-            st.write(f"**Swing**: {colored_recommendation(recommendations['Swing'])}")
-        with col2:
-            st.write(f"**Short-Term**: {colored_recommendation(recommendations['Short-Term'])}")
-            st.write(f"**Long-Term**: {colored_recommendation(recommendations['Long-Term'])}")
-        with col3:
-            st.write(f"**Mean Reversion**: {colored_recommendation(recommendations['Mean_Reversion'])}")
-            st.write(f"**Breakout**: {colored_recommendation(recommendations['Breakout'])}")
-        with col4:
-            st.write(f"**Ichimoku Trend**: {colored_recommendation(recommendations['Ichimoku_Trend'])}")
-            st.write(f"**{tooltip('Score', TOOLTIPS['Score'])}**: {recommendations['Score']}/7")
+        if st.session_state.recommendation_mode == "Adaptive":
+            col1, col2, col3 = st.columns(3)
+            with col1:
+                st.write(f"**Recommendation**: {colored_recommendation(recommendations.get('Recommendation', 'N/A'))}")
+                st.write(f"**Reason**: {recommendations.get('Reason', 'N/A')}")
+            with col2:
+                st.write(f"**{tooltip('Score', TOOLTIPS['Score'])}**: {recommendations.get('Score', 'N/A')}/7")
+                st.write(f"**Position Size (₹)**: {recommendations.get('Position Size', 'N/A')}")
+            with col3:
+                st.write(f"**Trailing Stop**: ₹{recommendations.get('Trailing Stop', 'N/A')}")
+                st.write(f"**Volatility**: {assess_risk(data)}")
+        else:
+            col1, col2, col3 = st.columns(3)
+            with col1:
+                st.write(f"**Intraday**: {colored_recommendation(recommendations.get('Intraday', 'N/A'))}")
+                st.write(f"**Swing**: {colored_recommendation(recommendations.get('Swing', 'N/A'))}")
+            with col2:
+                st.write(f"**Short-Term**: {colored_recommendation(recommendations.get('Short-Term', 'N/A'))}")
+                st.write(f"**Long-Term**: {colored_recommendation(recommendations.get('Long-Term', 'N/A'))}")
+            with col3:
+                st.write(f"**Mean Reversion**: {colored_recommendation(recommendations.get('Mean_Reversion', 'N/A'))}")
+                st.write(f"**Breakout**: {colored_recommendation(recommendations.get('Breakout', 'N/A'))}")
+                st.write(f"**Ichimoku Trend**: {colored_recommendation(recommendations.get('Ichimoku_Trend', 'N/A'))}")
+            st.write(f"**{tooltip('Score', TOOLTIPS['Score'])}**: {recommendations.get('Score', 'N/A')}/7")
+            st.write(f"**Volatility**: {assess_risk(data)}")
 
-        
-        # Backtest form to isolate button actions
+        # Backtest form (update backtest_stock if needed)
         with st.form(key="backtest_form"):
             col1, col2 = st.columns(2)
             with col1:
@@ -1658,7 +1725,6 @@ def display_dashboard(symbol=None, data=None, recommendations=None):
             if swing_button or intraday_button:
                 strategy = "Swing" if swing_button else "Intraday"
                 with st.spinner(f"Running {strategy} Strategy backtest..."):
-                    # Simplified hash for caching
                     data_hash = hash(data.to_string())
                     backtest_results = backtest_stock(data, symbol, strategy=strategy, _data_hash=data_hash)
                     if strategy == "Swing":
@@ -1666,7 +1732,7 @@ def display_dashboard(symbol=None, data=None, recommendations=None):
                     else:
                         st.session_state.backtest_results_intraday = backtest_results
 
-        # Display backtest results if available
+        # Backtest results (unchanged)
         for strategy, results_key in [("Swing", "backtest_results_swing"), ("Intraday", "backtest_results_intraday")]:
             backtest_results = st.session_state.get(results_key)
             if backtest_results:
@@ -1684,7 +1750,6 @@ def display_dashboard(symbol=None, data=None, recommendations=None):
                                  f"Exit: {trade['exit_date']} @ ₹{trade['exit_price']:.2f}, "
                                  f"Profit: ₹{profit:.2f}")
 
-                # Visualize Buy/Sell Signals
                 fig = px.line(data, x=data.index, y='Close', title=f"{symbol.split('-')[0]} Price with Signals")
                 if backtest_results["buy_signals"]:
                     buy_dates, buy_prices = zip(*backtest_results["buy_signals"])
@@ -1696,7 +1761,7 @@ def display_dashboard(symbol=None, data=None, recommendations=None):
                                    marker=dict(color='red', symbol='triangle-down', size=10))
                 st.plotly_chart(fig, use_container_width=True)
 
-        # Technical Indicators
+        # Technical Indicators (unchanged)
         st.subheader("📊 Technical Indicators")
         indicators = [
             ("RSI", data['RSI'].iloc[-1], TOOLTIPS['RSI']),
@@ -1728,7 +1793,7 @@ def display_dashboard(symbol=None, data=None, recommendations=None):
                     value = round(value, 2) if pd.notnull(value) else "N/A"
                     st.write(f"**{tooltip(name, tooltip_text)}**: {value}")
 
-        # Price Chart
+        # Price Chart (unchanged)
         st.subheader("📈 Price Chart with Indicators")
         fig = px.line(data, x=data.index, y='Close', title=f"{symbol.split('-')[0]} Price")
         if 'SMA_50' in data.columns and data['SMA_50'].notnull().any():
@@ -1745,7 +1810,7 @@ def display_dashboard(symbol=None, data=None, recommendations=None):
             fig.add_scatter(x=data.index, y=data['Ichimoku_Span_B'], mode='lines', name='Ichimoku Span B', line=dict(color='purple', dash='dash'))
         st.plotly_chart(fig, use_container_width=True)
 
-        # Monte Carlo Simulation
+        # Monte Carlo Simulation (unchanged)
         st.subheader("📊 Monte Carlo Simulation")
         simulations = monte_carlo_simulation(data)
         sim_df = pd.DataFrame(simulations).T
@@ -1753,7 +1818,7 @@ def display_dashboard(symbol=None, data=None, recommendations=None):
         fig_sim = px.line(sim_df, title="Monte Carlo Price Projections (30 Days)")
         st.plotly_chart(fig_sim, use_container_width=True)
 
-        # RSI and MACD
+        # RSI and MACD (unchanged)
         st.subheader("📊 RSI and MACD")
         fig_ind = px.line(data, x=data.index, y='RSI', title="RSI")
         fig_ind.add_hline(y=70, line_dash="dash", line_color="red")
@@ -1763,16 +1828,17 @@ def display_dashboard(symbol=None, data=None, recommendations=None):
         fig_macd = px.line(data, x=data.index, y=['MACD', 'MACD_signal'], title="MACD")
         st.plotly_chart(fig_macd, use_container_width=True)
 
-        # Volume Analysis
+        # Volume Analysis (unchanged)
         st.subheader("📊 Volume Analysis")
         fig_vol = px.bar(data, x=data.index, y='Volume', title="Volume")
-        if 'Volume_Spi' in data.columns:
+        if 'Volume_Spike' in data.columns:
             spike_data = data[data['Volume_Spike'] == True]
             if not spike_data.empty:
                 fig_vol.add_scatter(x=spike_data.index, y=spike_data['Volume'], mode='markers', name='Volume Spike',
                                    marker=dict(color='red', size=10))
         st.plotly_chart(fig_vol, use_container_width=True)
-        
+    
+            
 def main():
     init_database()
     st.sidebar.title("🔍 Stock Selection")
@@ -1790,12 +1856,11 @@ def main():
         index=stock_list.index(st.session_state.symbol) if st.session_state.symbol in stock_list else 0
     )
 
-    # Add recommendation mode toggle
     recommendation_mode = st.sidebar.radio(
         "Recommendation Mode",
         ["Standard", "Adaptive"],
         index=0 if st.session_state.recommendation_mode == "Standard" else 1,
-        help="Choose 'Standard' for timeframe-specific recommendations or 'Adaptive' for regime-based recommendations with position sizing."
+        help="Standard: Timeframe-specific recommendations. Adaptive: Regime-based with position sizing."
     )
     st.session_state.recommendation_mode = recommendation_mode
 
@@ -1805,11 +1870,8 @@ def main():
                 data = fetch_stock_data_with_auth(symbol)
                 if not data.empty:
                     data = analyze_stock(data)
-                    # Conditionally generate recommendations
-                    if recommendation_mode == "Adaptive":
-                        recommendations = adaptive_recommendation(data)
-                    else:
-                        recommendations = generate_recommendations(data, symbol)
+                    recommendations = (adaptive_recommendation(data) if recommendation_mode == "Adaptive"
+                                      else generate_recommendations(data, symbol))
                     st.session_state.symbol = symbol
                     st.session_state.data = data
                     st.session_state.recommendations = recommendations
@@ -1820,6 +1882,5 @@ def main():
                     st.warning("⚠️ No data available for the selected stock.")
     else:
         display_dashboard()
-
 if __name__ == "__main__":
     main()
