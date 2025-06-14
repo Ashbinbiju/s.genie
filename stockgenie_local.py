@@ -550,20 +550,20 @@ def can_compute_indicator(data, indicator):
 def validate_data(data, required_columns=['Open', 'High', 'Low', 'Close', 'Volume'], min_length=50):
     """
     Validates stock data for required columns, minimum length, and data integrity.
-    Returns True if valid, False otherwise with a warning.
+    Returns True if valid, False otherwise with logged details.
     """
     if data is None or data.empty:
-        st.warning("⚠️ No data provided for validation.")
+        logging.warning("No data provided for validation.")
         return False
     if len(data) < min_length:
-        st.warning(f"⚠️ Insufficient data length: {len(data)} rows (minimum {min_length} required).")
+        logging.warning(f"Insufficient data length: {len(data)} rows (minimum {min_length} required).")
         return False
     missing_cols = [col for col in required_columns if col not in data.columns]
     if missing_cols:
-        st.warning(f"⚠️ Missing required columns: {', '.join(missing_cols)}")
+        logging.warning(f"Missing required columns: {', '.join(missing_cols)}")
         return False
     if data[required_columns].isnull().any().any():
-        st.warning("⚠️ Data contains null values in required columns.")
+        logging.warning("Data contains null values in required columns.")
         return False
     return True
 
@@ -1479,6 +1479,10 @@ def insert_top_picks(results_df, pick_type="daily"):
     conn.close()
 
 def analyze_batch(stock_batch):
+    """
+    Analyzes a batch of stocks in parallel, aggregating errors for summary reporting.
+    Returns a list of valid results.
+    """
     results = []
     errors = []
     with ThreadPoolExecutor(max_workers=3) as executor:
@@ -1490,25 +1494,36 @@ def analyze_batch(stock_batch):
                 if result:
                     results.append(result)
             except Exception as e:
-                errors.append(f"⚠️ Error processing stock {symbol}: {str(e)}")
-    for error in errors:
-        st.warning(error)
+                error_msg = f"Error processing {symbol}: {str(e)}"
+                errors.append(error_msg)
+                logging.error(error_msg)
+
+    if errors:
+        logging.error(f"Batch errors: {len(errors)} total\n" + "\n".join(errors))
+        # Display summary warning in main thread
+        st.session_state['batch_errors'] = f"Encountered {len(errors)} errors during batch processing. Check logs for details."
+
     return results
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 def analyze_stock_parallel(symbol):
+    """
+    Analyzes a single stock, logging detailed context on errors.
+    Returns a dictionary with analysis results or None on failure.
+    """
     try:
+        logging.info(f"Starting analysis for {symbol}")
         data = fetch_stock_data_cached(symbol)
         if data.empty or len(data) < 50:
-            logging.warning(f"No sufficient data for {symbol}")
+            logging.warning(f"No sufficient data for {symbol}: {len(data)} rows")
             return None
         
         data = analyze_stock(data)
         recommendation_mode = st.session_state.get('recommendation_mode', 'Standard')
-        logging.info(f"Analyzing {symbol} in {recommendation_mode} mode")
+        logging.info(f"Analyzing {symbol} in {recommendation_mode} mode (data shape: {data.shape})")
         
         if recommendation_mode == "Adaptive":
-            rec = adaptive_recommendation(data)
+            rec = adaptive_recommendation(data, symbol)
             if not rec or not rec.get('Recommendation'):
                 logging.error(f"Invalid adaptive_recommendation output for {symbol}: {rec}")
                 return None
@@ -1558,7 +1573,8 @@ def analyze_stock_parallel(symbol):
                 "Reason": None
             }
     except Exception as e:
-        logging.error(f"Error in analyze_stock_parallel for {symbol}: {str(e)}")
+        error_msg = f"Error in analyze_stock_parallel for {symbol}: {str(e)} (data shape: {data.shape if 'data' in locals() else 'N/A'})"
+        logging.error(error_msg)
         return None
 
 def analyze_all_stocks(stock_list, batch_size=10, progress_callback=None):
