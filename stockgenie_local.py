@@ -547,25 +547,73 @@ def can_compute_indicator(data, indicator):
     required_length = INDICATOR_MIN_LENGTHS.get(indicator, 1)
     return len(data) >= required_length
 
-def validate_data(data, required_columns=['Open', 'High', 'Low', 'Close', 'Volume'], min_length=50):
+import logging
+
+def validate_data(
+    data,
+    required_columns=('Open', 'High', 'Low', 'Close', 'Volume'),
+    min_length=50,
+    max_volume=1e10,
+    check_positive_prices=True,
+):
     """
-    Validates stock data for required columns, minimum length, and data integrity.
-    Returns True if valid, False otherwise with logged details.
+    Validates a OHLCV DataFrame.
+
+    Parameters
+    ----------
+    data : pd.DataFrame
+    required_columns : iterable
+        Column names that must be present.
+    min_length : int
+        Minimum number of rows required.
+    max_volume : float or None
+        Flag extreme volumes; set to None to skip.
+    check_positive_prices : bool
+        If True, verify all price columns are > 0.
+
+    Returns
+    -------
+    bool
+        True if all checks pass, otherwise False (with warnings logged).
     """
+    # 1 — basic integrity
     if data is None or data.empty:
         logging.warning("No data provided for validation.")
         return False
     if len(data) < min_length:
-        logging.warning(f"Insufficient data length: {len(data)} rows (minimum {min_length} required).")
+        logging.warning(
+            "Insufficient data length: %d rows (minimum %d required).",
+            len(data), min_length
+        )
         return False
-    missing_cols = [col for col in required_columns if col not in data.columns]
-    if missing_cols:
-        logging.warning(f"Missing required columns: {', '.join(missing_cols)}")
+
+    # 2 — schema
+    missing = [c for c in required_columns if c not in data.columns]
+    if missing:
+        logging.warning("Missing required columns: %s", ", ".join(missing))
         return False
+
+    # 3 — nulls
     if data[required_columns].isnull().any().any():
         logging.warning("Data contains null values in required columns.")
         return False
+
+    # 4 — sanity: positive prices
+    price_cols = [c for c in ('Open', 'High', 'Low', 'Close') if c in data]
+    if check_positive_prices and (data[price_cols] <= 0).any().any():
+        logging.warning("Invalid price values (≤ 0 detected).")
+        return False
+
+    # 5 — sanity: volume cap
+    if max_volume and data['Volume'].max() > max_volume:
+        logging.warning(
+            "Abnormal volume values detected (max %.0f > threshold %.0f).",
+            data['Volume'].max(), max_volume
+        )
+        return False
+
     return True
+
 
 def analyze_stock(data):
     """
