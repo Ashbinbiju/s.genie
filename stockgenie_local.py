@@ -332,7 +332,7 @@ def fetch_nse_stock_list():
         return list(set([stock for sector in SECTORS.values() for stock in sector]))
 
 @retry(max_retries=5, delay=5)
-def fetch_stock_data_with_auth(symbol, period="5y", interval="1d"):
+def fetch_stock_data_with_auth(symbol, period="2y", interval="1d"):
     cache_key = f"{symbol}_{period}_{interval}"
     cached_data = cache.get(cache_key)
     if cached_data is not None:
@@ -347,8 +347,8 @@ def fetch_stock_data_with_auth(symbol, period="5y", interval="1d"):
             raise ValueError("SmartAPI client initialization failed")
 
         end_date = datetime.now()
-        if period == "5y":
-            start_date = end_date - timedelta(days=5 * 365)
+        if period == "2y":
+            start_date = end_date - timedelta(days=2 * 365)
         elif period == "1y":
             start_date = end_date - timedelta(days=365)
         elif period == "1mo":
@@ -400,7 +400,7 @@ def fetch_stock_data_with_auth(symbol, period="5y", interval="1d"):
         return pd.DataFrame()
 
 @lru_cache(maxsize=1000)
-def fetch_stock_data_cached(symbol, period="5y", interval="1d"):
+def fetch_stock_data_cached(symbol, period="2y", interval="1d"):
     return fetch_stock_data_with_auth(symbol, period, interval)
 
 def calculate_advance_decline_ratio(stock_list):
