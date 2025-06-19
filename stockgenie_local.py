@@ -543,18 +543,42 @@ def assess_risk(data):
     else:
         return "Low Volatility"
 
-def optimize_rsi_window(data, windows=range(5, 15)):
+def optimize_rsi_window(data, windows=range(5, 15), risk_free_rate=0.025):
     best_window, best_sharpe = 9, -float('inf')
-    returns = data['Close'].pct_change().dropna()
-    if len(returns) < 50:
+
+    if data is None or data.empty or 'Close' not in data:
         return best_window
+
+    if len(data) < max(windows) + 20:
+        return best_window
+
+    returns = data['Close'].pct_change()
+
     for window in windows:
         rsi = ta.momentum.RSIIndicator(data['Close'], window=window).rsi()
+
+        # Signal: Buy if RSI < 30, Sell if RSI > 70
         signals = (rsi < 30).astype(int) - (rsi > 70).astype(int)
-        strategy_returns = signals.shift(1) * returns
-        sharpe = strategy_returns.mean() / strategy_returns.std() if strategy_returns.std() != 0 else 0
+
+        # Vectorized position logic: hold previous signal
+        positions = signals.replace(0, np.nan).ffill().fillna(0).shift(1)
+
+        # Align positions and returns safely
+        aligned_index = returns.index.intersection(positions.index)
+        returns_aligned = returns.loc[aligned_index]
+        positions_aligned = positions.loc[aligned_index]
+
+        strategy_returns = returns_aligned * positions_aligned
+        strategy_returns = strategy_returns.dropna()
+
+        if strategy_returns.std() != 0:
+            sharpe = ((strategy_returns.mean() - risk_free_rate / 252) / strategy_returns.std()) * np.sqrt(252)
+        else:
+            sharpe = 0
+
         if sharpe > best_sharpe:
             best_sharpe, best_window = sharpe, window
+
     return best_window
 
 def detect_divergence(data):
