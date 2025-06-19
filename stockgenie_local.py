@@ -1327,7 +1327,7 @@ def compute_signal_score(df, regime):
 #     MAIN RECOMMENDATION      #
 # ============================ #
 
-def adaptive_recommendation(df, symbol=None, account_size=100000, max_position_size=100):
+def adaptive_recommendation(df, symbol=None, account_size=30000, max_position_size=100):
     try:
         df = compute_indicators(df, symbol)
         close = df['Close'].iloc[-1]
