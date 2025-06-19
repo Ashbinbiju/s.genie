@@ -485,20 +485,57 @@ def get_trending_stocks():
     return trending
 
 def calculate_confidence_score(data):
+    # Safety check for empty or None data
+    if data is None or len(data) == 0:
+        return 0
+
     score = 0
-    if 'RSI' in data.columns and data['RSI'].iloc[-1] is not None and data['RSI'].iloc[-1] < 30:
-        score += 1
-    if 'MACD' in data.columns and 'MACD_signal' in data.columns and data['MACD'].iloc[-1] is not None and data['MACD'].iloc[-1] > data['MACD_signal'].iloc[-1]:
-        score += 1
-    if 'Ichimoku_Span_A' in data.columns and data['Close'].iloc[-1] is not None and data['Close'].iloc[-1] > data['Ichimoku_Span_A'].iloc[-1]:
-        score += 1
-    if 'ATR' in data.columns and data['ATR'].iloc[-1] is not None and data['Close'].iloc[-1] is not None:
-        atr_volatility = data['ATR'].iloc[-1] / data['Close'].iloc[-1]
-        if atr_volatility < 0.02:
-            score += 0.5
-        elif atr_volatility > 0.05:
-            score -= 0.5
-    return min(max(score / 3.5, 0), 1)
+    max_score = 0
+
+    # --- RSI Oversold Check ---
+    if 'RSI' in data.columns:
+        latest_rsi = data['RSI'].iloc[-1]
+        if not pd.isna(latest_rsi):
+            max_score += 1
+            if latest_rsi < 30:
+                score += 1
+
+    # --- MACD Bullish Crossover Check ---
+    if 'MACD' in data.columns and 'MACD_signal' in data.columns:
+        macd = data['MACD'].iloc[-1]
+        signal = data['MACD_signal'].iloc[-1]
+        if not pd.isna(macd) and not pd.isna(signal):
+            max_score += 1
+            if macd > signal:
+                score += 1
+
+    # --- Ichimoku Span A Check ---
+    if 'Ichimoku_Span_A' in data.columns and 'Close' in data.columns:
+        span_a = data['Ichimoku_Span_A'].iloc[-1]
+        close = data['Close'].iloc[-1]
+        if not pd.isna(span_a) and not pd.isna(close):
+            max_score += 1
+            if close > span_a:
+                score += 1
+
+    # --- ATR-based Volatility Check (High Volatility = Good) ---
+    if 'ATR' in data.columns and 'Close' in data.columns:
+        atr = data['ATR'].iloc[-1]
+        close = data['Close'].iloc[-1]
+        if not pd.isna(atr) and not pd.isna(close) and close != 0:
+            max_score += 0.5
+            atr_volatility = atr / close
+
+            if atr_volatility < 0.02:
+                score += 0.25  # Very low volatility — minor positive
+            elif atr_volatility > 0.05:
+                score += 0.5   # High volatility — positive for momentum/breakout
+
+    # Final normalized score between 0 and 1
+    if max_score == 0:
+        return 0
+
+    return float(np.clip(score / max_score, 0, 1))
 
 def assess_risk(data):
     if 'ATR' in data.columns and data['ATR'].iloc[-1] is not None and data['ATR'].iloc[-1] > data['ATR'].mean():
