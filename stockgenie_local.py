@@ -1121,14 +1121,6 @@ def calculate_target_row(row, risk_reward_ratio=3):
     target = cap_target(target, row['Close'])
     return round(target, 2)
 
-def fetch_fundamentals(symbol):
-    try:
-        smart_api = init_smartapi_client()
-        if not smart_api:
-            return {'P/E': float('inf'), 'EPS': 0, 'RevenueGrowth': 0}
-        return {'P/E': float('inf'), 'EPS': 0, 'RevenueGrowth': 0}
-    except Exception:
-        return {'P/E': float('inf'), 'EPS': 0, 'RevenueGrowth': 0}
 
 # Improved strategy logic using adaptive regime detection, signal scoring, and volatility-aware filters
 
@@ -1155,7 +1147,6 @@ def compute_signal_score(data, symbol=None):
         'CMF': 0.5,
         'ATR_Volatility': 1.0,
         'Breakout': 1.2,
-        'Fundamentals': 1.0
     }
 
     # Volume filter: skip low volume days
@@ -1206,16 +1197,6 @@ def compute_signal_score(data, symbol=None):
             score += weights['Breakout']
         elif data['Close'].iloc[-1] < data['Donchian_Lower'].iloc[-1]:
             score -= weights['Breakout']
-
-    # Fundamentals
-    if symbol:
-        fundamentals = fetch_fundamentals(symbol)
-        if fundamentals['P/E'] < 15 and fundamentals['EPS'] > 0:
-            score += weights['Fundamentals'] * 0.5
-        elif fundamentals['P/E'] > 30 or fundamentals['EPS'] < 0:
-            score -= weights['Fundamentals'] * 0.5
-        if fundamentals['RevenueGrowth'] > 0.1:
-            score += weights['Fundamentals'] * 0.3
 
     return min(max(score, -10), 10)
 
