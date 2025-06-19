@@ -993,65 +993,133 @@ def analyze_stock(data):
         data['VPT'] = None
 
     return data
-    
+
+# === Shared Utility Functions ===
+
+def get_atr_multiplier(adx):
+    """
+    Determines ATR multiplier based on ADX strength.
+    ADX > 25 → Strong trend → Higher stop loss buffer.
+    """
+    return 3.0 if pd.notnull(adx) and adx > 25 else 1.5
+
+def get_adjusted_rr_ratio(adx, base_ratio=3):
+    """
+    Adjusts risk-reward ratio based on ADX.
+    Higher ADX (trend strength) allows more aggressive targets.
+    """
+    return min(base_ratio, 5) if pd.notnull(adx) and adx > 25 else min(base_ratio, 3)
+
+def cap_stop_loss(stop_loss, close):
+    """
+    Ensures stop loss is not too close (no more than 10% below entry).
+    """
+    return max(stop_loss, close * 0.9)
+
+def cap_target(target, close):
+    """
+    Limits target to 20% above entry to avoid unrealistic expectations.
+    """
+    return min(target, close * 1.2)
+
+# === DataFrame-Level Calculations ===
+
 def calculate_buy_at(data):
-    if data.empty or 'RSI' not in data.columns or data['RSI'].iloc[-1] is None:
-        st.warning("⚠️ Cannot calculate Buy At due to missing or invalid RSI data.")
+    """
+    Calculates the buy price.
+    - If RSI < 30: slight discount (oversold).
+    - Else: use the current close.
+    """
+    if data.empty or 'RSI' not in data.columns or 'Close' not in data.columns:
+        st.warning("⚠️ Missing RSI or Close data.")
         return None
+    if np.isnan(data['RSI'].iloc[-1]) or np.isnan(data['Close'].iloc[-1]):
+        st.warning("⚠️ Latest RSI or Close value is NaN.")
+        return None
+
     last_close = data['Close'].iloc[-1]
     last_rsi = data['RSI'].iloc[-1]
     buy_at = last_close * 0.99 if last_rsi < 30 else last_close
     return round(buy_at, 2)
 
-def calculate_stop_loss(data, atr_multiplier=2.5):
-    if data.empty or 'ATR' not in data.columns or data['ATR'].iloc[-1] is None:
-        st.warning("⚠️ Cannot calculate Stop Loss due to missing or invalid ATR data.")
+def calculate_stop_loss(data):
+    """
+    Calculates stop loss using ATR and trend strength (ADX).
+    - Strong trend → wider stop loss (to avoid noise).
+    - Ensures SL is not below 10% of close.
+    """
+    if data.empty or 'ATR' not in data.columns or 'ADX' not in data.columns:
+        st.warning("⚠️ Missing ATR or ADX data.")
         return None
+    if np.isnan(data['ATR'].iloc[-1]) or np.isnan(data['Close'].iloc[-1]):
+        st.warning("⚠️ Invalid ATR or Close values.")
+        return None
+
     last_close = data['Close'].iloc[-1]
     last_atr = data['ATR'].iloc[-1]
-    atr_multiplier = 3.0 if data['ADX'].iloc[-1] is not None and data['ADX'].iloc[-1] > 25 else 1.5
+    last_adx = data['ADX'].iloc[-1]
+    atr_multiplier = get_atr_multiplier(last_adx)
+
     stop_loss = last_close - (atr_multiplier * last_atr)
-    if stop_loss < last_close * 0.9:
-        stop_loss = last_close * 0.9
+    stop_loss = cap_stop_loss(stop_loss, last_close)
     return round(stop_loss, 2)
 
 def calculate_target(data, risk_reward_ratio=3):
+    """
+    Calculates the profit target.
+    - Based on risk (Close - Stop Loss).
+    - Adjusts target based on ADX strength.
+    - Capped at 20% above current price.
+    """
     stop_loss = calculate_stop_loss(data)
     if stop_loss is None:
-        st.warning("⚠️ Cannot calculate Target due to missing Stop Loss data.")
+        st.warning("⚠️ Cannot calculate Target due to missing Stop Loss.")
         return None
+
     last_close = data['Close'].iloc[-1]
+    last_adx = data['ADX'].iloc[-1]
     risk = last_close - stop_loss
-    adjusted_ratio = min(risk_reward_ratio, 5) if data['ADX'].iloc[-1] is not None and data['ADX'].iloc[-1] > 25 else min(risk_reward_ratio, 3)
+    adjusted_ratio = get_adjusted_rr_ratio(last_adx, risk_reward_ratio)
     target = last_close + (risk * adjusted_ratio)
-    if target > last_close * 1.2:
-        target = last_close * 1.2
+    target = cap_target(target, last_close)
     return round(target, 2)
 
-def calculate_buy_at_row(row):
-    if pd.notnull(row['RSI']) and row['RSI'] < 30:
-        return round(row['Close'] * 0.99, 2)
-    return round(row['Close'], 2)
+# === Row-Level Calculations ===
 
-def calculate_stop_loss_row(row, atr_multiplier=2.5):
-    if pd.notnull(row['ATR']):
-        atr_multiplier = 3.0 if pd.notnull(row['ADX']) and row['ADX'] > 25 else 1.5
-        stop_loss = row['Close'] - (atr_multiplier * row['ATR'])
-        if stop_loss < row['Close'] * 0.9:
-            stop_loss = row['Close'] * 0.9
-        return round(stop_loss, 2)
-    return None
+def calculate_buy_at_row(row):
+    """
+    Row-level buy price logic.
+    Returns buy price based on RSI < 30 condition.
+    """
+    if pd.isnull(row.get('RSI')) or pd.isnull(row.get('Close')):
+        return None
+    return round(row['Close'] * 0.99, 2) if row['RSI'] < 30 else round(row['Close'], 2)
+
+def calculate_stop_loss_row(row):
+    """
+    Row-level stop loss calculation using ATR and ADX.
+    Handles missing or invalid data by returning None.
+    """
+    if pd.isnull(row.get('ATR')) or pd.isnull(row.get('Close')):
+        return None
+    atr_multiplier = get_atr_multiplier(row.get('ADX'))
+    stop_loss = row['Close'] - (atr_multiplier * row['ATR'])
+    stop_loss = cap_stop_loss(stop_loss, row['Close'])
+    return round(stop_loss, 2)
 
 def calculate_target_row(row, risk_reward_ratio=3):
+    """
+    Row-level target calculation based on stop loss and trend strength.
+    Risk is calculated as Close - SL, and reward is adjusted by ADX.
+    """
     stop_loss = calculate_stop_loss_row(row)
-    if stop_loss is not None:
-        risk = row['Close'] - stop_loss
-        adjusted_ratio = min(risk_reward_ratio, 5) if pd.notnull(row['ADX']) and row['ADX'] > 25 else min(risk_reward_ratio, 3)
-        target = row['Close'] + (risk * adjusted_ratio)
-        if target > row['Close'] * 1.2:
-            target = row['Close'] * 1.2
-        return round(target, 2)
-    return None
+    if stop_loss is None:
+        return None
+    risk = row['Close'] - stop_loss
+    adjusted_ratio = get_adjusted_rr_ratio(row.get('ADX'), risk_reward_ratio)
+    target = row['Close'] + (risk * adjusted_ratio)
+    target = cap_target(target, row['Close'])
+    return round(target, 2)
 
 def fetch_fundamentals(symbol):
     try:
