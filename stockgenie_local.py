@@ -679,7 +679,7 @@ logging.basicConfig(level=logging.WARNING,
 def validate_data(
     data: pd.DataFrame,
     required_columns=None,
-    min_length: int = 50,
+    min_length: int = 30,
     max_volume: float | None = 1e10,
     check_positive_prices: bool = True,
 ) -> bool:
