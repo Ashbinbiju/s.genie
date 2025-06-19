@@ -26,8 +26,6 @@ import os
 from dotenv import load_dotenv
 from scipy.stats.mstats import winsorize
 from streamlit import cache_data
-from itertools import cycle
-
 
 load_dotenv()
 
@@ -1035,7 +1033,7 @@ def calculate_buy_at(data):
     if data.empty or 'RSI' not in data.columns or 'Close' not in data.columns:
         st.warning("⚠️ Missing RSI or Close data.")
         return None
-    if pd.isnull(data['RSI'].iloc[-1]) or pd.isnull(data['Close'].iloc[-1]):
+    if np.isnan(data['RSI'].iloc[-1]) or np.isnan(data['Close'].iloc[-1]):
         st.warning("⚠️ Latest RSI or Close value is NaN.")
         return None
 
@@ -1053,7 +1051,7 @@ def calculate_stop_loss(data):
     if data.empty or 'ATR' not in data.columns or 'ADX' not in data.columns:
         st.warning("⚠️ Missing ATR or ADX data.")
         return None
-    if pd.isnull(data['ATR'].iloc[-1]) or pd.isnull(data['Close'].iloc[-1]):
+    if np.isnan(data['ATR'].iloc[-1]) or np.isnan(data['Close'].iloc[-1]):
         st.warning("⚠️ Invalid ATR or Close values.")
         return None
 
@@ -1123,36 +1121,32 @@ def calculate_target_row(row, risk_reward_ratio=3):
     target = cap_target(target, row['Close'])
     return round(target, 2)
 
+def fetch_fundamentals(symbol):
+    try:
+        smart_api = init_smartapi_client()
+        if not smart_api:
+            return {'P/E': float('inf'), 'EPS': 0, 'RevenueGrowth': 0}
+        return {'P/E': float('inf'), 'EPS': 0, 'RevenueGrowth': 0}
+    except Exception:
+        return {'P/E': float('inf'), 'EPS': 0, 'RevenueGrowth': 0}
 
 # Improved strategy logic using adaptive regime detection, signal scoring, and volatility-aware filters
 
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
-
-def validate_data(data, min_length=50):
-    required_cols = {'Close', 'ATR', 'Volume', 'Avg_Volume', 'SMA_50'}
-    return (
-        isinstance(data, pd.DataFrame) and
-        len(data) >= min_length and
-        required_cols.issubset(data.columns) and
-        data['Close'].notna().sum() >= min_length
-    )
-
 def classify_market_regime(data):
+    """Classifies regime based on volatility and trend"""
     data['ATR_pct'] = data['ATR'] / data['Close']
-    atr_pct = data['ATR_pct'].iloc[-1]
-    close = data['Close'].iloc[-1]
-    sma_50 = data['SMA_50'].iloc[-1]
-
-    if atr_pct > 0.03:
-        return 'High Volatility'
-    elif close > sma_50:
-        return 'Bullish'
-    elif close < sma_50:
-        return 'Bearish'
+    if data['ATR_pct'].iloc[-1] > 0.03:
+        return 'volatile'
+    elif data['Close'].iloc[-1] > data['SMA_50'].iloc[-1]:
+        return 'bullish'
     else:
-        return 'Neutral'
+        return 'neutral'
 
-def compute_signal_score(data, regime, symbol=None):
+def compute_signal_score(data, symbol=None):
+    """
+    Computes a weighted score based on normalized technical and fundamental indicators.
+    Returns a score between -10 and 10, with negative scores indicating no trade.
+    """
     score = 0.0
     weights = {
         'RSI': 1.5,
@@ -1161,158 +1155,153 @@ def compute_signal_score(data, regime, symbol=None):
         'CMF': 0.5,
         'ATR_Volatility': 1.0,
         'Breakout': 1.2,
+        'Fundamentals': 1.0
     }
 
+    # Volume filter: skip low volume days
     if data['Volume'].iloc[-1] < data['Avg_Volume'].iloc[-1] * 0.5:
-        return -10
+        return -10  # Force no trade
 
-    rsi = data.get('RSI', pd.Series([None])).iloc[-1]
-    if pd.notnull(rsi):
-        rsi_normalized = (rsi - 50) / 50
+    # RSI: Normalize to [-1, 1]
+    if 'RSI' in data.columns and pd.notnull(data['RSI'].iloc[-1]):
+        rsi = data['RSI'].iloc[-1]
+        rsi_normalized = (rsi - 50) / 50  # Center around 50
         if rsi < 30:
             score += weights['RSI'] * max(rsi_normalized, -1)
         elif rsi > 70:
             score -= weights['RSI'] * min(rsi_normalized, 1)
-        if rsi > 50 and regime == "Bullish":
-            score += weights['RSI'] * 0.5
 
-    if 'MACD' in data.columns and 'MACD_signal' in data.columns:
-        macd = data['MACD'].iloc[-1]
-        signal = data['MACD_signal'].iloc[-1]
-        if pd.notnull(macd) and pd.notnull(signal):
-            diff = macd - signal
-            macd_std = data['MACD'].rolling(20).std().iloc[-1] + 1e-10
-            normalized = diff / macd_std
-            score += weights['MACD'] * (normalized if diff > 0 else -abs(normalized))
+    # MACD: Check crossover with signal line
+    if 'MACD' in data.columns and 'MACD_signal' in data.columns and pd.notnull(data['MACD'].iloc[-1]) and pd.notnull(data['MACD_signal'].iloc[-1]):
+        macd_diff = data['MACD'].iloc[-1] - data['MACD_signal'].iloc[-1]
+        macd_normalized = macd_diff / (data['MACD'].std() + 1e-10)  # Normalize by volatility
+        if macd_diff > 0:
+            score += weights['MACD'] * max(macd_normalized, 0)
+        else:
+            score -= weights['MACD'] * min(macd_normalized, 0)
 
-    if 'Ichimoku_Span_A' in data.columns and 'Ichimoku_Span_B' in data.columns:
-        span_a = data['Ichimoku_Span_A'].iloc[-1]
-        span_b = data['Ichimoku_Span_B'].iloc[-1]
+    # Ichimoku: Check price vs cloud
+    if 'Ichimoku_Span_A' in data.columns and 'Ichimoku_Span_B' in data.columns and pd.notnull(data['Ichimoku_Span_A'].iloc[-1]):
         close = data['Close'].iloc[-1]
-        if pd.notnull(span_a) and pd.notnull(span_b):
-            if close > max(span_a, span_b):
-                score += weights['Ichimoku']
-            elif close < min(span_a, span_b):
-                score -= weights['Ichimoku']
+        span_a, span_b = data['Ichimoku_Span_A'].iloc[-1], data['Ichimoku_Span_B'].iloc[-1]
+        if close > max(span_a, span_b):
+            score += weights['Ichimoku']
+        elif close < min(span_a, span_b):
+            score -= weights['Ichimoku']
 
-    if 'CMF' in data.columns:
+    # CMF: Money flow
+    if 'CMF' in data.columns and pd.notnull(data['CMF'].iloc[-1]):
         cmf = data['CMF'].iloc[-1]
-        if pd.notnull(cmf):
-            score += weights['CMF'] * cmf
+        score += weights['CMF'] * cmf  # CMF is already in [-1, 1]
 
-    if 'ATR' in data.columns:
+    # ATR Volatility: Penalize high volatility
+    if 'ATR' in data.columns and pd.notnull(data['ATR'].iloc[-1]):
         atr_pct = data['ATR'].iloc[-1] / data['Close'].iloc[-1]
         if atr_pct > 0.04:
             score -= weights['ATR_Volatility'] * (atr_pct / 0.04)
 
-    if 'Donchian_Upper' in data.columns and 'Donchian_Lower' in data.columns:
-        close = data['Close'].iloc[-1]
-        upper = data['Donchian_Upper'].iloc[-1]
-        lower = data['Donchian_Lower'].iloc[-1]
-        if pd.notnull(upper) and pd.notnull(lower):
-            if close > upper:
-                score += weights['Breakout']
-            elif close < lower:
-                score -= weights['Breakout']
+    # Donchian Breakout
+    if 'Donchian_Upper' in data.columns and pd.notnull(data['Donchian_Upper'].iloc[-1]):
+        if data['Close'].iloc[-1] > data['Donchian_Upper'].iloc[-1]:
+            score += weights['Breakout']
+        elif data['Close'].iloc[-1] < data['Donchian_Lower'].iloc[-1]:
+            score -= weights['Breakout']
 
-    if 'SMA_20' in data.columns and 'SMA_50' in data.columns:
-        sma_20 = data['SMA_20'].iloc[-1]
-        sma_50 = data['SMA_50'].iloc[-1]
-        if pd.notnull(sma_20) and pd.notnull(sma_50):
-            trend_strength = (sma_20 - sma_50) / sma_50
-            if abs(trend_strength) < 0.02:
-                score *= 0.8
+    # Fundamentals
+    if symbol:
+        fundamentals = fetch_fundamentals(symbol)
+        if fundamentals['P/E'] < 15 and fundamentals['EPS'] > 0:
+            score += weights['Fundamentals'] * 0.5
+        elif fundamentals['P/E'] > 30 or fundamentals['EPS'] < 0:
+            score -= weights['Fundamentals'] * 0.5
+        if fundamentals['RevenueGrowth'] > 0.1:
+            score += weights['Fundamentals'] * 0.3
 
     return min(max(score, -10), 10)
 
-def adaptive_recommendation(data, symbol=None, account_size=100000, max_position_size=100):
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+
+def adaptive_recommendation(data, symbol=None):
+    """
+    Generate a trading recommendation based on market regime and technical indicators.
+    Returns a dictionary with all required fields, even in edge cases.
+    """
     try:
-        if not validate_data(data):
-            return {**default_output(), "Reason": "Insufficient or invalid data"}
-
-        current_price = data['Close'].iloc[-1]
-        atr = data['ATR'].iloc[-1]
-        volume = data['Volume'].iloc[-1]
-
-        regime = classify_market_regime(data)
-        score = compute_signal_score(data, regime, symbol)
-
-        # Robust regime transition detection
-        regime_stability = 1.0
-        if len(data) >= 5:
-            recent_regimes = [
-                classify_market_regime(data.iloc[i-1:i+1])
-                for i in range(len(data) - 4, len(data))
-            ]
-            regime_stability = len(set(recent_regimes)) / len(recent_regimes)
-            if regime_stability > 0.5:
-                score *= 0.7
-
-        # Regime-specific confidence threshold
-        confidence_threshold = {
-            'High Volatility': 1.5,
-            'Bullish': 0.8,
-            'Bearish': 1.2,
-            'Neutral': 1.0
-        }.get(regime, 1.0)
-
-        if current_price < 100 or atr < 5 or volume < 5000:
+        if not validate_data(data, min_length=50):
+            logging.warning("Insufficient data for adaptive recommendation")
             return {
-                **default_output(current_price, score, regime),
-                "Reason": "Filtered: low price/ATR/volume",
-                "Confidence": confidence_threshold,
-                "Regime_Stability": round(regime_stability, 2)
+                "Current Price": None,
+                "Buy At": None,
+                "Stop Loss": None,
+                "Target": None,
+                "Recommendation": "Hold",
+                "Score": 0,
+                "Regime": "Unknown",
+                "Position Size": None,
+                "Trailing Stop": None,
+                "Reason": "Insufficient data"
             }
 
+        # Extract latest data
+        current_price = data['Close'].iloc[-1] if 'Close' in data else None
+        if current_price is None or pd.isna(current_price):
+            logging.warning("No valid close price available")
+            return {
+                "Current Price": None,
+                "Buy At": None,
+                "Stop Loss": None,
+                "Target": None,
+                "Recommendation": "Hold",
+                "Score": 0,
+                "Regime": "Unknown",
+                "Position Size": None,
+                "Trailing Stop": None,
+                "Reason": "No valid close price"
+            }
+
+        # Market regime classification
+        atr = data['ATR'].iloc[-1] if 'ATR' in data and pd.notnull(data['ATR'].iloc[-1]) else 0
+        sma_50 = data['SMA_50'].iloc[-1] if 'SMA_50' in data and pd.notnull(data['SMA_50'].iloc[-1]) else current_price
+        regime = ("High Volatility" if atr > 0.05 * current_price else
+                 "Bullish" if current_price > sma_50 else "Neutral")
+
+        # Compute signal score
+        score = compute_signal_score(data, symbol)
+
+        # Filters
+        if current_price < 100 or atr < 5 or data['Volume'].iloc[-1] < 5000:
+            logging.info("Stock filtered out due to low price, ATR, or volume")
+            return {
+                "Current Price": current_price,
+                "Buy At": None,
+                "Stop Loss": None,
+                "Target": None,
+                "Recommendation": "Hold",
+                "Score": score,
+                "Regime": regime,
+                "Position Size": None,
+                "Trailing Stop": None,
+                "Reason": "Low price, ATR, or volume"
+            }
+
+        # Recommendation logic with confidence threshold
+        confidence_threshold = 1.0
         if score > confidence_threshold:
             recommendation = "Buy"
+            reason = f"Bullish signals (Score: {score:.2f}) in {regime} regime"
         elif score < -confidence_threshold:
             recommendation = "Sell"
+            reason = f"Bearish signals (Score: {score:.2f}) in {regime} regime"
         else:
             recommendation = "Hold"
+            reason = f"Neutral signals (Score: {score:.2f}) in {regime} regime"
 
-        slippage = 0.005
-        buy_at = current_price * (1 + slippage) if recommendation == "Buy" else None
-        stop_loss = (
-            current_price * 0.95 if recommendation == "Buy"
-            else current_price * 1.05 if recommendation == "Sell"
-            else None
-        )
-        target = (
-            current_price * 1.05 if recommendation == "Buy"
-            else current_price * 0.95 if recommendation == "Sell"
-            else None
-        )
-
-        # Maximum stop loss check (e.g., 8%)
-        max_loss_pct = 0.08
-        if stop_loss:
-            loss_pct = abs(current_price - stop_loss) / current_price
-            if loss_pct > max_loss_pct:
-                return {
-                    **default_output(current_price, score, regime),
-                    "Reason": "Stop loss too wide (>8%)",
-                    "Confidence": confidence_threshold,
-                    "Regime_Stability": round(regime_stability, 2)
-                }
-
-        # Volatility-based position sizing
-        if stop_loss:
-            stop_dist = abs(current_price - stop_loss) / current_price
-            stop_dist = max(stop_dist, 0.01)
-            position_size = min((account_size * 0.02) / (current_price * stop_dist), max_position_size)
-        else:
-            position_size = None
-
-        # Dynamic trailing stop based on volatility
-        atr_multiplier = 1.5 if regime == "High Volatility" else 2.0
-        trailing_stop = (
-            current_price - (atr_multiplier * atr) if recommendation == "Buy"
-            else current_price + (atr_multiplier * atr) if recommendation == "Sell"
-            else None
-        )
-
-        reason = f"{recommendation} signal (Score: {score:.2f}) in {regime} regime"
+        # Trading parameters
+        buy_at = current_price * 1.01 if recommendation == "Buy" else None
+        stop_loss = current_price * 0.95 if recommendation == "Buy" else current_price * 1.05 if recommendation == "Sell" else None
+        target = current_price * 1.05 if recommendation == "Buy" else current_price * 0.95 if recommendation == "Sell" else None
+        position_size = min(100000 / current_price, 100) if recommendation in ["Buy", "Sell"] else None
+        trailing_stop = current_price - (atr * 2) if recommendation == "Buy" else current_price + (atr * 2) if recommendation == "Sell" else None
 
         return {
             "Current Price": current_price,
@@ -1320,40 +1309,26 @@ def adaptive_recommendation(data, symbol=None, account_size=100000, max_position
             "Stop Loss": stop_loss,
             "Target": target,
             "Recommendation": recommendation,
-            "Score": round(score, 2),
+            "Score": score,
             "Regime": regime,
-            "Position Size": round(position_size, 2) if position_size else None,
-            "Trailing Stop": round(trailing_stop, 2) if trailing_stop else None,
-            "Reason": reason,
-            "Confidence": confidence_threshold,
-            "Regime_Stability": round(regime_stability, 2)
+            "Position Size": position_size,
+            "Trailing Stop": trailing_stop,
+            "Reason": reason
         }
-
     except Exception as e:
-        logging.error(f"Error in adaptive_recommendation: {e}")
+        logging.error(f"Error in adaptive_recommendation: {str(e)}")
         return {
-            **default_output(),
-            "Reason": f"Error: {str(e)}",
-            "Confidence": None,
-            "Regime_Stability": None
+            "Current Price": None,
+            "Buy At": None,
+            "Stop Loss": None,
+            "Target": None,
+            "Recommendation": "Hold",
+            "Score": 0,
+            "Regime": "Unknown",
+            "Position Size": None,
+            "Trailing Stop": None,
+            "Reason": f"Error: {str(e)}"
         }
-
-def default_output(price=None, score=0, regime="Unknown"):
-    return {
-        "Current Price": price,
-        "Buy At": None,
-        "Stop Loss": None,
-        "Target": None,
-        "Recommendation": "Hold",
-        "Score": score,
-        "Regime": regime,
-        "Position Size": None,
-        "Trailing Stop": None,
-        "Reason": "N/A",
-        "Confidence": None,
-        "Regime_Stability": None
-    }
-
         
 def generate_recommendations(data, symbol=None):
     recommendations = {
@@ -1550,6 +1525,17 @@ def generate_recommendations(data, symbol=None):
                     buy_score += 1
                 elif data['OBV'].iloc[-1] < data['OBV'].iloc[-2]:
                     sell_score += 1
+
+        if symbol:
+            fundamentals = fetch_fundamentals(symbol)
+            if fundamentals['P/E'] < 15 and fundamentals['EPS'] > 0:
+                buy_score += 2
+            elif fundamentals['P/E'] > 30 or fundamentals['EPS'] < 0:
+                sell_score += 1
+            if fundamentals['RevenueGrowth'] > 0.1:
+                buy_score += 1
+            elif fundamentals['RevenueGrowth'] < 0:
+                sell_score += 0.5
 
         net_score = buy_score - sell_score
         if buy_score > sell_score and buy_score >= 4:
@@ -1894,24 +1880,9 @@ def colored_recommendation(recommendation):
 
 def update_progress(progress_bar, loading_text, progress_value, loading_messages):
     progress_bar.progress(progress_value)
-
-    try:
-        loading_message = next(loading_messages)
-    except StopIteration:
-        loading_message = "Loading"
-
-    dots = "." * (int(progress_value * 10) % 4)
-
-    # Reliable 5% step tracking (0–20 steps)
-    current_step = int(progress_value * 20)
-
-    if not hasattr(update_progress, '_last_text_update'):
-        update_progress._last_text_update = -1
-
-    if current_step != update_progress._last_text_update:
-        loading_text.text(f"{loading_message}{dots}")
-        update_progress._last_text_update = current_step
-
+    loading_message = next(loading_messages)
+    dots = "." * int((progress_value * 10) % 4)
+    loading_text.text(f"{loading_message}{dots}")
 
 def display_dashboard(symbol=None, data=None, recommendations=None):
     # Initialize session state
@@ -2201,6 +2172,52 @@ def display_dashboard(symbol=None, data=None, recommendations=None):
                 with col2:
                     value = round(value, 2) if pd.notnull(value) else "N/A"
                     st.write(f"**{tooltip(name, tooltip_text)}**: {value}")
+
+        # Price Chart
+        st.subheader("📈 Price Chart with Indicators")
+        fig = px.line(data, x=data.index, y='Close', title=f"{symbol.split('-')[0]} Price")
+        if 'SMA_50' in data.columns and data['SMA_50'].notnull().any():
+            fig.add_scatter(x=data.index, y=data['SMA_50'], mode='lines', name='SMA 50', line=dict(color='orange'))
+        if 'SMA_200' in data.columns and data['SMA_200'].notnull().any():
+            fig.add_scatter(x=data.index, y=data['SMA_200'], mode='lines', name='SMA 200', line=dict(color='red'))
+        if 'Upper_Band' in data.columns and data['Upper_Band'].notnull().any():
+            fig.add_scatter(x=data.index, y=data['Upper_Band'], mode='lines', name='Bollinger Upper', line=dict(color='green', dash='dash'))
+        if 'Lower_Band' in data.columns and data['Lower_Band'].notnull().any():
+            fig.add_scatter(x=data.index, y=data['Lower_Band'], mode='lines', name='Bollinger Lower', line=dict(color='green', dash='dash'))
+        if 'Ichimoku_Span_A' in data.columns and data['Ichimoku_Span_A'].notnull().any():
+            fig.add_scatter(x=data.index, y=data['Ichimoku_Span_A'], mode='lines', name='Ichimoku Span A', line=dict(color='purple'))
+        if 'Ichimoku_Span_B' in data.columns and data['Ichimoku_Span_B'].notnull().any():
+            fig.add_scatter(x=data.index, y=data['Ichimoku_Span_B'], mode='lines', name='Ichimoku Span B', line=dict(color='purple', dash='dash'))
+        st.plotly_chart(fig, use_container_width=True)
+
+        # Monte Carlo Simulation
+        st.subheader("📊 Monte Carlo Simulation")
+        simulations = monte_carlo_simulation(data)
+        sim_df = pd.DataFrame(simulations).T
+        sim_df.index = [data.index[-1] + timedelta(days=i) for i in range(len(sim_df))]
+        fig_sim = px.line(sim_df, title="Monte Carlo Price Projections (30 Days)")
+        st.plotly_chart(fig_sim, use_container_width=True)
+
+        # RSI and MACD
+        st.subheader("📊 RSI and MACD")
+        fig_ind = px.line(data, x=data.index, y='RSI', title="RSI")
+        fig_ind.add_hline(y=70, line_dash="dash", line_color="red")
+        fig_ind.add_hline(y=30, line_dash="dash", line_color="green")
+        st.plotly_chart(fig_ind, use_container_width=True)
+
+        fig_macd = px.line(data, x=data.index, y=['MACD', 'MACD_signal'], title="MACD")
+        st.plotly_chart(fig_macd, use_container_width=True)
+
+        # Volume Analysis
+        st.subheader("📊 Volume Analysis")
+        fig_vol = px.bar(data, x=data.index, y='Volume', title="Volume")
+        if 'Volume_Spike' in data.columns:
+            spike_data = data[data['Volume_Spike'] == True]
+            if not spike_data.empty:
+                fig_vol.add_scatter(x=spike_data.index, y=spike_data['Volume'], mode='markers', name='Volume Spike',
+                                   marker=dict(color='red', size=10))
+        st.plotly_chart(fig_vol, use_container_width=True)
+    
             
 def main():
     init_database()
