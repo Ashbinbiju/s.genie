@@ -24,6 +24,7 @@ from SmartApi import SmartConnect
 import pyotp
 import os
 from dotenv import load_dotenv
+from scipy.stats.mstats import winsorize
 from streamlit import cache_data
 
 load_dotenv()
@@ -415,33 +416,62 @@ def calculate_advance_decline_ratio(stock_list):
                 declines += 1
     return advances / declines if declines != 0 else 0
 
-def monte_carlo_simulation(data, simulations=1000, days=30):
-    returns = data['Close'].pct_change().dropna()
-    if len(returns) < 30:
-        mean_return = returns.mean()
-        std_return = returns.std()
-        simulation_results = []
-        for _ in range(simulations):
-            price_series = [data['Close'].iloc[-1]]
-            for _ in range(days):
-                price = price_series[-1] * (1 + np.random.normal(mean_return, std_return))
-                price_series.append(price)
-            simulation_results.append(price_series)
-        return simulation_results
+def monte_carlo_simulation(data, simulations=1000, days=30, garch_min_obs=80, winsorize_limit=0.01):
+    # === Validation ===
+    if data is None or not isinstance(data, pd.DataFrame) or 'Close' not in data.columns:
+        raise ValueError("Input 'data' must be a DataFrame with a 'Close' column.")
     
-    model = arch_model(returns, vol='GARCH', p=1, q=1, dist='Normal', rescale=False)
-    garch_fit = model.fit(disp='off')
-    forecasts = garch_fit.forecast(horizon=days)
-    volatility = np.sqrt(forecasts.variance.iloc[-1].values)
-    mean_return = returns.mean()
-    simulation_results = []
-    for _ in range(simulations):
-        price_series = [data['Close'].iloc[-1]]
-        for i in range(days):
-            price = price_series[-1] * (1 + np.random.normal(mean_return, volatility[i]))
-            price_series.append(price)
-        simulation_results.append(price_series)
-    return simulation_results
+    close_prices = pd.to_numeric(data['Close'], errors='coerce').dropna()
+    if len(close_prices) < 2:
+        raise ValueError("Not enough valid 'Close' prices for simulation.")
+
+    returns = close_prices.pct_change().dropna()
+    if returns.empty:
+        raise ValueError("Insufficient return data after computing percentage change.")
+
+    last_price = close_prices.iloc[-1]
+    
+    # === Optional: Winsorize to reduce effect of outliers ===
+    if winsorize_limit > 0:
+        returns = pd.Series(winsorize(returns, limits=winsorize_limit))
+
+    # === Use geometric mean return for better forward-looking estimate ===
+    log_returns = np.log1p(returns)
+    geo_mean = np.expm1(log_returns.mean())  # annualized drift is another option
+
+    std_return = returns.std()
+
+    # === Choose method based on data length ===
+    if len(returns) < garch_min_obs:
+        # === Simple vectorized Monte Carlo ===
+        rand_returns = np.random.normal(geo_mean, std_return, (simulations, days))
+        price_paths = last_price * np.cumprod(1 + rand_returns, axis=1)
+        price_paths = np.hstack([np.full((simulations, 1), last_price), price_paths])
+        return price_paths.tolist()
+    
+    else:
+        # === GARCH Simulation with volatility forecasting ===
+        try:
+            model = arch_model(returns, vol='GARCH', p=1, q=1, dist='Normal', rescale=False)
+            garch_fit = model.fit(disp='off')
+            forecasts = garch_fit.forecast(horizon=days)
+            volatility = np.sqrt(forecasts.variance.iloc[-1].values)
+
+            sim_results = []
+            for _ in range(simulations):
+                prices = [last_price]
+                for i in range(days):
+                    shock = np.random.normal(geo_mean, volatility[i])
+                    prices.append(prices[-1] * (1 + shock))
+                sim_results.append(prices)
+            return sim_results
+
+        except Exception as e:
+            print(f"GARCH model fitting failed: {e}. Falling back to simple simulation.")
+            rand_returns = np.random.normal(geo_mean, std_return, (simulations, days))
+            price_paths = last_price * np.cumprod(1 + rand_returns, axis=1)
+            price_paths = np.hstack([np.full((simulations, 1), last_price), price_paths])
+            return price_paths.tolist()
 
 def extract_entities(text):
     nlp = spacy.load("en_core_web_sm")
