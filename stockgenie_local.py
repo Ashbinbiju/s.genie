@@ -26,6 +26,8 @@ import os
 from dotenv import load_dotenv
 from scipy.stats.mstats import winsorize
 from streamlit import cache_data
+from itertools import cycle
+
 
 load_dotenv()
 
@@ -1861,9 +1863,24 @@ def colored_recommendation(recommendation):
 
 def update_progress(progress_bar, loading_text, progress_value, loading_messages):
     progress_bar.progress(progress_value)
-    loading_message = next(loading_messages)
-    dots = "." * int((progress_value * 10) % 4)
-    loading_text.text(f"{loading_message}{dots}")
+
+    try:
+        loading_message = next(loading_messages)
+    except StopIteration:
+        loading_message = "Loading"
+
+    dots = "." * (int(progress_value * 10) % 4)
+
+    # Reliable 5% step tracking (0–20 steps)
+    current_step = int(progress_value * 20)
+
+    if not hasattr(update_progress, '_last_text_update'):
+        update_progress._last_text_update = -1
+
+    if current_step != update_progress._last_text_update:
+        loading_text.text(f"{loading_message}{dots}")
+        update_progress._last_text_update = current_step
+
 
 def display_dashboard(symbol=None, data=None, recommendations=None):
     # Initialize session state
