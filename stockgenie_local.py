@@ -1134,34 +1134,37 @@ def fetch_fundamentals(symbol):
 
 # Improved strategy logic using adaptive regime detection, signal scoring, and volatility-aware filters
 
-import pandas as pd
-import logging
-
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
 def validate_data(data, min_length=50):
     required_cols = {'Close', 'ATR', 'Volume', 'Avg_Volume', 'SMA_50'}
     return (
-        isinstance(data, pd.DataFrame) and
-        len(data) >= min_length and
-        required_cols.issubset(data.columns) and
-        data['Close'].notna().sum() >= min_length
+        isinstance(data, pd.DataFrame)
+        and len(data) >= min_length
+        and required_cols.issubset(data.columns)
+        and data['Close'].notna().sum() >= min_length
     )
 
 def classify_market_regime(data):
-    data['ATR_pct'] = data['ATR'] / data['Close']
-    atr_pct = data['ATR_pct'].iloc[-1]
-    close = data['Close'].iloc[-1]
-    sma_50 = data['SMA_50'].iloc[-1]
+    try:
+        close = data['Close'].iloc[-1]
+        atr = data['ATR'].iloc[-1]
+        sma_50 = data['SMA_50'].iloc[-1]
 
-    if atr_pct > 0.03:
-        return 'High Volatility'
-    elif close > sma_50:
-        return 'Bullish'
-    elif close < sma_50:
-        return 'Bearish'
-    else:
-        return 'Neutral'
+        if pd.isna(close) or pd.isna(atr) or pd.isna(sma_50):
+            return "Unknown"
+
+        atr_pct = atr / close
+        if atr_pct > 0.03:
+            return 'High Volatility'
+        elif close > sma_50:
+            return 'Bullish'
+        elif close < sma_50:
+            return 'Bearish'
+        else:
+            return 'Neutral'
+    except:
+        return "Unknown"
 
 def compute_signal_score(data, regime, symbol=None):
     score = 0.0
@@ -1200,7 +1203,7 @@ def compute_signal_score(data, regime, symbol=None):
         span_a = data['Ichimoku_Span_A'].iloc[-1]
         span_b = data['Ichimoku_Span_B'].iloc[-1]
         close = data['Close'].iloc[-1]
-        if pd.notnull(span_a) and pd.notnull(span_b):
+        if pd.notnull(span_a) and pd.notnull(span_b) and pd.notnull(close):
             if close > max(span_a, span_b):
                 score += weights['Ichimoku']
             elif close < min(span_a, span_b):
@@ -1211,16 +1214,18 @@ def compute_signal_score(data, regime, symbol=None):
         if pd.notnull(cmf):
             score += weights['CMF'] * cmf
 
-    if 'ATR' in data.columns:
-        atr_pct = data['ATR'].iloc[-1] / data['Close'].iloc[-1]
-        if atr_pct > 0.04:
-            score -= weights['ATR_Volatility'] * (atr_pct / 0.04)
+    if 'ATR' in data.columns and pd.notnull(data['ATR'].iloc[-1]):
+        close = data['Close'].iloc[-1]
+        if pd.notnull(close):
+            atr_pct = data['ATR'].iloc[-1] / close
+            if atr_pct > 0.04:
+                score -= weights['ATR_Volatility'] * (atr_pct / 0.04)
 
     if 'Donchian_Upper' in data.columns and 'Donchian_Lower' in data.columns:
         close = data['Close'].iloc[-1]
         upper = data['Donchian_Upper'].iloc[-1]
         lower = data['Donchian_Lower'].iloc[-1]
-        if pd.notnull(upper) and pd.notnull(lower):
+        if pd.notnull(upper) and pd.notnull(lower) and pd.notnull(close):
             if close > upper:
                 score += weights['Breakout']
             elif close < lower:
@@ -1229,7 +1234,7 @@ def compute_signal_score(data, regime, symbol=None):
     if 'SMA_20' in data.columns and 'SMA_50' in data.columns:
         sma_20 = data['SMA_20'].iloc[-1]
         sma_50 = data['SMA_50'].iloc[-1]
-        if pd.notnull(sma_20) and pd.notnull(sma_50):
+        if pd.notnull(sma_20) and pd.notnull(sma_50) and sma_50 != 0:
             trend_strength = (sma_20 - sma_50) / sma_50
             if abs(trend_strength) < 0.02:
                 score *= 0.8
@@ -1241,25 +1246,33 @@ def adaptive_recommendation(data, symbol=None, account_size=100000, max_position
         if not validate_data(data):
             return {**default_output(), "Reason": "Insufficient or invalid data"}
 
-        current_price = data['Close'].iloc[-1]
-        atr = data['ATR'].iloc[-1]
-        volume = data['Volume'].iloc[-1]
+        current_price = data['Close'].iloc[-1] if pd.notnull(data['Close'].iloc[-1]) else None
+        atr = data['ATR'].iloc[-1] if pd.notnull(data['ATR'].iloc[-1]) else None
+        volume = data['Volume'].iloc[-1] if pd.notnull(data['Volume'].iloc[-1]) else None
+
+        if current_price is None or atr is None or volume is None:
+            return {
+                **default_output(),
+                "Reason": "Missing key values (Close, ATR, Volume)",
+                "Confidence": None,
+                "Regime_Stability": None
+            }
 
         regime = classify_market_regime(data)
         score = compute_signal_score(data, regime, symbol)
 
-        # Robust regime transition detection
+        # Regime stability detection
         regime_stability = 1.0
         if len(data) >= 5:
             recent_regimes = [
-                classify_market_regime(data.iloc[i-1:i+1])
+                classify_market_regime(data.iloc[i - 1:i + 1])
                 for i in range(len(data) - 4, len(data))
             ]
             regime_stability = len(set(recent_regimes)) / len(recent_regimes)
             if regime_stability > 0.5:
                 score *= 0.7
 
-        # Regime-specific confidence threshold
+        # Dynamic confidence thresholds
         confidence_threshold = {
             'High Volatility': 1.5,
             'Bullish': 0.8,
@@ -1284,30 +1297,24 @@ def adaptive_recommendation(data, symbol=None, account_size=100000, max_position
 
         slippage = 0.005
         buy_at = current_price * (1 + slippage) if recommendation == "Buy" else None
-        stop_loss = (
-            current_price * 0.95 if recommendation == "Buy"
-            else current_price * 1.05 if recommendation == "Sell"
-            else None
-        )
-        target = (
-            current_price * 1.05 if recommendation == "Buy"
-            else current_price * 0.95 if recommendation == "Sell"
-            else None
-        )
+        stop_loss = current_price * 0.95 if recommendation == "Buy" else (
+            current_price * 1.05 if recommendation == "Sell" else None)
+        target = current_price * 1.05 if recommendation == "Buy" else (
+            current_price * 0.95 if recommendation == "Sell" else None)
 
-        # Maximum stop loss check (e.g., 8%)
+        # Max stop-loss % filter
         max_loss_pct = 0.08
         if stop_loss:
             loss_pct = abs(current_price - stop_loss) / current_price
             if loss_pct > max_loss_pct:
                 return {
                     **default_output(current_price, score, regime),
-                    "Reason": "Stop loss too wide (>8%)",
+                    "Reason": "Stop loss too wide",
                     "Confidence": confidence_threshold,
                     "Regime_Stability": round(regime_stability, 2)
                 }
 
-        # Volatility-based position sizing
+        # Position size with volatility
         if stop_loss:
             stop_dist = abs(current_price - stop_loss) / current_price
             stop_dist = max(stop_dist, 0.01)
@@ -1315,11 +1322,10 @@ def adaptive_recommendation(data, symbol=None, account_size=100000, max_position
         else:
             position_size = None
 
-        # Dynamic trailing stop based on volatility
         atr_multiplier = 1.5 if regime == "High Volatility" else 2.0
         trailing_stop = (
-            current_price - (atr_multiplier * atr) if recommendation == "Buy"
-            else current_price + (atr_multiplier * atr) if recommendation == "Sell"
+            current_price - atr_multiplier * atr if recommendation == "Buy"
+            else current_price + atr_multiplier * atr if recommendation == "Sell"
             else None
         )
 
@@ -1364,6 +1370,7 @@ def default_output(price=None, score=0, regime="Unknown"):
         "Confidence": None,
         "Regime_Stability": None
     }
+
 
 def generate_recommendations(data, symbol=None):
     recommendations = {
