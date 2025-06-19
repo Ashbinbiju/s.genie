@@ -2253,51 +2253,7 @@ def display_dashboard(symbol=None, data=None, recommendations=None):
                     value = round(value, 2) if pd.notnull(value) else "N/A"
                     st.write(f"**{tooltip(name, tooltip_text)}**: {value}")
 
-        # Price Chart
-        st.subheader("📈 Price Chart with Indicators")
-        fig = px.line(data, x=data.index, y='Close', title=f"{symbol.split('-')[0]} Price")
-        if 'SMA_50' in data.columns and data['SMA_50'].notnull().any():
-            fig.add_scatter(x=data.index, y=data['SMA_50'], mode='lines', name='SMA 50', line=dict(color='orange'))
-        if 'SMA_200' in data.columns and data['SMA_200'].notnull().any():
-            fig.add_scatter(x=data.index, y=data['SMA_200'], mode='lines', name='SMA 200', line=dict(color='red'))
-        if 'Upper_Band' in data.columns and data['Upper_Band'].notnull().any():
-            fig.add_scatter(x=data.index, y=data['Upper_Band'], mode='lines', name='Bollinger Upper', line=dict(color='green', dash='dash'))
-        if 'Lower_Band' in data.columns and data['Lower_Band'].notnull().any():
-            fig.add_scatter(x=data.index, y=data['Lower_Band'], mode='lines', name='Bollinger Lower', line=dict(color='green', dash='dash'))
-        if 'Ichimoku_Span_A' in data.columns and data['Ichimoku_Span_A'].notnull().any():
-            fig.add_scatter(x=data.index, y=data['Ichimoku_Span_A'], mode='lines', name='Ichimoku Span A', line=dict(color='purple'))
-        if 'Ichimoku_Span_B' in data.columns and data['Ichimoku_Span_B'].notnull().any():
-            fig.add_scatter(x=data.index, y=data['Ichimoku_Span_B'], mode='lines', name='Ichimoku Span B', line=dict(color='purple', dash='dash'))
-        st.plotly_chart(fig, use_container_width=True)
-
-        # Monte Carlo Simulation
-        st.subheader("📊 Monte Carlo Simulation")
-        simulations = monte_carlo_simulation(data)
-        sim_df = pd.DataFrame(simulations).T
-        sim_df.index = [data.index[-1] + timedelta(days=i) for i in range(len(sim_df))]
-        fig_sim = px.line(sim_df, title="Monte Carlo Price Projections (30 Days)")
-        st.plotly_chart(fig_sim, use_container_width=True)
-
-        # RSI and MACD
-        st.subheader("📊 RSI and MACD")
-        fig_ind = px.line(data, x=data.index, y='RSI', title="RSI")
-        fig_ind.add_hline(y=70, line_dash="dash", line_color="red")
-        fig_ind.add_hline(y=30, line_dash="dash", line_color="green")
-        st.plotly_chart(fig_ind, use_container_width=True)
-
-        fig_macd = px.line(data, x=data.index, y=['MACD', 'MACD_signal'], title="MACD")
-        st.plotly_chart(fig_macd, use_container_width=True)
-
-        # Volume Analysis
-        st.subheader("📊 Volume Analysis")
-        fig_vol = px.bar(data, x=data.index, y='Volume', title="Volume")
-        if 'Volume_Spike' in data.columns:
-            spike_data = data[data['Volume_Spike'] == True]
-            if not spike_data.empty:
-                fig_vol.add_scatter(x=spike_data.index, y=spike_data['Volume'], mode='markers', name='Volume Spike',
-                                   marker=dict(color='red', size=10))
-        st.plotly_chart(fig_vol, use_container_width=True)
-    
+       
             
 def main():
     init_database()
