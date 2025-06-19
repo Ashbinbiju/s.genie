@@ -1035,7 +1035,7 @@ def calculate_buy_at(data):
     if data.empty or 'RSI' not in data.columns or 'Close' not in data.columns:
         st.warning("⚠️ Missing RSI or Close data.")
         return None
-    if np.isnan(data['RSI'].iloc[-1]) or np.isnan(data['Close'].iloc[-1]):
+    if pd.isnull(data['RSI'].iloc[-1]) or pd.isnull(data['Close'].iloc[-1]):
         st.warning("⚠️ Latest RSI or Close value is NaN.")
         return None
 
@@ -1053,7 +1053,7 @@ def calculate_stop_loss(data):
     if data.empty or 'ATR' not in data.columns or 'ADX' not in data.columns:
         st.warning("⚠️ Missing ATR or ADX data.")
         return None
-    if np.isnan(data['ATR'].iloc[-1]) or np.isnan(data['Close'].iloc[-1]):
+    if pd.isnull(data['ATR'].iloc[-1]) or pd.isnull(data['Close'].iloc[-1]):
         st.warning("⚠️ Invalid ATR or Close values.")
         return None
 
