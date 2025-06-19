@@ -580,17 +580,50 @@ def optimize_rsi_window(data, windows=range(5, 15), risk_free_rate=0.025):
             best_sharpe, best_window = sharpe, window
 
     return best_window
-
-def detect_divergence(data):
-    rsi = data['RSI']
+    
+def detect_divergence(data, window=10, rsi_threshold=5):
     price = data['Close']
-    recent_highs = price[-5:].idxmax()
-    recent_lows = price[-5:].idxmin()
-    rsi_highs = rsi[-5:].idxmax()
-    rsi_lows = rsi[-5:].idxmin()
-    bullish_div = (recent_lows > rsi_lows) and (price[recent_lows] < price[-1]) and (rsi[rsi_lows] < rsi[-1])
-    bearish_div = (recent_highs < rsi_highs) and (price[recent_highs] > price[-1]) and (rsi[rsi_highs] > rsi[-1])
-    return "Bullish Divergence" if bullish_div else "Bearish Divergence" if bearish_div else "No Divergence"
+    rsi = data['RSI']
+    
+    # Ensure enough data
+    if len(price) < window or len(rsi) < window:
+        return "Insufficient data"
+
+    # Get recent extreme indices
+    recent_price_low_idx = price[-window:].idxmin()
+    recent_price_high_idx = price[-window:].idxmax()
+    recent_rsi_low_idx = rsi[-window:].idxmin()
+    recent_rsi_high_idx = rsi[-window:].idxmax()
+
+    # Convert to positional indices
+    price_low_pos = price.index.get_loc(recent_price_low_idx)
+    price_high_pos = price.index.get_loc(recent_price_high_idx)
+    rsi_low_pos = rsi.index.get_loc(recent_rsi_low_idx)
+    rsi_high_pos = rsi.index.get_loc(recent_rsi_high_idx)
+    latest_pos = len(price) - 1
+
+    # Bullish divergence conditions
+    bullish_div = (
+        price[recent_price_low_idx] < price.iloc[-1] and                         # Price lower low
+        rsi[recent_rsi_low_idx] > rsi.iloc[-1] and                               # RSI higher low
+        abs(rsi[recent_rsi_low_idx] - rsi.iloc[-1]) > rsi_threshold and          # RSI change is significant
+        price_low_pos > rsi_low_pos and price_low_pos != latest_pos             # RSI low occurs before price low and not current bar
+    )
+
+    # Bearish divergence conditions
+    bearish_div = (
+        price[recent_price_high_idx] > price.iloc[-1] and                        # Price higher high
+        rsi[recent_rsi_high_idx] < rsi.iloc[-1] and                              # RSI lower high
+        abs(rsi[recent_rsi_high_idx] - rsi.iloc[-1]) > rsi_threshold and         # RSI change is significant
+        price_high_pos > rsi_high_pos and price_high_pos != latest_pos          # RSI high occurs before price high and not current bar
+    )
+
+    if bullish_div:
+        return "Bullish Divergence"
+    elif bearish_div:
+        return "Bearish Divergence"
+    else:
+        return "No Divergence"
 
 def calculate_cmo(close, window=14):
     try:
