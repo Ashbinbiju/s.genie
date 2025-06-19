@@ -1551,17 +1551,6 @@ def generate_recommendations(data, symbol=None):
                 elif data['OBV'].iloc[-1] < data['OBV'].iloc[-2]:
                     sell_score += 1
 
-        if symbol:
-            fundamentals = fetch_fundamentals(symbol)
-            if fundamentals['P/E'] < 15 and fundamentals['EPS'] > 0:
-                buy_score += 2
-            elif fundamentals['P/E'] > 30 or fundamentals['EPS'] < 0:
-                sell_score += 1
-            if fundamentals['RevenueGrowth'] > 0.1:
-                buy_score += 1
-            elif fundamentals['RevenueGrowth'] < 0:
-                sell_score += 0.5
-
         net_score = buy_score - sell_score
         if buy_score > sell_score and buy_score >= 4:
             recommendations["Intraday"] = "Strong Buy"
