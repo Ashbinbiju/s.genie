@@ -1134,243 +1134,265 @@ def fetch_fundamentals(symbol):
 
 # Improved strategy logic using adaptive regime detection, signal scoring, and volatility-aware filters
 
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+import pandas as pd
+import numpy as np
+import logging
+import ta
 
-def validate_data(data, min_length=50):
-    required_cols = {'Close', 'ATR', 'Volume', 'Avg_Volume', 'SMA_50'}
-    return (
-        isinstance(data, pd.DataFrame)
-        and len(data) >= min_length
-        and required_cols.issubset(data.columns)
-        and data['Close'].notna().sum() >= min_length
-    )
+logging.basicConfig(level=logging.INFO)
 
-def classify_market_regime(data):
+# ============================ #
+#       INDICATOR SETUP        #
+# ============================ #
+
+_indicator_cache = {}
+
+def compute_indicators(df, symbol=None):
+    cache_key = symbol or id(df)
+    if cache_key in _indicator_cache:
+        return _indicator_cache[cache_key]
+
+    df = df.copy()
+    if df.empty or 'Close' not in df.columns:
+        return df
+
+    df['SMA_20'] = df['Close'].rolling(20).mean()
+    df['SMA_50'] = df['Close'].rolling(50).mean()
+    df['SMA_200'] = df['Close'].rolling(200).mean()
+
+    df['RSI'] = ta.momentum.RSIIndicator(df['Close']).rsi()
+    macd = ta.trend.MACD(df['Close'])
+    df['MACD'] = macd.macd()
+    df['MACD_signal'] = macd.macd_signal()
+
+    ichimoku = ta.trend.IchimokuIndicator(df['High'], df['Low'])
+    df['Ichimoku_Span_A'] = ichimoku.ichimoku_a()
+    df['Ichimoku_Span_B'] = ichimoku.ichimoku_b()
+
+    df['CMF'] = ta.volume.ChaikinMoneyFlowIndicator(df['High'], df['Low'], df['Close'], df['Volume']).chaikin_money_flow()
+    df['ATR'] = ta.volatility.AverageTrueRange(df['High'], df['Low'], df['Close']).average_true_range()
+
+    df['Donchian_Upper'] = df['High'].rolling(20).max()
+    df['Donchian_Lower'] = df['Low'].rolling(20).min()
+
+    bb = ta.volatility.BollingerBands(close=df['Close'])
+    df['Bollinger_Upper'] = bb.bollinger_hband()
+    df['Bollinger_Lower'] = bb.bollinger_lband()
+
+    stoch = ta.momentum.StochasticOscillator(df['High'], df['Low'], df['Close'])
+    df['Stoch_K'] = stoch.stoch()
+    df['Stoch_D'] = stoch.stoch_signal()
+
+    df['WilliamsR'] = ta.momentum.WilliamsRIndicator(df['High'], df['Low'], df['Close']).williams_r()
+    df['ADX'] = ta.trend.ADXIndicator(df['High'], df['Low'], df['Close']).adx()
+
+    df['Avg_Volume'] = df['Volume'].rolling(20).mean()
+
+    _indicator_cache[cache_key] = df
+    return df
+
+# ============================ #
+#       TREND & REGIME         #
+# ============================ #
+
+def classify_market_regime(df):
     try:
-        close = data['Close'].iloc[-1]
-        atr = data['ATR'].iloc[-1]
-        sma_50 = data['SMA_50'].iloc[-1]
+        sma20 = df['SMA_20'].iloc[-1]
+        sma50 = df['SMA_50'].iloc[-1]
+        sma200 = df['SMA_200'].iloc[-1]
+        close = df['Close'].iloc[-1]
+        atr = df['ATR'].iloc[-1]
 
-        if pd.isna(close) or pd.isna(atr) or pd.isna(sma_50):
+        slope = (sma20 - df['SMA_20'].iloc[-5]) / df['SMA_20'].iloc[-5]
+
+        if any(pd.isna([sma20, sma50, close, atr])):
             return "Unknown"
 
         atr_pct = atr / close
+
         if atr_pct > 0.03:
-            return 'High Volatility'
-        elif close > sma_50:
-            return 'Bullish'
-        elif close < sma_50:
-            return 'Bearish'
+            return "High Volatility"
+        elif sma20 > sma50 and sma50 > sma200 and slope > 0.01:
+            return "Strong Bullish"
+        elif sma20 < sma50 and slope < -0.01:
+            return "Strong Bearish"
+        elif sma20 > sma50:
+            return "Bullish"
+        elif sma20 < sma50:
+            return "Bearish"
         else:
-            return 'Neutral'
+            return "Neutral"
     except:
         return "Unknown"
 
-def compute_signal_score(data, regime, symbol=None):
-    score = 0.0
-    weights = {
-        'RSI': 1.5,
-        'MACD': 1.2,
-        'Ichimoku': 1.5,
-        'CMF': 0.5,
-        'ATR_Volatility': 1.0,
-        'Breakout': 1.2,
+def detect_regime_instability(df):
+    if len(df) < 5:
+        return 1.0
+    recent = [classify_market_regime(df.iloc[i-1:i+1]) for i in range(len(df)-4, len(df))]
+    return len(set(recent)) / len(recent)
+
+def get_signal_correlation(df):
+    subset = df[['RSI', 'Stoch_K', 'WilliamsR']].dropna()
+    return subset.corr().abs().mean().mean() if not subset.empty else 0
+
+def get_higher_timeframe_trend(df, tf='W'):
+    higher = df[['Close']].resample(tf).last()
+    return 'Uptrend' if higher['Close'].iloc[-1] > higher['Close'].iloc[-2] else 'Downtrend'
+
+# ============================ #
+#       SCORING ENGINE         #
+# ============================ #
+
+def compute_signal_score(df, regime):
+    w = {
+        'RSI': 1.5, 'MACD': 1.2, 'Ichimoku': 1.5, 'CMF': 0.5,
+        'ATR_Volatility': 1.0, 'Breakout': 1.2,
+        'Stochastic': 1.0, 'WilliamsR': 0.8,
+        'MeanReversion': 1.2, 'TrendStrength': 1.0
     }
 
-    if data['Volume'].iloc[-1] < data['Avg_Volume'].iloc[-1] * 0.5:
-        return -10
+    score = 0
+    close = df['Close'].iloc[-1]
+    atr = df['ATR'].iloc[-1]
+    atr_pct = atr / close if close else 0
 
-    rsi = data.get('RSI', pd.Series([None])).iloc[-1]
-    if pd.notnull(rsi):
-        rsi_normalized = (rsi - 50) / 50
-        if rsi < 30:
-            score += weights['RSI'] * max(rsi_normalized, -1)
-        elif rsi > 70:
-            score -= weights['RSI'] * min(rsi_normalized, 1)
-        if rsi > 50 and regime == "Bullish":
-            score += weights['RSI'] * 0.5
+    rsi_oversold, rsi_overbought = (25, 75) if atr_pct > 0.04 else (30, 70)
 
-    if 'MACD' in data.columns and 'MACD_signal' in data.columns:
-        macd = data['MACD'].iloc[-1]
-        signal = data['MACD_signal'].iloc[-1]
-        if pd.notnull(macd) and pd.notnull(signal):
-            diff = macd - signal
-            macd_std = data['MACD'].rolling(20).std().iloc[-1] + 1e-10
-            normalized = diff / macd_std
-            score += weights['MACD'] * (normalized if diff > 0 else -abs(normalized))
+    rsi = df['RSI'].iloc[-1]
+    if pd.notna(rsi):
+        if rsi < rsi_oversold:
+            score += w['RSI']
+        elif rsi > rsi_overbought:
+            score -= w['RSI']
+        elif rsi > 50 and 'Bullish' in regime:
+            score += w['RSI'] * 0.5
 
-    if 'Ichimoku_Span_A' in data.columns and 'Ichimoku_Span_B' in data.columns:
-        span_a = data['Ichimoku_Span_A'].iloc[-1]
-        span_b = data['Ichimoku_Span_B'].iloc[-1]
-        close = data['Close'].iloc[-1]
-        if pd.notnull(span_a) and pd.notnull(span_b) and pd.notnull(close):
-            if close > max(span_a, span_b):
-                score += weights['Ichimoku']
-            elif close < min(span_a, span_b):
-                score -= weights['Ichimoku']
+    macd, macd_sig = df['MACD'].iloc[-1], df['MACD_signal'].iloc[-1]
+    if pd.notna(macd) and pd.notna(macd_sig):
+        score += w['MACD'] * np.sign(macd - macd_sig)
 
-    if 'CMF' in data.columns:
-        cmf = data['CMF'].iloc[-1]
-        if pd.notnull(cmf):
-            score += weights['CMF'] * cmf
+    span_a, span_b = df['Ichimoku_Span_A'].iloc[-1], df['Ichimoku_Span_B'].iloc[-1]
+    if pd.notna(span_a) and pd.notna(span_b):
+        if close > max(span_a, span_b):
+            score += w['Ichimoku']
+        elif close < min(span_a, span_b):
+            score -= w['Ichimoku']
 
-    if 'ATR' in data.columns and pd.notnull(data['ATR'].iloc[-1]):
-        close = data['Close'].iloc[-1]
-        if pd.notnull(close):
-            atr_pct = data['ATR'].iloc[-1] / close
-            if atr_pct > 0.04:
-                score -= weights['ATR_Volatility'] * (atr_pct / 0.04)
+    cmf = df['CMF'].iloc[-1]
+    if pd.notna(cmf):
+        score += w['CMF'] * cmf
 
-    if 'Donchian_Upper' in data.columns and 'Donchian_Lower' in data.columns:
-        close = data['Close'].iloc[-1]
-        upper = data['Donchian_Upper'].iloc[-1]
-        lower = data['Donchian_Lower'].iloc[-1]
-        if pd.notnull(upper) and pd.notnull(lower) and pd.notnull(close):
-            if close > upper:
-                score += weights['Breakout']
-            elif close < lower:
-                score -= weights['Breakout']
+    if atr_pct > 0.04:
+        score -= w['ATR_Volatility'] * (atr_pct / 0.04)
 
-    if 'SMA_20' in data.columns and 'SMA_50' in data.columns:
-        sma_20 = data['SMA_20'].iloc[-1]
-        sma_50 = data['SMA_50'].iloc[-1]
-        if pd.notnull(sma_20) and pd.notnull(sma_50) and sma_50 != 0:
-            trend_strength = (sma_20 - sma_50) / sma_50
-            if abs(trend_strength) < 0.02:
-                score *= 0.8
+    upper, lower = df['Donchian_Upper'].iloc[-1], df['Donchian_Lower'].iloc[-1]
+    if close > upper:
+        score += w['Breakout']
+    elif close < lower:
+        score -= w['Breakout']
 
-    return min(max(score, -10), 10)
+    k, d = df['Stoch_K'].iloc[-1], df['Stoch_D'].iloc[-1]
+    if pd.notna(k) and pd.notna(d):
+        if k > d and k < 20:
+            score += w['Stochastic']
+        elif k < d and k > 80:
+            score -= w['Stochastic']
 
-def adaptive_recommendation(data, symbol=None, account_size=100000, max_position_size=100):
+    willr = df['WilliamsR'].iloc[-1]
+    if pd.notna(willr):
+        if willr < -80:
+            score += w['WilliamsR']
+        elif willr > -20:
+            score -= w['WilliamsR']
+
+    bb_upper, bb_lower = df['Bollinger_Upper'].iloc[-1], df['Bollinger_Lower'].iloc[-1]
+    if close < bb_lower:
+        score += w['MeanReversion']
+    elif close > bb_upper:
+        score -= w['MeanReversion']
+
+    adx = df['ADX'].iloc[-1]
+    if pd.notna(adx):
+        if adx > 25:
+            score += w['TrendStrength']
+        elif adx < 15:
+            score -= w['TrendStrength']
+
+    if get_signal_correlation(df) > 0.8:
+        score *= 0.85
+
+    return round(np.clip(score, -10, 10), 2)
+
+# ============================ #
+#     MAIN RECOMMENDATION      #
+# ============================ #
+
+def adaptive_recommendation(df, symbol=None, account_size=100000, max_position_size=100):
     try:
-        if not validate_data(data):
-            return {**default_output(), "Reason": "Insufficient or invalid data"}
+        df = compute_indicators(df, symbol)
+        close = df['Close'].iloc[-1]
+        atr = df['ATR'].iloc[-1]
+        volume = df['Volume'].iloc[-1]
+        avg_vol = df['Avg_Volume'].iloc[-1]
 
-        current_price = data['Close'].iloc[-1] if pd.notnull(data['Close'].iloc[-1]) else None
-        atr = data['ATR'].iloc[-1] if pd.notnull(data['ATR'].iloc[-1]) else None
-        volume = data['Volume'].iloc[-1] if pd.notnull(data['Volume'].iloc[-1]) else None
+        if any(pd.isna([close, atr, volume, avg_vol])):
+            return {"Recommendation": "Hold", "Reason": "Missing values"}
 
-        if current_price is None or atr is None or volume is None:
-            return {
-                **default_output(),
-                "Reason": "Missing key values (Close, ATR, Volume)",
-                "Confidence": None,
-                "Regime_Stability": None
-            }
+        regime = classify_market_regime(df)
+        regime_stability = detect_regime_instability(df)
 
-        regime = classify_market_regime(data)
-        score = compute_signal_score(data, regime, symbol)
+        score = compute_signal_score(df, regime)
+        if regime_stability > 0.5:
+            score *= 0.7
 
-        # Regime stability detection
-        regime_stability = 1.0
-        if len(data) >= 5:
-            recent_regimes = [
-                classify_market_regime(data.iloc[i - 1:i + 1])
-                for i in range(len(data) - 4, len(data))
-            ]
-            regime_stability = len(set(recent_regimes)) / len(recent_regimes)
-            if regime_stability > 0.5:
-                score *= 0.7
+        thresholds = {
+            'High Volatility': 1.5, 'Bullish': 0.8,
+            'Strong Bullish': 0.6, 'Bearish': 1.2,
+            'Strong Bearish': 1.5, 'Neutral': 1.0
+        }
+        threshold = thresholds.get(regime, 1.0)
 
-        # Dynamic confidence thresholds
-        confidence_threshold = {
-            'High Volatility': 1.5,
-            'Bullish': 0.8,
-            'Bearish': 1.2,
-            'Neutral': 1.0
-        }.get(regime, 1.0)
+        if close < 100 or atr < 5 or volume < 5000:
+            return {"Recommendation": "Hold", "Reason": "Low price/liquidity", "Score": score}
 
-        if current_price < 100 or atr < 5 or volume < 5000:
-            return {
-                **default_output(current_price, score, regime),
-                "Reason": "Filtered: low price/ATR/volume",
-                "Confidence": confidence_threshold,
-                "Regime_Stability": round(regime_stability, 2)
-            }
-
-        if score > confidence_threshold:
-            recommendation = "Buy"
-        elif score < -confidence_threshold:
-            recommendation = "Sell"
+        if score > threshold:
+            rec = "Buy"
+        elif score < -threshold:
+            rec = "Sell"
         else:
-            recommendation = "Hold"
+            rec = "Hold"
 
-        slippage = 0.005
-        buy_at = current_price * (1 + slippage) if recommendation == "Buy" else None
-        stop_loss = current_price * 0.95 if recommendation == "Buy" else (
-            current_price * 1.05 if recommendation == "Sell" else None)
-        target = current_price * 1.05 if recommendation == "Buy" else (
-            current_price * 0.95 if recommendation == "Sell" else None)
+        buy_at = close * 1.005 if rec == "Buy" else None
+        stop_loss = close * 0.95 if rec == "Buy" else close * 1.05 if rec == "Sell" else None
+        target = close * 1.05 if rec == "Buy" else close * 0.95 if rec == "Sell" else None
 
-        # Max stop-loss % filter
         max_loss_pct = 0.08
-        if stop_loss:
-            loss_pct = abs(current_price - stop_loss) / current_price
-            if loss_pct > max_loss_pct:
-                return {
-                    **default_output(current_price, score, regime),
-                    "Reason": "Stop loss too wide",
-                    "Confidence": confidence_threshold,
-                    "Regime_Stability": round(regime_stability, 2)
-                }
+        if stop_loss and abs(close - stop_loss) / close > max_loss_pct:
+            return {"Recommendation": "Hold", "Reason": "Stop loss too wide", "Score": score}
 
-        # Position size with volatility
-        if stop_loss:
-            stop_dist = abs(current_price - stop_loss) / current_price
-            stop_dist = max(stop_dist, 0.01)
-            position_size = min((account_size * 0.02) / (current_price * stop_dist), max_position_size)
-        else:
-            position_size = None
+        risk_per_trade = 0.02
+        stop_pct = abs(close - stop_loss) / close if stop_loss else 0.05
+        position_size = min((account_size * risk_per_trade) / (close * stop_pct), max_position_size)
 
-        atr_multiplier = 1.5 if regime == "High Volatility" else 2.0
-        trailing_stop = (
-            current_price - atr_multiplier * atr if recommendation == "Buy"
-            else current_price + atr_multiplier * atr if recommendation == "Sell"
-            else None
-        )
-
-        reason = f"{recommendation} signal (Score: {score:.2f}) in {regime} regime"
+        atr_mult = 1.5 if regime == "High Volatility" else 2.0
+        trailing_stop = close - atr_mult * atr if rec == "Buy" else close + atr_mult * atr if rec == "Sell" else None
 
         return {
-            "Current Price": current_price,
-            "Buy At": buy_at,
-            "Stop Loss": stop_loss,
-            "Target": target,
-            "Recommendation": recommendation,
-            "Score": round(score, 2),
+            "Current Price": round(close, 2),
+            "Buy At": round(buy_at, 2) if buy_at else None,
+            "Stop Loss": round(stop_loss, 2) if stop_loss else None,
+            "Target": round(target, 2) if target else None,
+            "Recommendation": rec,
+            "Score": score,
             "Regime": regime,
-            "Position Size": round(position_size, 2) if position_size else None,
-            "Trailing Stop": round(trailing_stop, 2) if trailing_stop else None,
-            "Reason": reason,
-            "Confidence": confidence_threshold,
-            "Regime_Stability": round(regime_stability, 2)
+            "Regime Stability": round(regime_stability, 2),
+            "Confidence Threshold": threshold,
+            "Position Size": int(position_size),
+            "Trailing Stop": round(trailing_stop, 2) if trailing_stop else None
         }
-
     except Exception as e:
-        logging.error(f"Error in adaptive_recommendation: {e}")
-        return {
-            **default_output(),
-            "Reason": f"Error: {str(e)}",
-            "Confidence": None,
-            "Regime_Stability": None
-        }
-
-def default_output(price=None, score=0, regime="Unknown"):
-    return {
-        "Current Price": price,
-        "Buy At": None,
-        "Stop Loss": None,
-        "Target": None,
-        "Recommendation": "Hold",
-        "Score": score,
-        "Regime": regime,
-        "Position Size": None,
-        "Trailing Stop": None,
-        "Reason": "N/A",
-        "Confidence": None,
-        "Regime_Stability": None
-    }
-
+        logging.error(f"Recommendation failed: {e}")
+        return {"Error": str(e)}
 
 def generate_recommendations(data, symbol=None):
     recommendations = {
