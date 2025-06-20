@@ -27,8 +27,7 @@ from dotenv import load_dotenv
 from scipy.stats.mstats import winsorize
 from streamlit import cache_data
 from itertools import cycle
-import time
-import math
+
 
 load_dotenv()
 
@@ -1951,186 +1950,53 @@ def analyze_stock_parallel(symbol):
         return None
 
 def analyze_all_stocks(stock_list, batch_size=10, progress_callback=None):
-    if not stock_list:
-        st.warning("⚠️ No stocks provided for analysis.")
-        return pd.DataFrame()
-
     results = []
-    failed_batches = []
-    total_batches = math.ceil(len(stock_list) / batch_size)
-
+    total_batches = (len(stock_list) // batch_size) + (1 if len(stock_list) % batch_size != 0 else 0)
     for i in range(0, len(stock_list), batch_size):
         batch = stock_list[i:i + batch_size]
-        try:
-            batch_results = analyze_batch(batch)
-            results.extend([r for r in batch_results if r is not None])
-        except Exception as e:
-            batch_num = (i // batch_size) + 1
-            st.error(f"❌ Error analyzing batch {batch_num}: {e}")
-            failed_batches.append(f"Batch {batch_num}")
-            continue
-
+        batch_results = analyze_batch(batch)
+        results.extend([r for r in batch_results if r is not None])
         if progress_callback:
-            progress = min((i + len(batch)) / len(stock_list), 1.0)
-            progress_callback(progress)
-
+            progress_callback((i + len(batch)) / len(stock_list))
         time.sleep(3)
-
+    
     results_df = pd.DataFrame(results)
-
     if results_df.empty:
         st.warning("⚠️ No valid stock data retrieved.")
         return pd.DataFrame()
-
-    # Score column handling
-    results_df["Score"] = pd.to_numeric(results_df.get("Score", 0), errors='coerce').fillna(0)
-
-    # Ensure Current Price exists
+    if "Score" not in results_df.columns:
+        results_df["Score"] = 0
     if "Current Price" not in results_df.columns:
         results_df["Current Price"] = None
-
-    # Adaptive mode filtering
     recommendation_mode = st.session_state.get('recommendation_mode', 'Standard')
     if recommendation_mode == "Adaptive":
         results_df = results_df[results_df["Recommendation"].str.contains("Buy|Sell", na=False)]
-
-    # Notify failed batches if any
-    if failed_batches:
-        st.info(f"⚠️ Failed batches: {', '.join(failed_batches)}")
-
     return results_df.sort_values(by="Score", ascending=False).head(5)
 
-import time
-import pandas as pd
-import logging
-import concurrent.futures
-from typing import List, Callable, Optional, Any
-
-# Setup logger
-logger = logging.getLogger("StockAnalyzer")
-if not logger.handlers:
-    handler = logging.StreamHandler()
-    formatter = logging.Formatter('%(asctime)s [%(levelname)s] %(message)s')
-    handler.setFormatter(formatter)
-    logger.addHandler(handler)
-    logger.setLevel(logging.INFO)
-
-def analyze_intraday_stocks(
-    stock_list: List[str],
-    analyze_batch: Callable[[List[str]], List[dict]],
-    batch_size: int = 10,
-    sleep_time: int = 3,
-    max_results: int = 5,
-    progress_callback: Optional[Callable[[float, dict], None]] = None,
-    retry_attempts: int = 2,
-    retry_delay: int = 2,
-    timeout_seconds: int = 30
-) -> pd.DataFrame:
-    """
-    Analyze intraday stocks in batches with logging, retry logic, timeout, and progress tracking.
-
-    Parameters:
-        stock_list: List of stock symbols.
-        analyze_batch: Function to analyze a batch of stocks.
-        batch_size: Stocks per batch.
-        sleep_time: Delay between batches.
-        max_results: Top N results to return.
-        progress_callback: Optional callback (percentage, metadata dict).
-        retry_attempts: Retry count for failed batches.
-        retry_delay: Delay between retries.
-        timeout_seconds: Max seconds per batch call.
-
-    Returns:
-        DataFrame with top stock picks.
-    """
-    if not isinstance(stock_list, list) or not stock_list:
-        logger.warning("Empty or invalid stock list.")
-        return pd.DataFrame()
-
+def analyze_intraday_stocks(stock_list, batch_size=10, progress_callback=None):
     results = []
-    failed_batches = []
-    total = len(stock_list)
-    processed_count = 0
-
-    for i in range(0, total, batch_size):
+    total_batches = (len(stock_list) // batch_size) + (1 if len(stock_list) % batch_size != 0 else 0)
+    for i in range(0, len(stock_list), batch_size):
         batch = stock_list[i:i + batch_size]
-        batch_num = i // batch_size + 1
-        attempt = 0
-        success = False
-
-        while attempt <= retry_attempts and not success:
-            attempt += 1
-            try:
-                logger.info(f"Batch {batch_num}, Attempt {attempt}")
-                # ✅ Timeout handling via ThreadPoolExecutor
-                with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
-                    future = executor.submit(analyze_batch, batch)
-                    batch_results = future.result(timeout=timeout_seconds)
-
-                if not isinstance(batch_results, list):
-                    raise ValueError("analyze_batch must return a list of dicts")
-
-                valid_results = [r for r in batch_results if isinstance(r, dict)]
-                results.extend(valid_results)
-                success = True
-                processed_count += len(batch)
-                logger.info(f"Batch {batch_num} succeeded with {len(valid_results)} results.")
-            except concurrent.futures.TimeoutError:
-                logger.warning(f"⏰ Batch {batch_num} timed out after {timeout_seconds}s")
-            except Exception as e:
-                logger.warning(f"❌ Batch {batch_num} failed: {e}")
-            if not success and attempt <= retry_attempts:
-                time.sleep(retry_delay)
-
-        if not success:
-            failed_batches.append(batch)
-
+        batch_results = analyze_batch(batch)
+        results.extend([r for r in batch_results if r is not None])
         if progress_callback:
-            progress_callback(
-                processed_count / total,
-                {
-                    "completed": processed_count,
-                    "total": total,
-                    "batch": batch_num,
-                    "failed_batches": len(failed_batches),
-                }
-            )
-
-        if i + batch_size < total:
-            time.sleep(sleep_time)
-
-    try:
-        results_df = pd.DataFrame(results)
-    except Exception as e:
-        logger.error(f"Failed to create DataFrame: {e}")
-        return pd.DataFrame()
-
+            progress_callback((i + len(batch)) / len(stock_list))
+        time.sleep(3)
+    
+    results_df = pd.DataFrame(results)
     if results_df.empty:
-        logger.warning("No valid results after processing.")
         return pd.DataFrame()
-
-    results_df["Score"] = pd.to_numeric(results_df.get("Score", 0), errors="coerce").fillna(0)
+    if "Score" not in results_df.columns:
+        results_df["Score"] = 0
     if "Current Price" not in results_df.columns:
         results_df["Current Price"] = None
-
-    try:
-        import streamlit as st
-        recommendation_mode = st.session_state.get("recommendation_mode", "Standard")
-    except (ImportError, AttributeError, KeyError):
-        recommendation_mode = "Standard"
-
+    recommendation_mode = st.session_state.get('recommendation_mode', 'Standard')
     if recommendation_mode == "Adaptive":
-        if "Recommendation" in results_df.columns:
-            results_df = results_df[results_df["Recommendation"].astype(str).str.lower().str.contains("buy", na=False)]
-        else:
-            return pd.DataFrame()
+        results_df = results_df[results_df["Recommendation"].str.contains("Buy", na=False)]
     else:
-        if "Intraday" in results_df.columns:
-            results_df = results_df[results_df["Intraday"].astype(str).str.lower().str.contains("buy", na=False)]
-        else:
-            return pd.DataFrame()
-
-    return results_df.sort_values(by="Score", ascending=False).head(max_results)
+        results_df = results_df[results_df["Intraday"].str.contains("Buy", na=False)]
+    return results_df.sort_values(by="Score", ascending=False).head(5)
 
 def colored_recommendation(recommendation):
     if recommendation is None or not isinstance(recommendation, str):
@@ -2277,11 +2143,9 @@ def display_dashboard(symbol=None, data=None, recommendations=None):
         ])
         intraday_results = analyze_intraday_stocks(
             selected_stocks,
-            analyze_batch=analyze_batch,  # ✅ explicitly pass it
             batch_size=10,
             progress_callback=lambda x: update_progress(progress_bar, loading_text, x, loading_messages)
         )
-
         insert_top_picks(intraday_results, pick_type="intraday")
         progress_bar.empty()
         loading_text.empty()
