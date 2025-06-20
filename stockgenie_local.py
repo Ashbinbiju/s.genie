@@ -406,17 +406,48 @@ def fetch_stock_data_with_auth(symbol, period="2y", interval="1d"):
 def fetch_stock_data_cached(symbol, period="2y", interval="1d"):
     return fetch_stock_data_with_auth(symbol, period, interval)
 
-def calculate_advance_decline_ratio(stock_list):
-    advances = 0
-    declines = 0
+def calculate_advance_decline_ratio(stock_list, log_skips=False):
+    advances = declines = 0
+    skipped_symbols = []
+
     for symbol in stock_list:
-        data = fetch_stock_data_cached(symbol)
-        if not data.empty:
-            if data['Close'].iloc[-1] > data['Close'].iloc[-2]:
+        try:
+            data = fetch_stock_data_cached(symbol)
+            if data.empty or len(data) < 2:
+                if log_skips:
+                    skipped_symbols.append((symbol, "Insufficient data"))
+                continue
+
+            last_close = data['Close'].iloc[-1]
+            prev_close = data['Close'].iloc[-2]
+
+            if last_close > prev_close:
                 advances += 1
-            else:
+            elif last_close < prev_close:
                 declines += 1
-    return advances / declines if declines != 0 else 0
+            else:
+                if log_skips:
+                    skipped_symbols.append((symbol, "No change in price"))
+
+        except (KeyError, IndexError) as e:
+            if log_skips:
+                skipped_symbols.append((symbol, f"Data error: {e}"))
+            continue
+
+    total_valid = advances + declines
+    if total_valid == 0:
+        if log_skips:
+            print("⚠️ All stocks skipped:", skipped_symbols)
+        return 0.0  # Return numeric type for consistency
+
+    ratio = advances / declines if declines != 0 else float('inf')
+
+    if log_skips and skipped_symbols:
+        print("🔍 Skipped symbols:")
+        for sym, reason in skipped_symbols:
+            print(f" - {sym}: {reason}")
+
+    return ratio
 
 def monte_carlo_simulation(data, simulations=1000, days=30, garch_min_obs=80, winsorize_limit=0.01):
     # === Validation ===
