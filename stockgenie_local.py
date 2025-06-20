@@ -112,16 +112,9 @@ TOOLTIPS = {
     "Bollinger": "Price volatility bands around moving average",
     "Stop Loss": "Risk management price level based on ATR",
     "VWAP": "Volume Weighted Average Price - Intraday trend indicator",
-    "Parabolic_SAR": "Parabolic Stop and Reverse - Trend reversal indicator",
-    "Fib_Retracements": "Fibonacci Retracements - Support and resistance levels",
     "Ichimoku": "Ichimoku Cloud - Comprehensive trend indicator",
     "CMF": "Chaikin Money Flow - Buying/selling pressure",
     "Donchian": "Donchian Channels - Breakout detection",
-    "Keltner": "Keltner Channels - Volatility bands based on EMA and ATR",
-    "TRIX": "Triple Exponential Average - Momentum oscillator with triple smoothing",
-    "Ultimate_Osc": "Ultimate Oscillator - Combines short, medium, and long-term momentum",
-    "CMO": "Chande Momentum Oscillator - Measures raw momentum (-100 to 100)",
-    "VPT": "Volume Price Trend - Tracks trend strength with price and volume",
     "Score": "Measured by RSI, MACD, Ichimoku Cloud, and ATR volatility. Low score = weak signal, high score = strong signal."
 }
 
@@ -672,41 +665,6 @@ def calculate_cmo(close, window=14):
         st.warning(f"⚠️ Failed to compute custom CMO: {str(e)}")
         return None
 
-INDICATOR_MIN_LENGTHS = {
-    'RSI': 14,
-    'MACD': 26,
-    'SMA_50': 50,
-    'SMA_200': 200,
-    'EMA_20': 20,
-    'EMA_50': 50,
-    'Bollinger': 20,
-    'Stochastic': 14,
-    'ATR': 14,
-    'ADX': 27,
-    'OBV': 1,
-    'VWAP': 1,
-    'Volume_Spike': 10,
-    'Parabolic_SAR': 2,
-    'Fibonacci': 1,
-    'Divergence': 5,
-    'Ichimoku': 52,
-    'CMF': 20,
-    'Donchian': 20,
-    'Keltner': 20,
-    'TRIX': 15,
-    'Ultimate_Osc': 28,
-    'CMO': 14,
-    'VPT': 1
-}
-
-def can_compute_indicator(data, indicator):
-    """
-    Checks if sufficient data is available for a specific indicator.
-    Returns True if computation is possible, False otherwise.
-    """
-    required_length = INDICATOR_MIN_LENGTHS.get(indicator, 1)
-    return len(data) >= required_length
-
 logging.basicConfig(level=logging.WARNING,
                     format="%(levelname)s: %(message)s")
 
@@ -777,21 +735,33 @@ def validate_data(
 
     return True
 
+INDICATOR_MIN_LENGTHS = {
+    'RSI': 14,
+    'MACD': 26,
+    'ATR': 14,
+    'ADX': 27,
+    'CMF': 20,
+    'Donchian': 20,
+    'Bollinger': 20,
+    'Stochastic': 14,
+    'Ichimoku': 52,
+    'Volume_Spike': 10
+}
+
+def can_compute_indicator(data, indicator):
+    required_length = INDICATOR_MIN_LENGTHS.get(indicator, 1)
+    return len(data) >= required_length
+
 def analyze_stock(data):
-    """
-    Computes technical indicators for stock data after validation.
-    Returns data with indicators or an empty DataFrame on failure.
-    """
     if not validate_data(data, min_length=50):
-        columns = [
-            'RSI', 'MACD', 'MACD_signal', 'MACD_hist', 'SMA_50', 'SMA_200', 'EMA_20', 'EMA_50',
-            'Upper_Band', 'Middle_Band', 'Lower_Band', 'SlowK', 'SlowD', 'ATR', 'ADX', 'OBV',
-            'VWAP', 'Avg_Volume', 'Volume_Spike', 'Parabolic_SAR', 'Fib_23.6', 'Fib_38.2',
-            'Fib_50.0', 'Fib_61.8', 'Divergence', 'Ichimoku_Tenkan', 'Ichimoku_Kijun',
-            'Ichimoku_Span_A', 'Ichimoku_Span_B', 'Ichimoku_Chikou', 'CMF', 'Donchian_Upper',
-            'Donchian_Lower', 'Donchian_Middle', 'Keltner_Upper', 'Keltner_Middle', 'Keltner_Lower',
-            'TRIX', 'Ultimate_Osc', 'CMO', 'VPT'
-        ]
+        columns = ['RSI', 'MACD', 'MACD_signal', 'MACD_hist',
+                   'ATR', 'ADX', 'CMF',
+                   'Upper_Band', 'Middle_Band', 'Lower_Band',
+                   'SlowK', 'SlowD',
+                   'Donchian_Upper', 'Donchian_Lower', 'Donchian_Middle',
+                   'Ichimoku_Tenkan', 'Ichimoku_Kijun',
+                   'Ichimoku_Span_A', 'Ichimoku_Span_B', 'Ichimoku_Chikou',
+                   'Volume_Spike', 'Avg_Volume']
         for col in columns:
             data[col] = None
         return data
@@ -817,27 +787,6 @@ def analyze_stock(data):
     except Exception as e:
         logging.warning(f"Failed to compute MACD: {str(e)}")
         data['MACD'] = data['MACD_signal'] = data['MACD_hist'] = None
-
-    try:
-        if can_compute_indicator(data, 'SMA_50'):
-            data['SMA_50'] = ta.trend.SMAIndicator(data['Close'], window=50).sma_indicator()
-        else:
-            data['SMA_50'] = None
-        if can_compute_indicator(data, 'SMA_200'):
-            data['SMA_200'] = ta.trend.SMAIndicator(data['Close'], window=200).sma_indicator()
-        else:
-            data['SMA_200'] = None
-        if can_compute_indicator(data, 'EMA_20'):
-            data['EMA_20'] = ta.trend.EMAIndicator(data['Close'], window=20).ema_indicator()
-        else:
-            data['EMA_20'] = None
-        if can_compute_indicator(data, 'EMA_50'):
-            data['EMA_50'] = ta.trend.EMAIndicator(data['Close'], window=50).ema_indicator()
-        else:
-            data['EMA_50'] = None
-    except Exception as e:
-        logging.warning(f"Failed to compute Moving Averages: {str(e)}")
-        data['SMA_50'] = data['SMA_200'] = data['EMA_20'] = data['EMA_50'] = None
 
     try:
         if can_compute_indicator(data, 'Bollinger'):
@@ -881,24 +830,15 @@ def analyze_stock(data):
         data['ADX'] = None
 
     try:
-        if can_compute_indicator(data, 'OBV'):
-            data['OBV'] = ta.volume.OnBalanceVolumeIndicator(data['Close'], data['Volume']).on_balance_volume()
+        if can_compute_indicator(data, 'CMF'):
+            data['CMF'] = ta.volume.ChaikinMoneyFlowIndicator(
+                data['High'], data['Low'], data['Close'], data['Volume'], window=20
+            ).chaikin_money_flow()
         else:
-            data['OBV'] = None
+            data['CMF'] = None
     except Exception as e:
-        logging.warning(f"Failed to compute OBV: {str(e)}")
-        data['OBV'] = None
-
-    try:
-        if can_compute_indicator(data, 'VWAP'):
-            data['Cumulative_TP'] = ((data['High'] + data['Low'] + data['Close']) / 3) * data['Volume']
-            data['Cumulative_Volume'] = data['Volume'].cumsum()
-            data['VWAP'] = data['Cumulative_TP'].cumsum() / data['Cumulative_Volume']
-        else:
-            data['VWAP'] = None
-    except Exception as e:
-        logging.warning(f"Failed to compute VWAP: {str(e)}")
-        data['VWAP'] = None
+        logging.warning(f"Failed to compute CMF: {str(e)}")
+        data['CMF'] = None
 
     try:
         if can_compute_indicator(data, 'Volume_Spike'):
@@ -911,37 +851,16 @@ def analyze_stock(data):
         data['Avg_Volume'] = data['Volume_Spike'] = None
 
     try:
-        if can_compute_indicator(data, 'Parabolic_SAR'):
-            data['Parabolic_SAR'] = ta.trend.PSARIndicator(data['High'], data['Low'], data['Close']).psar()
+        if can_compute_indicator(data, 'Donchian'):
+            donchian = ta.volatility.DonchianChannel(data['High'], data['Low'], data['Close'], window=20)
+            data['Donchian_Upper'] = donchian.donchian_channel_hband()
+            data['Donchian_Lower'] = donchian.donchian_channel_lband()
+            data['Donchian_Middle'] = donchian.donchian_channel_mband()
         else:
-            data['Parabolic_SAR'] = None
+            data['Donchian_Upper'] = data['Donchian_Lower'] = data['Donchian_Middle'] = None
     except Exception as e:
-        logging.warning(f"Failed to compute Parabolic SAR: {str(e)}")
-        data['Parabolic_SAR'] = None
-
-    try:
-        if can_compute_indicator(data, 'Fibonacci'):
-            high = data['High'].max()
-            low = data['Low'].min()
-            diff = high - low
-            data['Fib_23.6'] = high - diff * 0.236
-            data['Fib_38.2'] = high - diff * 0.382
-            data['Fib_50.0'] = high - diff * 0.5
-            data['Fib_61.8'] = high - diff * 0.618
-        else:
-            data['Fib_23.6'] = data['Fib_38.2'] = data['Fib_50.0'] = data['Fib_61.8'] = None
-    except Exception as e:
-        logging.warning(f"Failed to compute Fibonacci: {str(e)}")
-        data['Fib_23.6'] = data['Fib_38.2'] = data['Fib_50.0'] = data['Fib_61.8'] = None
-
-    try:
-        if can_compute_indicator(data, 'Divergence'):
-            data['Divergence'] = detect_divergence(data)
-        else:
-            data['Divergence'] = "No Divergence"
-    except Exception as e:
-        logging.warning(f"Failed to compute Divergence: {str(e)}")
-        data['Divergence'] = "No Divergence"
+        logging.warning(f"Failed to compute Donchian Channels: {str(e)}")
+        data['Donchian_Upper'] = data['Donchian_Lower'] = data['Donchian_Middle'] = None
 
     try:
         if can_compute_indicator(data, 'Ichimoku'):
@@ -957,78 +876,8 @@ def analyze_stock(data):
         logging.warning(f"Failed to compute Ichimoku: {str(e)}")
         data['Ichimoku_Tenkan'] = data['Ichimoku_Kijun'] = data['Ichimoku_Span_A'] = data['Ichimoku_Span_B'] = data['Ichimoku_Chikou'] = None
 
-    try:
-        if can_compute_indicator(data, 'CMF'):
-            data['CMF'] = ta.volume.ChaikinMoneyFlowIndicator(data['High'], data['Low'], data['Close'], data['Volume'], window=20).chaikin_money_flow()
-        else:
-            data['CMF'] = None
-    except Exception as e:
-        logging.warning(f"Failed to compute CMF: {str(e)}")
-        data['CMF'] = None
-
-    try:
-        if can_compute_indicator(data, 'Donchian'):
-            donchian = ta.volatility.DonchianChannel(data['High'], data['Low'], data['Close'], window=20)
-            data['Donchian_Upper'] = donchian.donchian_channel_hband()
-            data['Donchian_Lower'] = donchian.donchian_channel_lband()
-            data['Donchian_Middle'] = donchian.donchian_channel_mband()
-        else:
-            data['Donchian_Upper'] = data['Donchian_Lower'] = data['Donchian_Middle'] = None
-    except Exception as e:
-        logging.warning(f"Failed to compute Donchian: {str(e)}")
-        data['Donchian_Upper'] = data['Donchian_Lower'] = data['Donchian_Middle'] = None
-
-    try:
-        if can_compute_indicator(data, 'Keltner'):
-            keltner = ta.volatility.KeltnerChannel(data['High'], data['Low'], data['Close'], window=20, window_atr=10)
-            data['Keltner_Upper'] = keltner.keltner_channel_hband()
-            data['Keltner_Middle'] = keltner.keltner_channel_mband()
-            data['Keltner_Lower'] = keltner.keltner_channel_lband()
-        else:
-            data['Keltner_Upper'] = data['Keltner_Middle'] = data['Keltner_Lower'] = None
-    except Exception as e:
-        logging.warning(f"Failed to compute Keltner Channels: {str(e)}")
-        data['Keltner_Upper'] = data['Keltner_Middle'] = data['Keltner_Lower'] = None
-
-    try:
-        if can_compute_indicator(data, 'TRIX'):
-            data['TRIX'] = ta.trend.TRIXIndicator(data['Close'], window=15).trix()
-        else:
-            data['TRIX'] = None
-    except Exception as e:
-        logging.warning(f"Failed to compute TRIX: {str(e)}")
-        data['TRIX'] = None
-
-    try:
-        if can_compute_indicator(data, 'Ultimate_Osc'):
-            data['Ultimate_Osc'] = ta.momentum.UltimateOscillator(
-                data['High'], data['Low'], data['Close'], window1=7, window2=14, window3=28
-            ).ultimate_oscillator()
-        else:
-            data['Ultimate_Osc'] = None
-    except Exception as e:
-        logging.warning(f"Failed to compute Ultimate Oscillator: {str(e)}")
-        data['Ultimate_Osc'] = None
-
-    try:
-        if can_compute_indicator(data, 'CMO'):
-            data['CMO'] = calculate_cmo(data['Close'], window=14)
-        else:
-            data['CMO'] = None
-    except Exception as e:
-        logging.warning(f"Failed to compute Chande Momentum Oscillator: {str(e)}")
-        data['CMO'] = None
-
-    try:
-        if can_compute_indicator(data, 'VPT'):
-            data['VPT'] = ta.volume.VolumePriceTrendIndicator(data['Close'], data['Volume']).volume_price_trend()
-        else:
-            data['VPT'] = None
-    except Exception as e:
-        logging.warning(f"Failed to compute Volume Price Trend: {str(e)}")
-        data['VPT'] = None
-
     return data
+
 
 # === Shared Utility Functions ===
 
@@ -1217,9 +1066,7 @@ def compute_indicators(df, symbol=None):
     df['Stoch_K'] = stoch.stoch()
     df['Stoch_D'] = stoch.stoch_signal()
 
-    df['WilliamsR'] = ta.momentum.WilliamsRIndicator(df['High'], df['Low'], df['Close']).williams_r()
     df['ADX'] = ta.trend.ADXIndicator(df['High'], df['Low'], df['Close']).adx()
-
     df['Avg_Volume'] = df['Volume'].rolling(20).mean()
 
     _indicator_cache[cache_key] = df
@@ -1281,7 +1128,7 @@ def compute_signal_score(df, regime):
     w = {
         'RSI': 1.5, 'MACD': 1.2, 'Ichimoku': 1.5, 'CMF': 0.5,
         'ATR_Volatility': 1.0, 'Breakout': 1.2,
-        'Stochastic': 1.0, 'WilliamsR': 0.8,
+        'Stochastic': 1.0,
         'MeanReversion': 1.2, 'TrendStrength': 1.0
     }
 
@@ -1331,13 +1178,6 @@ def compute_signal_score(df, regime):
             score += w['Stochastic']
         elif k < d and k > 80:
             score -= w['Stochastic']
-
-    willr = df['WilliamsR'].iloc[-1]
-    if pd.notna(willr):
-        if willr < -80:
-            score += w['WilliamsR']
-        elif willr > -20:
-            score -= w['WilliamsR']
 
     bb_upper, bb_lower = df['Bollinger_Upper'].iloc[-1], df['Bollinger_Lower'].iloc[-1]
     if close < bb_lower:
