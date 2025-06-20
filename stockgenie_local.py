@@ -2253,25 +2253,31 @@ def display_dashboard(symbol=None, data=None, recommendations=None):
                     value = round(value, 2) if pd.notnull(value) else "N/A"
                     st.write(f"**{tooltip(name, tooltip_text)}**: {value}")
 
-       
-            
 def main():
     init_database()
     st.sidebar.title("🔍 Stock Selection")
-    stock_list = fetch_nse_stock_list()
 
+    stock_list = fetch_nse_stock_list()
+    if not stock_list:
+        st.error("❌ Could not fetch stock list. Please check your internet connection or API status.")
+        return
+
+    # Set default session states
     if 'symbol' not in st.session_state:
         st.session_state.symbol = stock_list[0]
     if 'recommendation_mode' not in st.session_state:
         st.session_state.recommendation_mode = "Standard"
 
+    # Stock selection
+    selected_index = stock_list.index(st.session_state.symbol) if st.session_state.symbol in stock_list else 0
     symbol = st.sidebar.selectbox(
         "Select Stock",
         stock_list,
-        key="stock_select",
-        index=stock_list.index(st.session_state.symbol) if st.session_state.symbol in stock_list else 0
+        index=selected_index,
+        key="stock_select"
     )
 
+    # Recommendation mode selection
     recommendation_mode = st.sidebar.radio(
         "Recommendation Mode",
         ["Standard", "Adaptive"],
@@ -2280,23 +2286,41 @@ def main():
     )
     st.session_state.recommendation_mode = recommendation_mode
 
+    # Analyze button
     if st.sidebar.button("Analyze Selected Stock"):
         if symbol:
-            with st.spinner("Loading stock data..."):
-                data = fetch_stock_data_with_auth(symbol)
-                if not data.empty:
-                    data = analyze_stock(data)
-                    recommendations = (adaptive_recommendation(data) if recommendation_mode == "Adaptive"
-                                      else generate_recommendations(data, symbol))
-                    st.session_state.symbol = symbol
-                    st.session_state.data = data
-                    st.session_state.recommendations = recommendations
-                    st.session_state.backtest_results_swing = None
-                    st.session_state.backtest_results_intraday = None
-                    display_dashboard(symbol, data, recommendations)
-                else:
-                    st.warning("⚠️ No data available for the selected stock.")
+            with st.spinner("📊 Loading and analyzing stock data..."):
+                try:
+                    data = fetch_stock_data_with_auth(symbol)
+                    if not data.empty:
+                        analyzed_data = analyze_stock(data)
+                        recommendations = (
+                            adaptive_recommendation(analyzed_data)
+                            if recommendation_mode == "Adaptive"
+                            else generate_recommendations(analyzed_data, symbol)
+                        )
+
+                        # Update session state
+                        st.session_state.symbol = symbol
+                        st.session_state.data = analyzed_data
+                        st.session_state.recommendations = recommendations
+                        st.session_state.backtest_results_swing = None
+                        st.session_state.backtest_results_intraday = None
+
+                        display_dashboard(symbol, analyzed_data, recommendations)
+                    else:
+                        st.warning("⚠️ No data available for the selected stock.")
+                except Exception as e:
+                    st.error(f"❌ Error fetching or analyzing data: {str(e)}")
+    elif 'data' in st.session_state and 'recommendations' in st.session_state:
+        # Display previous results if available
+        display_dashboard(
+            st.session_state.symbol,
+            st.session_state.data,
+            st.session_state.recommendations
+        )
     else:
-        display_dashboard()
+        st.info("👈 Select a stock and click 'Analyze Selected Stock' to begin.")
+
 if __name__ == "__main__":
     main()
