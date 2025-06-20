@@ -1309,181 +1309,145 @@ def generate_recommendations(data, symbol=None):
         buy_score = 0
         sell_score = 0
 
-        if 'RSI' in data.columns and data['RSI'].iloc[-1] is not None and len(data['RSI'].dropna()) >= 1:
-            if isinstance(data['RSI'].iloc[-1], (int, float, np.integer, np.floating)):
-                if data['RSI'].iloc[-1] <= 20:
+        # RSI logic
+        if 'RSI' in data.columns and pd.notna(data['RSI'].iloc[-1]):
+            rsi = data['RSI'].iloc[-1]
+            if isinstance(rsi, (int, float, np.integer, np.floating)):
+                if rsi <= 20:
                     buy_score += 4
-                elif data['RSI'].iloc[-1] < 30:
+                elif rsi < 30:
                     buy_score += 2
-                elif data['RSI'].iloc[-1] > 70:
+                elif rsi > 70:
                     sell_score += 2
 
-        if 'MACD' in data.columns and 'MACD_signal' in data.columns and data['MACD'].iloc[-1] is not None and data['MACD_signal'].iloc[-1] is not None and len(data['MACD'].dropna()) >= 1:
-            if isinstance(data['MACD'].iloc[-1], (int, float, np.integer, np.floating)) and isinstance(data['MACD_signal'].iloc[-1], (int, float, np.integer, np.floating)):
-                if data['MACD'].iloc[-1] > data['MACD_signal'].iloc[-1]:
+        # MACD logic
+        if 'MACD' in data.columns and 'MACD_signal' in data.columns:
+            macd = data['MACD'].iloc[-1]
+            macd_sig = data['MACD_signal'].iloc[-1]
+            if pd.notna(macd) and pd.notna(macd_sig):
+                if macd > macd_sig:
                     buy_score += 1
-                elif data['MACD'].iloc[-1] < data['MACD_signal'].iloc[-1]:
+                elif macd < macd_sig:
                     sell_score += 1
 
-        if 'Close' in data.columns and 'Lower_Band' in data.columns and 'Upper_Band' in data.columns and data['Close'].iloc[-1] is not None and len(data['Lower_Band'].dropna()) >= 1:
-            if isinstance(data['Close'].iloc[-1], (int, float, np.integer, np.floating)) and isinstance(data['Lower_Band'].iloc[-1], (int, float, np.integer, np.floating)) and isinstance(data['Upper_Band'].iloc[-1], (int, float, np.integer, np.floating)):
-                if data['Close'].iloc[-1] < data['Lower_Band'].iloc[-1]:
+        # Bollinger Band breakout
+        if 'Close' in data.columns and 'Lower_Band' in data.columns and 'Upper_Band' in data.columns:
+            close = data['Close'].iloc[-1]
+            lower = data['Lower_Band'].iloc[-1]
+            upper = data['Upper_Band'].iloc[-1]
+            if all(isinstance(val, (int, float, np.integer, np.floating)) for val in [close, lower, upper]):
+                if close < lower:
                     buy_score += 1
-                elif data['Close'].iloc[-1] > data['Upper_Band'].iloc[-1]:
+                elif close > upper:
                     sell_score += 1
 
-        if 'VWAP' in data.columns and data['VWAP'].iloc[-1] is not None and data['Close'].iloc[-1] is not None and len(data['VWAP'].dropna()) >= 1:
-            if isinstance(data['VWAP'].iloc[-1], (int, float, np.integer, np.floating)) and isinstance(data['Close'].iloc[-1], (int, float, np.integer, np.floating)):
-                if data['Close'].iloc[-1] > data['VWAP'].iloc[-1]:
+        # VWAP logic
+        if 'VWAP' in data.columns and pd.notna(data['VWAP'].iloc[-1]):
+            vwap = data['VWAP'].iloc[-1]
+            close = data['Close'].iloc[-1]
+            if isinstance(vwap, (int, float, np.integer, np.floating)) and isinstance(close, (int, float, np.integer, np.floating)):
+                if close > vwap:
                     buy_score += 1
-                elif data['Close'].iloc[-1] < data['VWAP'].iloc[-1]:
+                elif close < vwap:
                     sell_score += 1
 
-        if ('Volume' in data.columns and data['Volume'].iloc[-1] is not None and 
-            'Avg_Volume' in data.columns and data['Avg_Volume'].iloc[-1] is not None and len(data['Volume'].dropna()) >= 2):
-            volume_ratio = data['Volume'].iloc[-1] / data['Avg_Volume'].iloc[-1]
-            if isinstance(volume_ratio, (int, float, np.integer, np.floating)) and isinstance(data['Close'].iloc[-1], (int, float, np.integer, np.floating)) and isinstance(data['Close'].iloc[-2], (int, float, np.integer, np.floating)):
-                if volume_ratio > 1.5 and data['Close'].iloc[-1] > data['Close'].iloc[-2]:
-                    buy_score += 2
-                elif volume_ratio > 1.5 and data['Close'].iloc[-1] < data['Close'].iloc[-2]:
-                    sell_score += 2
-                elif volume_ratio < 0.5:
+        # Volume/Price movement
+        if 'Volume' in data.columns and 'Avg_Volume' in data.columns:
+            volume = data['Volume'].iloc[-1]
+            avg_vol = data['Avg_Volume'].iloc[-1]
+            if pd.notna(volume) and pd.notna(avg_vol) and avg_vol != 0:
+                ratio = volume / avg_vol
+                close = data['Close'].iloc[-1]
+                prev_close = data['Close'].iloc[-2]
+                if ratio > 1.5:
+                    if close > prev_close:
+                        buy_score += 2
+                    elif close < prev_close:
+                        sell_score += 2
+                elif ratio < 0.5:
                     sell_score += 1
 
-        if 'Volume_Spike' in data.columns and data['Volume_Spike'].iloc[-1] is not None and len(data['Volume_Spike'].dropna()) >= 1:
-            if data['Volume_Spike'].iloc[-1] and isinstance(data['Close'].iloc[-1], (int, float, np.integer, np.floating)) and isinstance(data['Close'].iloc[-2], (int, float, np.integer, np.floating)):
-                if data['Close'].iloc[-1] > data['Close'].iloc[-2]:
-                    buy_score += 1
-                else:
-                    sell_score += 1
-
-        if 'Divergence' in data.columns and data['Divergence'].iloc[-1] is not None:
-            if data['Divergence'].iloc[-1] == "Bullish Divergence":
+        # Volume spike logic
+        if 'Volume_Spike' in data.columns and data['Volume_Spike'].iloc[-1]:
+            close = data['Close'].iloc[-1]
+            prev_close = data['Close'].iloc[-2]
+            if close > prev_close:
                 buy_score += 1
-            elif data['Divergence'].iloc[-1] == "Bearish Divergence":
+            else:
                 sell_score += 1
 
-        if 'Ichimoku_Span_A' in data.columns and 'Ichimoku_Span_B' in data.columns and data['Close'].iloc[-1] is not None and len(data['Ichimoku_Span_A'].dropna()) >= 1:
-            if (isinstance(data['Ichimoku_Span_A'].iloc[-1], (int, float, np.integer, np.floating)) and 
-                isinstance(data['Ichimoku_Span_B'].iloc[-1], (int, float, np.integer, np.floating)) and 
-                isinstance(data['Close'].iloc[-1], (int, float, np.integer, np.floating))):
-                if data['Close'].iloc[-1] > max(data['Ichimoku_Span_A'].iloc[-1], data['Ichimoku_Span_B'].iloc[-1]):
+        # Divergence
+        if 'Divergence' in data.columns and pd.notna(data['Divergence'].iloc[-1]):
+            div = data['Divergence'].iloc[-1]
+            if div == "Bullish Divergence":
+                buy_score += 1
+            elif div == "Bearish Divergence":
+                sell_score += 1
+
+        # Ichimoku trend
+        if 'Ichimoku_Span_A' in data.columns and 'Ichimoku_Span_B' in data.columns:
+            span_a = data['Ichimoku_Span_A'].iloc[-1]
+            span_b = data['Ichimoku_Span_B'].iloc[-1]
+            close = data['Close'].iloc[-1]
+            if all(isinstance(val, (int, float, np.integer, np.floating)) for val in [span_a, span_b, close]):
+                if close > max(span_a, span_b):
                     buy_score += 1
                     recommendations["Ichimoku_Trend"] = "Buy"
-                elif data['Close'].iloc[-1] < min(data['Ichimoku_Span_A'].iloc[-1], data['Ichimoku_Span_B'].iloc[-1]):
+                elif close < min(span_a, span_b):
                     sell_score += 1
                     recommendations["Ichimoku_Trend"] = "Sell"
 
-        if 'CMF' in data.columns and data['CMF'].iloc[-1] is not None and len(data['CMF'].dropna()) >= 1:
-            if isinstance(data['CMF'].iloc[-1], (int, float, np.integer, np.floating)):
-                if data['CMF'].iloc[-1] > 0:
-                    buy_score += 1
-                elif data['CMF'].iloc[-1] < 0:
-                    sell_score += 1
-
-        if 'Donchian_Upper' in data.columns and 'Donchian_Lower' in data.columns and data['Close'].iloc[-1] is not None and len(data['Donchian_Upper'].dropna()) >= 1:
-            if (isinstance(data['Donchian_Upper'].iloc[-1], (int, float, np.integer, np.floating)) and 
-                isinstance(data['Donchian_Lower'].iloc[-1], (int, float, np.integer, np.floating)) and 
-                isinstance(data['Close'].iloc[-1], (int, float, np.integer, np.floating))):
-                if data['Close'].iloc[-1] > data['Donchian_Upper'].iloc[-1]:
-                    buy_score += 1
-                    recommendations["Breakout"] = "Buy"
-                elif data['Close'].iloc[-1] < data['Donchian_Lower'].iloc[-1]:
-                    sell_score += 1
-                    recommendations["Breakout"] = "Sell"
-
-        if 'RSI' in data.columns and 'Lower_Band' in data.columns and 'Upper_Band' in data.columns and data['Close'].iloc[-1] is not None and len(data['RSI'].dropna()) >= 1:
-            if (isinstance(data['RSI'].iloc[-1], (int, float, np.integer, np.floating)) and 
-                isinstance(data['Lower_Band'].iloc[-1], (int, float, np.integer, np.floating)) and 
-                isinstance(data['Upper_Band'].iloc[-1], (int, float, np.integer, np.floating)) and 
-                isinstance(data['Close'].iloc[-1], (int, float, np.integer, np.floating))):
-                if data['RSI'].iloc[-1] < 30 and data['Close'].iloc[-1] >= data['Lower_Band'].iloc[-1]:
-                    buy_score += 2
-                    recommendations["Mean_Reversion"] = "Buy"
-                elif data['RSI'].iloc[-1] > 70 and data['Close'].iloc[-1] >= data['Upper_Band'].iloc[-1]:
-                    sell_score += 2
-                    recommendations["Mean_Reversion"] = "Sell"
-
-        if 'Ichimoku_Tenkan' in data.columns and 'Ichimoku_Kijun' in data.columns and data['Close'].iloc[-1] is not None and len(data['Ichimoku_Tenkan'].dropna()) >= 1:
-            if (isinstance(data['Ichimoku_Tenkan'].iloc[-1], (int, float, np.integer, np.floating)) and 
-                isinstance(data['Ichimoku_Kijun'].iloc[-1], (int, float, np.integer, np.floating)) and 
-                isinstance(data['Close'].iloc[-1], (int, float, np.integer, np.floating)) and 
-                isinstance(data['Ichimoku_Span_A'].iloc[-1], (int, float, np.integer, np.floating))):
-                if (data['Ichimoku_Tenkan'].iloc[-1] > data['Ichimoku_Kijun'].iloc[-1] and
-                    data['Close'].iloc[-1] > data['Ichimoku_Span_A'].iloc[-1]):
+        # Ichimoku confirmation (Tenkan/Kijun)
+        if 'Ichimoku_Tenkan' in data.columns and 'Ichimoku_Kijun' in data.columns:
+            tenkan = data['Ichimoku_Tenkan'].iloc[-1]
+            kijun = data['Ichimoku_Kijun'].iloc[-1]
+            span_a = data.get('Ichimoku_Span_A', pd.Series([np.nan])).iloc[-1]
+            span_b = data.get('Ichimoku_Span_B', pd.Series([np.nan])).iloc[-1]
+            close = data['Close'].iloc[-1]
+            if all(isinstance(val, (int, float, np.integer, np.floating)) for val in [tenkan, kijun, close]):
+                if tenkan > kijun and close > span_a:
                     buy_score += 1
                     recommendations["Ichimoku_Trend"] = "Strong Buy"
-                elif (data['Ichimoku_Tenkan'].iloc[-1] < data['Ichimoku_Kijun'].iloc[-1] and
-                      data['Close'].iloc[-1] < data['Ichimoku_Span_B'].iloc[-1]):
+                elif tenkan < kijun and close < span_b:
                     sell_score += 1
                     recommendations["Ichimoku_Trend"] = "Strong Sell"
 
-        if ('Keltner_Upper' in data.columns and 'Keltner_Lower' in data.columns and 
-            data['Close'].iloc[-1] is not None and len(data['Keltner_Upper'].dropna()) >= 1):
-            if (isinstance(data['Keltner_Upper'].iloc[-1], (int, float, np.integer, np.floating)) and 
-                isinstance(data['Keltner_Lower'].iloc[-1], (int, float, np.integer, np.floating)) and 
-                isinstance(data['Close'].iloc[-1], (int, float, np.integer, np.floating))):
-                if data['Close'].iloc[-1] < data['Keltner_Lower'].iloc[-1]:
+        # CMF (volume + price strength)
+        if 'CMF' in data.columns and pd.notna(data['CMF'].iloc[-1]):
+            cmf = data['CMF'].iloc[-1]
+            if cmf > 0:
+                buy_score += 1
+            elif cmf < 0:
+                sell_score += 1
+
+        # Donchian channel breakout
+        if 'Donchian_Upper' in data.columns and 'Donchian_Lower' in data.columns:
+            upper = data['Donchian_Upper'].iloc[-1]
+            lower = data['Donchian_Lower'].iloc[-1]
+            close = data['Close'].iloc[-1]
+            if all(isinstance(val, (int, float, np.integer, np.floating)) for val in [upper, lower, close]):
+                if close > upper:
                     buy_score += 1
-                elif data['Close'].iloc[-1] > data['Keltner_Upper'].iloc[-1]:
+                    recommendations["Breakout"] = "Buy"
+                elif close < lower:
                     sell_score += 1
+                    recommendations["Breakout"] = "Sell"
 
-        if 'TRIX' in data.columns and data['TRIX'].iloc[-1] is not None and len(data['TRIX'].dropna()) >= 2:
-            if isinstance(data['TRIX'].iloc[-1], (int, float, np.integer, np.floating)) and isinstance(data['TRIX'].iloc[-2], (int, float, np.integer, np.floating)):
-                if data['TRIX'].iloc[-1] > 0 and data['TRIX'].iloc[-1] > data['TRIX'].iloc[-2]:
-                    buy_score += 1
-                elif data['TRIX'].iloc[-1] < 0 and data['TRIX'].iloc[-1] < data['TRIX'].iloc[-2]:
-                    sell_score += 1
+        # Mean reversion via RSI and Bollinger Bands
+        if 'RSI' in data.columns and 'Lower_Band' in data.columns and 'Upper_Band' in data.columns:
+            rsi = data['RSI'].iloc[-1]
+            close = data['Close'].iloc[-1]
+            lower = data['Lower_Band'].iloc[-1]
+            upper = data['Upper_Band'].iloc[-1]
+            if all(isinstance(val, (int, float, np.integer, np.floating)) for val in [rsi, close, lower, upper]):
+                if rsi < 30 and close >= lower:
+                    buy_score += 2
+                    recommendations["Mean_Reversion"] = "Buy"
+                elif rsi > 70 and close >= upper:
+                    sell_score += 2
+                    recommendations["Mean_Reversion"] = "Sell"
 
-        if 'Ultimate_Osc' in data.columns and data['Ultimate_Osc'].iloc[-1] is not None and len(data['Ultimate_Osc'].dropna()) >= 1:
-            if isinstance(data['Ultimate_Osc'].iloc[-1], (int, float, np.integer, np.floating)):
-                if data['Ultimate_Osc'].iloc[-1] < 30:
-                    buy_score += 1
-                elif data['Ultimate_Osc'].iloc[-1] > 70:
-                    sell_score += 1
-
-        if 'CMO' in data.columns and data['CMO'].iloc[-1] is not None and len(data['CMO'].dropna()) >= 1:
-            if isinstance(data['CMO'].iloc[-1], (int, float, np.integer, np.floating)):
-                if data['CMO'].iloc[-1] < -50:
-                    buy_score += 1
-                elif data['CMO'].iloc[-1] > 50:
-                    sell_score += 1
-
-        if 'VPT' in data.columns and data['VPT'].iloc[-1] is not None and len(data['VPT'].dropna()) >= 2:
-            if isinstance(data['VPT'].iloc[-1], (int, float, np.integer, np.floating)) and isinstance(data['VPT'].iloc[-2], (int, float, np.integer, np.floating)):
-                if data['VPT'].iloc[-1] > data['VPT'].iloc[-2]:
-                    buy_score += 1
-                elif data['VPT'].iloc[-1] < data['VPT'].iloc[-2]:
-                    sell_score += 1
-
-        if ('Fib_23.6' in data.columns and 'Fib_38.2' in data.columns and 
-            data['Close'].iloc[-1] is not None and len(data['Fib_23.6'].dropna()) >= 1):
-            current_price = data['Close'].iloc[-1]
-            fib_levels = [data['Fib_23.6'].iloc[-1], data['Fib_38.2'].iloc[-1], 
-                          data['Fib_50.0'].iloc[-1], data['Fib_61.8'].iloc[-1]]
-            for level in fib_levels:
-                if isinstance(level, (int, float, np.integer, np.floating)) and abs(current_price - level) / current_price < 0.01:
-                    if current_price > level:
-                        buy_score += 1
-                    else:
-                        sell_score += 1
-
-        if ('Parabolic_SAR' in data.columns and data['Parabolic_SAR'].iloc[-1] is not None and 
-            data['Close'].iloc[-1] is not None and len(data['Parabolic_SAR'].dropna()) >= 1):
-            if isinstance(data['Parabolic_SAR'].iloc[-1], (int, float, np.integer, np.floating)) and isinstance(data['Close'].iloc[-1], (int, float, np.integer, np.floating)):
-                if data['Close'].iloc[-1] > data['Parabolic_SAR'].iloc[-1]:
-                    buy_score += 1
-                elif data['Close'].iloc[-1] < data['Parabolic_SAR'].iloc[-1]:
-                    sell_score += 1
-
-        if ('OBV' in data.columns and data['OBV'].iloc[-1] is not None and 
-            data['OBV'].iloc[-2] is not None and len(data['OBV'].dropna()) >= 2):
-            if isinstance(data['OBV'].iloc[-1], (int, float, np.integer, np.floating)) and isinstance(data['OBV'].iloc[-2], (int, float, np.integer, np.floating)):
-                if data['OBV'].iloc[-1] > data['OBV'].iloc[-2]:
-                    buy_score += 1
-                elif data['OBV'].iloc[-1] < data['OBV'].iloc[-2]:
-                    sell_score += 1
-
+        # Fundamentals (optional)
         if symbol:
             fundamentals = fetch_fundamentals(symbol)
             if fundamentals['P/E'] < 15 and fundamentals['EPS'] > 0:
@@ -1495,6 +1459,7 @@ def generate_recommendations(data, symbol=None):
             elif fundamentals['RevenueGrowth'] < 0:
                 sell_score += 0.5
 
+        # Final recommendations
         net_score = buy_score - sell_score
         if buy_score > sell_score and buy_score >= 4:
             recommendations["Intraday"] = "Strong Buy"
@@ -1517,13 +1482,15 @@ def generate_recommendations(data, symbol=None):
             recommendations["Short-Term"] = "Sell" if net_score <= -1 else "Hold"
             recommendations["Long-Term"] = "Hold"
 
+        # Final values
         recommendations["Buy At"] = calculate_buy_at(data)
         recommendations["Stop Loss"] = calculate_stop_loss(data)
         recommendations["Target"] = calculate_target(data)
+        recommendations["Score"] = min(max(net_score, -7), 7)
 
-        recommendations["Score"] = min(max(buy_score - sell_score, -7), 7)
     except Exception as e:
         st.warning(f"⚠️ Error generating recommendations: {str(e)}")
+
     return recommendations
 
 @st.cache_data(ttl=3600)  # Cache results for 1 hour to avoid repeated API hits
