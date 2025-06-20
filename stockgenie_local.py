@@ -1654,7 +1654,7 @@ def get_top_sectors_cached(rate_limit_delay=2, stocks_per_sector=2):
 
 @st.cache_data(ttl=3600)
 def backtest_stock(data, symbol, strategy="Swing", _data_hash=None):
-    INITIAL_CAPITAL = 100000
+    INITIAL_CAPITAL = 30000
     commission = 0.001  # 0.1% round-trip
     position_size_pct = st.session_state.get('position_size', 1.0)
 
