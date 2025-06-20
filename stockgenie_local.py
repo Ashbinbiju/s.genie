@@ -1652,9 +1652,12 @@ def get_top_sectors_cached(rate_limit_delay=2, stocks_per_sector=2):
         time.sleep(1)  # Optional: delay between sectors
     return sorted(sector_scores.items(), key=lambda x: x[1], reverse=True)[:3]
 
-@st.cache_data
 @st.cache_data(ttl=3600)
 def backtest_stock(data, symbol, strategy="Swing", _data_hash=None):
+    INITIAL_CAPITAL = 100000
+    commission = 0.001  # 0.1% round-trip
+    position_size_pct = st.session_state.get('position_size', 1.0)
+
     results = {
         "total_return": 0,
         "annual_return": 0,
@@ -1664,60 +1667,123 @@ def backtest_stock(data, symbol, strategy="Swing", _data_hash=None):
         "win_rate": 0,
         "buy_signals": [],
         "sell_signals": [],
-        "trade_details": []
+        "trade_details": [],
+        "equity_curve": []
     }
+
     recommendation_mode = st.session_state.get('recommendation_mode', 'Standard')
-    
+    portfolio_value = INITIAL_CAPITAL
+    cash = INITIAL_CAPITAL
+
     position = None
     entry_price = 0
     entry_date = None
+    trade_qty = 0
     trades = []
     returns = []
-    
+    equity_curve = []
+
     for i in range(1, len(data)):
         sliced_data = data.iloc[:i+1]
-        if recommendation_mode == "Adaptive":
-            rec = adaptive_recommendation(sliced_data)
-            signal = rec["Recommendation"]
-        else:
-            rec = generate_recommendations(sliced_data, symbol)
-            signal = rec[strategy] if strategy in rec else "Hold"
-        
         current_price = data['Close'].iloc[i]
         current_date = data.index[i]
-        
-        if signal == "Buy" and position is None:
-            position = "Long"
-            entry_price = current_price
-            entry_date = current_date
-            results["buy_signals"].append((current_date, current_price))
-        
-        elif signal == "Sell" and position == "Long":
-            position = None
-            profit = current_price - entry_price
-            returns.append(profit / entry_price)
+
+        if recommendation_mode == "Adaptive":
+            rec = adaptive_recommendation(sliced_data)
+            signal = rec.get("Recommendation", "Hold")
+        else:
+            rec = generate_recommendations(sliced_data, symbol)
+            signal = rec.get(strategy, "Hold")
+
+        # Execute sell first (if needed)
+        if signal == "Sell" and position == "Long":
+            gross_profit = (current_price - entry_price) * trade_qty
+            trade_cost = (entry_price + current_price) * trade_qty * commission / 2
+            net_profit = gross_profit - trade_cost
+            cash += net_profit
+            portfolio_value = cash
+            pct_return = net_profit / (entry_price * trade_qty) if entry_price else 0
+
             trades.append({
                 "entry_date": entry_date,
                 "entry_price": entry_price,
                 "exit_date": current_date,
                 "exit_price": current_price,
-                "profit": profit
+                "profit": net_profit
             })
+            returns.append(pct_return)
             results["sell_signals"].append((current_date, current_price))
+            position = None
             entry_price = 0
             entry_date = None
-    
+            trade_qty = 0
+
+        # Execute buy (if no position)
+        if signal == "Buy" and position is None:
+            entry_price = current_price
+            entry_date = current_date
+            allocation = portfolio_value * position_size_pct
+            trade_qty = int(allocation // current_price)
+            if trade_qty == 0:
+                continue
+            cost = trade_qty * current_price * (1 + commission / 2)
+            cash -= cost
+            position = "Long"
+            results["buy_signals"].append((current_date, current_price))
+
+        # Track portfolio value *after* trade logic
+        portfolio_value = cash + (trade_qty * current_price if position else 0)
+        equity_curve.append((current_date, portfolio_value))
+
+    # Close open position at end
+    if position == "Long":
+        current_price = data['Close'].iloc[-1]
+        current_date = data.index[-1]
+        gross_profit = (current_price - entry_price) * trade_qty
+        trade_cost = (entry_price + current_price) * trade_qty * commission / 2
+        net_profit = gross_profit - trade_cost
+        cash += net_profit
+        portfolio_value = cash
+        pct_return = net_profit / (entry_price * trade_qty) if entry_price else 0
+
+        trades.append({
+            "entry_date": entry_date,
+            "entry_price": entry_price,
+            "exit_date": current_date,
+            "exit_price": current_price,
+            "profit": net_profit
+        })
+        returns.append(pct_return)
+        results["sell_signals"].append((current_date, current_price))
+        equity_curve.append((current_date, portfolio_value))
+
+    # Final stats
     if trades:
         results["trade_details"] = trades
         results["trades"] = len(trades)
-        results["total_return"] = sum([t["profit"]/t["entry_price"] for t in trades]) * 100
+        results["total_return"] = (portfolio_value - INITIAL_CAPITAL) / INITIAL_CAPITAL * 100
         results["win_rate"] = len([t for t in trades if t["profit"] > 0]) / len(trades) * 100
-        if returns:
-            results["annual_return"] = (np.mean(returns) * 252) * 100
-            results["sharpe_ratio"] = np.mean(returns) / np.std(returns) * np.sqrt(252) if np.std(returns) != 0 else 0
-        drawdowns = [t["profit"]/t["entry_price"] for t in trades]
-        results["max_drawdown"] = min(drawdowns, default=0) * 100 if drawdowns else 0
-    
+
+        # Annual return
+        holding_periods = [
+            (pd.to_datetime(t["exit_date"]) - pd.to_datetime(t["entry_date"])).days
+            for t in trades if t["entry_date"] != t["exit_date"]
+        ]
+        avg_holding = np.mean(holding_periods) if holding_periods else 1
+        annual_factor = 252 / avg_holding if avg_holding else 1
+        results["annual_return"] = np.mean(returns) * annual_factor * 100 if returns else 0
+
+        # Sharpe
+        std_dev = np.std(returns)
+        results["sharpe_ratio"] = (np.mean(returns) / (std_dev + 1e-9)) * np.sqrt(252) if returns else 0
+
+    # Max drawdown
+    equity_df = pd.DataFrame(equity_curve, columns=["Date", "Equity"])
+    equity_df["RunningMax"] = equity_df["Equity"].cummax()
+    equity_df["Drawdown"] = (equity_df["Equity"] - equity_df["RunningMax"]) / equity_df["RunningMax"]
+    results["max_drawdown"] = equity_df["Drawdown"].min() * 100  # usually negative
+    results["equity_curve"] = equity_df
+
     return results
     
 def init_database():
