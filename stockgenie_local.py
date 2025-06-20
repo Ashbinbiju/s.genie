@@ -1150,7 +1150,7 @@ def get_higher_timeframe_trend(df, tf='W'):
 
 def compute_signal_score(df, regime):
     w = {
-        'RSI': 1.5, 'MACD': 1.2, 'Ichimoku': 1.5, 'CMF': 0.5,
+        'RSI': 2.0, 'MACD': 1.5, 'Ichimoku': 2.0, 'CMF': 0.5,
         'ATR_Volatility': 1.0, 'Breakout': 1.2,
         'Stochastic': 1.0,
         'MeanReversion': 1.2, 'TrendStrength': 1.0
@@ -1244,14 +1244,14 @@ def adaptive_recommendation(df, symbol=None, account_size=30000, max_position_si
             score *= 0.7
 
         thresholds = {
-            'High Volatility': 1.5, 'Bullish': 0.8,
-            'Strong Bullish': 0.6, 'Bearish': 1.2,
-            'Strong Bearish': 1.5, 'Neutral': 1.0
+            'High Volatility': 1.0, 'Bullish': 0.5,
+            'Strong Bullish': 0.3, 'Bearish': 0.8,
+            'Strong Bearish': 1.0, 'Neutral': 0.6
         }
         threshold = thresholds.get(regime, 1.0)
 
-        if close < 100 or atr < 5 or volume < 5000:
-            return {"Recommendation": "Hold", "Reason": "Low price/liquidity", "Score": score}
+        if close < 50 or atr < 2 or volume < 1000:
+            return {"Recommendation": "Hold", "Reason": "Very illiquid", "Score": score}
 
         if score > threshold:
             rec = "Buy"
@@ -1264,7 +1264,7 @@ def adaptive_recommendation(df, symbol=None, account_size=30000, max_position_si
         stop_loss = close * 0.95 if rec == "Buy" else close * 1.05 if rec == "Sell" else None
         target = close * 1.05 if rec == "Buy" else close * 0.95 if rec == "Sell" else None
 
-        max_loss_pct = 0.08
+        max_loss_pct = 0.12
         if stop_loss and abs(close - stop_loss) / close > max_loss_pct:
             return {"Recommendation": "Hold", "Reason": "Stop loss too wide", "Score": score}
 
