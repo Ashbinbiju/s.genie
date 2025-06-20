@@ -2207,10 +2207,10 @@ def display_dashboard(symbol=None, data=None, recommendations=None):
               value = round(value, 2) if isinstance(value, (int, float, np.integer, np.floating)) else value
               if i % 2 == 0:
                   with col1:
-                  st.write(f"**{tooltip(name, tooltip_text)}**: {value}")
+                      st.write(f"**{tooltip(name, tooltip_text)}**: {value}")
               else:
                   with col2:
-                  st.write(f"**{tooltip(name, tooltip_text)}**: {value}")
+                      st.write(f"**{tooltip(name, tooltip_text)}**: {value}")
 
 def main():
     init_database()
