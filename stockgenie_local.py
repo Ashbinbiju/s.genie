@@ -571,48 +571,139 @@ def calculate_confidence_score(data):
     return float(np.clip(score / max_score, 0, 1))
 
 def assess_risk(data):
-    if 'ATR' in data.columns and data['ATR'].iloc[-1] is not None and data['ATR'].iloc[-1] > data['ATR'].mean():
-        return "High Volatility Warning"
-    else:
-        return "Low Volatility"
+    if 'ATR' not in data.columns:
+        return {"risk_level": "ATR Data Missing"}
 
-def optimize_rsi_window(data, windows=range(5, 15), risk_free_rate=0.025):
-    best_window, best_sharpe = 9, -float('inf')
+    atr_data = data['ATR'].dropna()
+
+    if len(atr_data) < 2:
+        return {"risk_level": "Insufficient History"}
+
+    latest_atr = atr_data.iloc[-1]
+    mean_atr = atr_data.mean()
+    p25 = atr_data.quantile(0.25)
+    p75 = atr_data.quantile(0.75)
+    
+    # Risk level classification
+    if latest_atr > p75:
+        risk = "High Volatility Warning"
+    elif latest_atr < p25:
+        risk = "Very Low Volatility"
+    else:
+        risk = "Normal Volatility"
+
+    # Build output with percentile rank and rounding
+    return {
+        "risk_level": risk,
+        "current_atr": round(latest_atr, 4),
+        "mean_atr": round(mean_atr, 4),
+        "percentile_25": round(p25, 4),
+        "percentile_75": round(p75, 4),
+        "ratio": round(latest_atr / mean_atr, 2) if mean_atr else None,
+        "current_percentile": round((atr_data <= latest_atr).mean() * 100, 2),
+        "risk_score": round(latest_atr / mean_atr, 2) if mean_atr else None
+    }
+
+import plotly.express as px
+import pandas as pd
+import numpy as np
+import ta
+import streamlit as st
+
+def optimize_rsi_window(data, windows=range(5, 15), risk_free_rate=0.025, verbose=False):
+    """
+    Optimize RSI window based on Sharpe ratio with SmartAPI-compatible data and Streamlit feedback.
+    
+    Parameters:
+    - data: DataFrame with 'Close' prices (from SmartAPI)
+    - windows: Iterable of RSI window periods to evaluate
+    - risk_free_rate: Annualized risk-free rate (e.g., 0.025 for 2.5%)
+    - verbose: If True, shows progress, summary table, and chart in Streamlit UI
+
+    Returns:
+    dict:
+        - best_window: Optimal RSI window
+        - best_sharpe: Best Sharpe ratio
+        - all_results: List of (window, sharpe) tuples
+    """
+    best_window = 9
+    best_sharpe = -float('inf')
+    results = []
 
     if data is None or data.empty or 'Close' not in data:
-        return best_window
+        if verbose:
+            st.info("⚠️ Invalid or empty data. Returning default RSI window.")
+        return {"best_window": best_window, "best_sharpe": best_sharpe, "all_results": []}
 
     if len(data) < max(windows) + 20:
-        return best_window
+        if verbose:
+            st.info("⚠️ Not enough data to evaluate RSI windows. Returning default.")
+        return {"best_window": best_window, "best_sharpe": best_sharpe, "all_results": []}
 
     returns = data['Close'].pct_change()
+    daily_rf = (1 + risk_free_rate) ** (1 / 252) - 1
 
-    for window in windows:
-        rsi = ta.momentum.RSIIndicator(data['Close'], window=window).rsi()
+    if verbose:
+        st.info(f"📊 Testing {len(windows)} RSI windows on {len(data)} candles")
+        st.info(f"💰 Risk-free rate: {risk_free_rate:.2%}, Transaction cost: 0.1%")
+        progress_bar = st.progress(0)
 
-        # Signal: Buy if RSI < 30, Sell if RSI > 70
-        signals = (rsi < 30).astype(int) - (rsi > 70).astype(int)
+    for i, window in enumerate(windows):
+        try:
+            rsi = ta.momentum.RSIIndicator(data['Close'], window=window).rsi()
 
-        # Vectorized position logic: hold previous signal
-        positions = signals.replace(0, np.nan).ffill().fillna(0).shift(1)
+            # Nuanced RSI signal logic
+            signals = pd.Series(0, index=rsi.index)
+            signals[rsi < 20] = 2
+            signals[(rsi >= 20) & (rsi < 35)] = 1
+            signals[(rsi > 65) & (rsi <= 80)] = -1
+            signals[rsi > 80] = -2
 
-        # Align positions and returns safely
-        aligned_index = returns.index.intersection(positions.index)
-        returns_aligned = returns.loc[aligned_index]
-        positions_aligned = positions.loc[aligned_index]
+            positions = signals.shift(1).fillna(0)
 
-        strategy_returns = returns_aligned * positions_aligned
-        strategy_returns = strategy_returns.dropna()
+            aligned = returns.index.intersection(positions.index)
+            strategy_returns = returns.loc[aligned] * positions.loc[aligned]
 
-        if strategy_returns.std() != 0:
-            sharpe = ((strategy_returns.mean() - risk_free_rate / 252) / strategy_returns.std()) * np.sqrt(252)
-        else:
-            sharpe = 0
+            # Transaction cost on position change
+            transaction_costs = positions.loc[aligned].diff().abs().fillna(0) * 0.001
+            strategy_returns -= transaction_costs
 
-        if sharpe > best_sharpe:
-            best_sharpe, best_window = sharpe, window
+            std = strategy_returns.std()
+            sharpe = ((strategy_returns.mean() - daily_rf) / std) * np.sqrt(252) if std > 1e-6 else 0
 
-    return best_window
+            results.append((window, sharpe))
+
+            if sharpe > best_sharpe:
+                best_sharpe = sharpe
+                best_window = window
+
+            if verbose:
+                progress_bar.progress((i + 1) / len(windows))
+
+        except Exception as e:
+            if verbose:
+                st.warning(f"❌ RSI window {window} failed: {str(e)}")
+            continue
+
+    if verbose and results:
+        st.info(f"✅ Best RSI window: {best_window} (Sharpe: {best_sharpe:.4f})")
+
+        # DataFrame display
+        results_df = pd.DataFrame(results, columns=['RSI Window', 'Sharpe Ratio'])
+        st.dataframe(results_df.sort_values('Sharpe Ratio', ascending=False), use_container_width=True)
+
+        # Plot
+        fig = px.line(results_df, x='RSI Window', y='Sharpe Ratio',
+                      title='RSI Window Optimization Results',
+                      markers=True, line_shape='linear')
+        st.plotly_chart(fig, use_container_width=True)
+
+    return {
+        "best_window": best_window,
+        "best_sharpe": best_sharpe,
+        "all_results": results
+    }
+
     
 def detect_divergence(data, window=10, rsi_threshold=5):
     price = data['Close']
