@@ -6,6 +6,7 @@ import streamlit as st
 from datetime import datetime, timedelta
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from functools import lru_cache
+from functools import wraps
 from tqdm import tqdm
 import plotly.express as px
 import time
@@ -323,27 +324,30 @@ def tooltip(label, explanation):
 
 def retry(max_retries=5, delay=5, backoff_factor=2, jitter=1):
     def decorator(func):
+        @wraps(func)
         def wrapper(*args, **kwargs):
-            retries = 0
-            while retries < max_retries:
+            for attempt in range(1, max_retries + 1):
                 try:
                     return func(*args, **kwargs)
                 except requests.exceptions.HTTPError as e:
                     if e.response.status_code == 429:
-                        retries += 1
-                        if retries == max_retries:
-                            raise e
-                        sleep_time = (delay * (backoff_factor ** retries)) + random.uniform(0, jitter)
-                        st.warning(f"Rate limit hit. Retrying after {sleep_time:.2f} seconds...")
+                        if attempt == max_retries:
+                            st.error("Max retries reached due to rate limiting (HTTP 429).")
+                            raise
+                        sleep_time = (delay * (backoff_factor ** (attempt - 1))) + random.uniform(0, jitter)
+                        st.warning(f"Rate limit hit (429). Attempt {attempt}/{max_retries}. Retrying in {sleep_time:.2f}s...")
                         time.sleep(sleep_time)
                     else:
-                        raise e
-                except (requests.exceptions.RequestException, ConnectionError) as e:
-                    retries += 1
-                    if retries == max_retries:
-                        raise e
-                    sleep_time = (delay * (backoff_factor ** retries)) + random.uniform(0, jitter)
+                        raise
+                except requests.exceptions.RequestException as e:
+                    if attempt == max_retries:
+                        st.error("Max retries reached due to a network error.")
+                        raise
+                    sleep_time = (delay * (backoff_factor ** (attempt - 1))) + random.uniform(0, jitter)
+                    st.warning(f"Network error: {e}. Attempt {attempt}/{max_retries}. Retrying in {sleep_time:.2f}s...")
                     time.sleep(sleep_time)
+            # This should never be reached, but added for safety
+            raise RuntimeError("Retry mechanism exhausted without success or proper exception raised.")
         return wrapper
     return decorator
 
@@ -1739,6 +1743,7 @@ def analyze_batch(stock_batch):
     return results
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+
 def analyze_stock_parallel(symbol):
     """
     Analyzes a single stock, logging detailed context on errors.
@@ -1747,18 +1752,19 @@ def analyze_stock_parallel(symbol):
     try:
         logging.info(f"Starting analysis for {symbol}")
         data = fetch_stock_data_cached(symbol)
+
         if data.empty or len(data) < 50:
             logging.warning(f"No sufficient data for {symbol}: {len(data)} rows")
             return None
-        
+
         data = analyze_stock(data)
         recommendation_mode = st.session_state.get('recommendation_mode', 'Standard')
         logging.info(f"Analyzing {symbol} in {recommendation_mode} mode (data shape: {data.shape})")
-        
+
         if recommendation_mode == "Adaptive":
             rec = adaptive_recommendation(data, symbol)
-            if not rec or not rec.get('Recommendation'):
-                logging.error(f"Invalid adaptive_recommendation output for {symbol}: {rec}")
+            if not isinstance(rec, dict) or not rec.get('Recommendation'):
+                logging.warning(f"No valid adaptive recommendation for {symbol}: {rec}")
                 return None
             return {
                 "Symbol": symbol,
@@ -1782,8 +1788,8 @@ def analyze_stock_parallel(symbol):
             }
         else:
             rec = generate_recommendations(data, symbol)
-            if not rec or not rec.get('Intraday'):
-                logging.error(f"Invalid generate_recommendations output for {symbol}: {rec}")
+            if not isinstance(rec, dict) or not rec.get('Intraday'):
+                logging.warning(f"No valid standard recommendation for {symbol}: {rec}")
                 return None
             return {
                 "Symbol": symbol,
@@ -1805,6 +1811,7 @@ def analyze_stock_parallel(symbol):
                 "Trailing Stop": None,
                 "Reason": None
             }
+
     except Exception as e:
         error_msg = f"Error in analyze_stock_parallel for {symbol}: {str(e)} (data shape: {data.shape if 'data' in locals() else 'N/A'})"
         logging.error(error_msg)
@@ -1834,30 +1841,56 @@ def analyze_all_stocks(stock_list, batch_size=10, progress_callback=None):
         results_df = results_df[results_df["Recommendation"].str.contains("Buy|Sell", na=False)]
     return results_df.sort_values(by="Score", ascending=False).head(5)
 
-def analyze_intraday_stocks(stock_list, batch_size=10, progress_callback=None):
+def analyze_intraday_stocks(stock_list, batch_size=10, delay=3, top_n=5, progress_callback=None):
+    if not stock_list:
+        st.warning("Empty stock list provided.")
+        return pd.DataFrame()
+
     results = []
-    total_batches = (len(stock_list) // batch_size) + (1 if len(stock_list) % batch_size != 0 else 0)
-    for i in range(0, len(stock_list), batch_size):
+    total = len(stock_list)
+
+    for i in range(0, total, batch_size):
         batch = stock_list[i:i + batch_size]
-        batch_results = analyze_batch(batch)
-        results.extend([r for r in batch_results if r is not None])
+        batch_num = i // batch_size + 1
+
+        try:
+            batch_results = analyze_batch(batch)
+            if batch_results:
+                results.extend([r for r in batch_results if r is not None])
+                st.info(f"Batch {batch_num} processed successfully with {len(batch_results)} results.")
+            else:
+                st.warning(f"Batch {batch_num} returned no results.")
+        except Exception as e:
+            st.warning(f"Error analyzing batch {batch_num}: {e}")
+            continue
+
         if progress_callback:
-            progress_callback((i + len(batch)) / len(stock_list))
-        time.sleep(3)
-    
+            progress = min(1.0, (i + len(batch)) / total)
+            progress_callback(progress)
+
+        if i + batch_size < total:
+            time.sleep(delay)
+
     results_df = pd.DataFrame(results)
     if results_df.empty:
+        st.warning("No results found after processing all batches.")
         return pd.DataFrame()
+
     if "Score" not in results_df.columns:
         results_df["Score"] = 0
     if "Current Price" not in results_df.columns:
         results_df["Current Price"] = None
+
     recommendation_mode = st.session_state.get('recommendation_mode', 'Standard')
-    if recommendation_mode == "Adaptive":
-        results_df = results_df[results_df["Recommendation"].str.contains("Buy", na=False)]
+    if recommendation_mode == "Adaptive" and "Recommendation" in results_df.columns:
+        results_df = results_df[results_df["Recommendation"].str.contains("Buy", case=False, na=False)]
+    elif "Intraday" in results_df.columns:
+        results_df = results_df[results_df["Intraday"].str.contains("Buy", case=False, na=False)]
     else:
-        results_df = results_df[results_df["Intraday"].str.contains("Buy", na=False)]
-    return results_df.sort_values(by="Score", ascending=False).head(5)
+        st.warning("Neither 'Recommendation' nor 'Intraday' columns found for filtering.")
+        return pd.DataFrame()
+
+    return results_df.sort_values(by="Score", ascending=False).head(top_n)
 
 def colored_recommendation(recommendation):
     if recommendation is None or not isinstance(recommendation, str):
