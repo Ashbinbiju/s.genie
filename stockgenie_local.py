@@ -2198,7 +2198,7 @@ def display_dashboard(symbol=None, data=None, recommendations=None):
             ("ADX", data['ADX'].iloc[-1], TOOLTIPS['ADX']),
             ("Bollinger Upper", data['Upper_Band'].iloc[-1], TOOLTIPS['Bollinger']),
             ("Bollinger Lower", data['Lower_Band'].iloc[-1], TOOLTIPS['Bollinger']),
-            ("VWAP", data['VWAP'].iloc[-1], TOOLTIPS['VWAP']),
+            ("VWAP", data['VWAP'].iloc[-1] if 'VWAP' in data.columns and not data['VWAP'].isna().all() else "N/A", TOOLTIPS['VWAP']),
             ("Ichimoku Span A", data['Ichimoku_Span_A'].iloc[-1], TOOLTIPS['Ichimoku']),
             ("CMF", data['CMF'].iloc[-1], TOOLTIPS['CMF']),
         ]
