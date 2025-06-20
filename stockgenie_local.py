@@ -1039,34 +1039,54 @@ def compute_indicators(df, symbol=None):
     if df.empty or 'Close' not in df.columns:
         return df
 
+    # Trend indicators
     df['SMA_20'] = df['Close'].rolling(20).mean()
     df['SMA_50'] = df['Close'].rolling(50).mean()
     df['SMA_200'] = df['Close'].rolling(200).mean()
 
+    # Momentum indicators
     df['RSI'] = ta.momentum.RSIIndicator(df['Close']).rsi()
     macd = ta.trend.MACD(df['Close'])
     df['MACD'] = macd.macd()
     df['MACD_signal'] = macd.macd_signal()
 
+    # Ichimoku indicators
     ichimoku = ta.trend.IchimokuIndicator(df['High'], df['Low'])
     df['Ichimoku_Span_A'] = ichimoku.ichimoku_a()
     df['Ichimoku_Span_B'] = ichimoku.ichimoku_b()
 
-    df['CMF'] = ta.volume.ChaikinMoneyFlowIndicator(df['High'], df['Low'], df['Close'], df['Volume']).chaikin_money_flow()
-    df['ATR'] = ta.volatility.AverageTrueRange(df['High'], df['Low'], df['Close']).average_true_range()
+    # Volume indicators
+    df['CMF'] = ta.volume.ChaikinMoneyFlowIndicator(
+        df['High'], df['Low'], df['Close'], df['Volume']
+    ).chaikin_money_flow()
 
+    # Volatility indicators
+    df['ATR'] = ta.volatility.AverageTrueRange(
+        df['High'], df['Low'], df['Close']
+    ).average_true_range()
+
+    # Donchian Channels (for breakout)
     df['Donchian_Upper'] = df['High'].rolling(20).max()
     df['Donchian_Lower'] = df['Low'].rolling(20).min()
 
+    # Bollinger Bands (for mean reversion)
     bb = ta.volatility.BollingerBands(close=df['Close'])
     df['Bollinger_Upper'] = bb.bollinger_hband()
     df['Bollinger_Lower'] = bb.bollinger_lband()
 
+    # Stochastic Oscillator (secondary momentum)
     stoch = ta.momentum.StochasticOscillator(df['High'], df['Low'], df['Close'])
     df['Stoch_K'] = stoch.stoch()
     df['Stoch_D'] = stoch.stoch_signal()
 
+    # Trend strength
     df['ADX'] = ta.trend.ADXIndicator(df['High'], df['Low'], df['Close']).adx()
+
+    # VWAP (Volume Weighted Average Price)
+    df['Typical_Price'] = (df['High'] + df['Low'] + df['Close']) / 3
+    df['VWAP'] = (df['Typical_Price'] * df['Volume']).cumsum() / df['Volume'].cumsum()
+
+    # Average volume (for filters or spike detection)
     df['Avg_Volume'] = df['Volume'].rolling(20).mean()
 
     _indicator_cache[cache_key] = df
