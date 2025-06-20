@@ -2203,15 +2203,14 @@ def display_dashboard(symbol=None, data=None, recommendations=None):
             ("CMF", data['CMF'].iloc[-1], TOOLTIPS['CMF']),
         ]
         col1, col2 = st.columns(2)
-        for i, (name, value, tooltip_text) in enumerate(indicators):
-            if i % 2 == 0:
-                with col1:
-                    value = round(value, 2) if pd.notnull(value) else "N/A"
-                    st.write(f"**{tooltip(name, tooltip_text)}**: {value}")
-            else:
-                with col2:
-                    value = round(value, 2) if pd.notnull(value) else "N/A"
-                    st.write(f"**{tooltip(name, tooltip_text)}**: {value}")
+          for i, (name, value, tooltip_text) in enumerate(indicators):
+              value = round(value, 2) if isinstance(value, (int, float, np.integer, np.floating)) else value
+              if i % 2 == 0:
+                  with col1:
+                  st.write(f"**{tooltip(name, tooltip_text)}**: {value}")
+              else:
+                  with col2:
+                  st.write(f"**{tooltip(name, tooltip_text)}**: {value}")
 
 def main():
     init_database()
