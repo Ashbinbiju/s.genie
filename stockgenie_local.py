@@ -2277,9 +2277,11 @@ def display_dashboard(symbol=None, data=None, recommendations=None):
         ])
         intraday_results = analyze_intraday_stocks(
             selected_stocks,
+            analyze_batch=analyze_batch,  # ✅ explicitly pass it
             batch_size=10,
             progress_callback=lambda x: update_progress(progress_bar, loading_text, x, loading_messages)
         )
+
         insert_top_picks(intraday_results, pick_type="intraday")
         progress_bar.empty()
         loading_text.empty()
