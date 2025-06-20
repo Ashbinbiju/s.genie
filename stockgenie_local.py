@@ -27,7 +27,8 @@ from dotenv import load_dotenv
 from scipy.stats.mstats import winsorize
 from streamlit import cache_data
 from itertools import cycle
-
+import time
+import math
 
 load_dotenv()
 
@@ -1950,27 +1951,53 @@ def analyze_stock_parallel(symbol):
         return None
 
 def analyze_all_stocks(stock_list, batch_size=10, progress_callback=None):
+    if not stock_list:
+        st.warning("⚠️ No stocks provided for analysis.")
+        return pd.DataFrame()
+
     results = []
-    total_batches = (len(stock_list) // batch_size) + (1 if len(stock_list) % batch_size != 0 else 0)
+    failed_batches = []
+    total_batches = math.ceil(len(stock_list) / batch_size)
+
     for i in range(0, len(stock_list), batch_size):
         batch = stock_list[i:i + batch_size]
-        batch_results = analyze_batch(batch)
-        results.extend([r for r in batch_results if r is not None])
+        try:
+            batch_results = analyze_batch(batch)
+            results.extend([r for r in batch_results if r is not None])
+        except Exception as e:
+            batch_num = (i // batch_size) + 1
+            st.error(f"❌ Error analyzing batch {batch_num}: {e}")
+            failed_batches.append(f"Batch {batch_num}")
+            continue
+
         if progress_callback:
-            progress_callback((i + len(batch)) / len(stock_list))
+            progress = min((i + len(batch)) / len(stock_list), 1.0)
+            progress_callback(progress)
+
         time.sleep(3)
-    
+
     results_df = pd.DataFrame(results)
+
     if results_df.empty:
         st.warning("⚠️ No valid stock data retrieved.")
         return pd.DataFrame()
-    if "Score" not in results_df.columns:
-        results_df["Score"] = 0
+
+    # Score column handling
+    results_df["Score"] = pd.to_numeric(results_df.get("Score", 0), errors='coerce').fillna(0)
+
+    # Ensure Current Price exists
     if "Current Price" not in results_df.columns:
         results_df["Current Price"] = None
+
+    # Adaptive mode filtering
     recommendation_mode = st.session_state.get('recommendation_mode', 'Standard')
     if recommendation_mode == "Adaptive":
         results_df = results_df[results_df["Recommendation"].str.contains("Buy|Sell", na=False)]
+
+    # Notify failed batches if any
+    if failed_batches:
+        st.info(f"⚠️ Failed batches: {', '.join(failed_batches)}")
+
     return results_df.sort_values(by="Score", ascending=False).head(5)
 
 def analyze_intraday_stocks(stock_list, batch_size=10, progress_callback=None):
