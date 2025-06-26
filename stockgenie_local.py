@@ -34,6 +34,46 @@ from ta.momentum import RSIIndicator
 
 load_dotenv()
 
+from datetime import datetime, timedelta
+import pandas as pd
+
+def fetch_ohlc(symbol, interval='1wk', lookback=52):
+    try:
+        smart_api = init_smartapi_client()  # Uses your existing authenticated client
+
+        interval_map = {
+            '1wk': 'WEEK',
+            '1mo': 'MONTH'
+        }
+
+        if interval not in interval_map:
+            raise ValueError("Invalid interval passed to fetch_ohlc")
+
+        end_date = datetime.now()
+        start_date = end_date - timedelta(weeks=lookback if interval == '1wk' else lookback * 4)
+
+        candle_data = smart_api.getCandleData(
+            exchange="NSE",
+            symbol=symbol,
+            interval=interval_map[interval],
+            starttime=start_date.strftime('%Y-%m-%d %H:%M'),
+            endtime=end_date.strftime('%Y-%m-%d %H:%M')
+        )
+
+        if not candle_data or 'data' not in candle_data or not candle_data['data']:
+            print(f"No candle data for {symbol}")
+            return pd.DataFrame()
+
+        df = pd.DataFrame(candle_data['data'], columns=["timestamp", "Open", "High", "Low", "Close", "Volume"])
+        df['timestamp'] = pd.to_datetime(df['timestamp'])
+        df.set_index('timestamp', inplace=True)
+
+        return df
+
+    except Exception as e:
+        print(f"[OHLC Fetch Error] {symbol}: {str(e)}")
+        return pd.DataFrame()
+
 def passes_multi_timeframe_check(symbol):
     try:
         weekly = fetch_ohlc(symbol, interval='1wk', lookback=52)
