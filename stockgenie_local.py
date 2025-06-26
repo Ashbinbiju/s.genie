@@ -1777,23 +1777,21 @@ def analyze_batch(stock_batch):
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
+
+
 def analyze_stock_parallel(symbol):
-    """
-    Analyzes a single stock, logging detailed context on errors.
-    Returns a dictionary with analysis results or None on failure.
-    """
     try:
         logging.info(f"Starting analysis for {symbol}")
         data = fetch_stock_data_cached(symbol)
 
-    if data.empty or len(data) < 50:
-       logging.warning(f"No sufficient data for {symbol}: {len(data)} rows")
-       return None
+        if data.empty or len(data) < 50:
+            logging.warning(f"No sufficient data for {symbol}: {len(data)} rows")
+            return None
 
-     # 🔥 Multi-Timeframe Filter (NEW)
-    if not passes_multi_timeframe_check(symbol):
-       logging.info(f"{symbol} failed multi-timeframe alignment")
-       return None
+        # 🔥 INSERT THIS NEW CHECK RIGHT HERE
+        if not passes_multi_timeframe_check(symbol):
+            logging.info(f"{symbol} failed multi-timeframe alignment")
+            return None
 
         data = analyze_stock(data)
         recommendation_mode = st.session_state.get('recommendation_mode', 'Standard')
