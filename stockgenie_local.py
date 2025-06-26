@@ -28,99 +28,8 @@ from dotenv import load_dotenv
 from scipy.stats.mstats import winsorize
 from streamlit import cache_data
 from itertools import cycle
-import pandas as pd
-import logging
-from ta.momentum import RSIIndicator
 
 load_dotenv()
-
-from ta.momentum import RSIIndicator
-from datetime import datetime, timedelta
-import pandas as pd
-
-def fetch_ohlc(symbol, interval='1wk', lookback=52):
-    try:
-        smart_api = init_smartapi_client()
-
-        interval_map = {
-            '1wk': 'WEEK',
-            '1mo': 'MONTH'
-        }
-
-        if interval not in interval_map:
-            raise ValueError("Invalid interval passed to fetch_ohlc")
-
-        end_date = datetime.now()
-        start_date = end_date - timedelta(weeks=lookback if interval == '1wk' else lookback * 4)
-
-        candle_data = smart_api.getCandleData(
-            exchange="NSE",
-            symbol=symbol,
-            interval=interval_map[interval],
-            starttime=start_date.strftime('%Y-%m-%d %H:%M'),
-            endtime=end_date.strftime('%Y-%m-%d %H:%M')
-        )
-
-        if not candle_data or 'data' not in candle_data or not candle_data['data']:
-            print(f"No candle data for {symbol}")
-            return pd.DataFrame()
-
-        df = pd.DataFrame(candle_data['data'], columns=["timestamp", "Open", "High", "Low", "Close", "Volume"])
-        df['timestamp'] = pd.to_datetime(df['timestamp'])
-        df.set_index('timestamp', inplace=True)
-
-        return df
-
-    except Exception as e:
-        print(f"[OHLC Fetch Error] {symbol}: {str(e)}")
-        return pd.DataFrame()
-        
-def passes_multi_timeframe_check(symbol):
-    try:
-        print(f"🔍 [DEBUG] Checking Multi-Timeframe Filter for: {symbol}")
-
-        weekly = fetch_ohlc(symbol, interval='1wk', lookback=52)
-        monthly = fetch_ohlc(symbol, interval='1mo', lookback=24)
-
-        if weekly.empty or monthly.empty:
-            print(f"❌ [DEBUG] Empty weekly/monthly data for {symbol}")
-            return False
-
-        weekly['20EMA'] = weekly['Close'].ewm(span=20).mean()
-        monthly['50SMA'] = monthly['Close'].rolling(window=50).mean()
-
-        latest_weekly_close = weekly['Close'].iloc[-1]
-        latest_weekly_ema = weekly['20EMA'].iloc[-1]
-        latest_weekly_rsi = RSIIndicator(weekly['Close']).rsi().iloc[-1]
-
-        latest_monthly_close = monthly['Close'].iloc[-1]
-        latest_monthly_sma = monthly['50SMA'].iloc[-1]
-        last_52w_high = weekly['High'].rolling(window=52).max().iloc[-1]
-
-        print(f"✔ [DEBUG] {symbol} Weekly Close: {latest_weekly_close}, EMA20: {latest_weekly_ema}, RSI: {latest_weekly_rsi}")
-        print(f"✔ [DEBUG] {symbol} Monthly Close: {latest_monthly_close}, SMA50: {latest_monthly_sma}")
-        print(f"✔ [DEBUG] {symbol} 52W High: {last_52w_high}")
-
-        if latest_weekly_close < latest_weekly_ema:
-            print(f"❌ {symbol} failed: Weekly Close < EMA")
-            return False
-        if latest_weekly_rsi > 70:
-            print(f"❌ {symbol} failed: RSI > 70")
-            return False
-        if latest_monthly_close < latest_monthly_sma:
-            print(f"❌ {symbol} failed: Monthly Close < SMA50")
-            return False
-        if latest_weekly_close > last_52w_high * 0.95:
-            print(f"❌ {symbol} failed: Too close to 52W high")
-            return False
-
-        print(f"✅ {symbol} PASSED Multi-Timeframe Filter")
-        return True
-
-    except Exception as e:
-        print(f"🔥 [ERROR] {symbol} in MTF check: {str(e)}")
-        return False
-
 
 @st.cache_data(ttl=86400)
 def load_symbol_token_map():
@@ -971,7 +880,6 @@ def analyze_stock(data):
         data['Ichimoku_Tenkan'] = data['Ichimoku_Kijun'] = data['Ichimoku_Span_A'] = data['Ichimoku_Span_B'] = data['Ichimoku_Chikou'] = None
 
     return data
-
 
 # === Shared Utility Functions ===
 
@@ -1835,7 +1743,10 @@ def analyze_batch(stock_batch):
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
 def analyze_stock_parallel(symbol):
-    print(f"🔍 [START] Analyzing {symbol}")
+    """
+    Analyzes a single stock, logging detailed context on errors.
+    Returns a dictionary with analysis results or None on failure.
+    """
     try:
         logging.info(f"Starting analysis for {symbol}")
         data = fetch_stock_data_cached(symbol)
@@ -1843,16 +1754,6 @@ def analyze_stock_parallel(symbol):
         if data.empty or len(data) < 50:
             logging.warning(f"No sufficient data for {symbol}: {len(data)} rows")
             return None
-
-        # 🔥 INSERT THIS NEW CHECK RIGHT HERE
-        if not passes_multi_timeframe_check(symbol):
-            print(f"❌ {symbol} rejected due to multi-timeframe check")
-            logging.info(f"{symbol} failed multi-timeframe alignment")
-            return None
-
-        # Placeholder for your actual analysis logic
-        print(f"✅ {symbol} passed MTF — continue with analysis...")
-        return {'Symbol': symbol, 'Status': 'Passed MTF'}
 
         data = analyze_stock(data)
         recommendation_mode = st.session_state.get('recommendation_mode', 'Standard')
@@ -1999,7 +1900,6 @@ def colored_recommendation(recommendation):
     else:
         return f"⚪ {recommendation}"
 
-
 def update_progress(progress_bar, loading_text, progress_value, loading_messages):
     progress_bar.progress(progress_value)
 
@@ -2019,7 +1919,6 @@ def update_progress(progress_bar, loading_text, progress_value, loading_messages
     if current_step != update_progress._last_text_update:
         loading_text.text(f"{loading_message}{dots}")
         update_progress._last_text_update = current_step
-
 
 def display_dashboard(symbol=None, data=None, recommendations=None):
     # Initialize session state
