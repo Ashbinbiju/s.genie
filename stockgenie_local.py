@@ -34,12 +34,13 @@ from ta.momentum import RSIIndicator
 
 load_dotenv()
 
+from ta.momentum import RSIIndicator
 from datetime import datetime, timedelta
 import pandas as pd
 
 def fetch_ohlc(symbol, interval='1wk', lookback=52):
     try:
-        smart_api = init_smartapi_client()  # Uses your existing authenticated client
+        smart_api = init_smartapi_client()
 
         interval_map = {
             '1wk': 'WEEK',
@@ -73,10 +74,10 @@ def fetch_ohlc(symbol, interval='1wk', lookback=52):
     except Exception as e:
         print(f"[OHLC Fetch Error] {symbol}: {str(e)}")
         return pd.DataFrame()
-
+        
 def passes_multi_timeframe_check(symbol):
     try:
-        print(f"\n🔍 [DEBUG] Checking Multi-Timeframe Filter for: {symbol}")
+        print(f"🔍 [DEBUG] Checking Multi-Timeframe Filter for: {symbol}")
 
         weekly = fetch_ohlc(symbol, interval='1wk', lookback=52)
         monthly = fetch_ohlc(symbol, interval='1mo', lookback=24)
@@ -1833,9 +1834,8 @@ def analyze_batch(stock_batch):
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
-
-
 def analyze_stock_parallel(symbol):
+    print(f"🔍 [START] Analyzing {symbol}")
     try:
         logging.info(f"Starting analysis for {symbol}")
         data = fetch_stock_data_cached(symbol)
@@ -1846,8 +1846,13 @@ def analyze_stock_parallel(symbol):
 
         # 🔥 INSERT THIS NEW CHECK RIGHT HERE
         if not passes_multi_timeframe_check(symbol):
+            print(f"❌ {symbol} rejected due to multi-timeframe check")
             logging.info(f"{symbol} failed multi-timeframe alignment")
             return None
+
+        # Placeholder for your actual analysis logic
+        print(f"✅ {symbol} passed MTF — continue with analysis...")
+        return {'Symbol': symbol, 'Status': 'Passed MTF'}
 
         data = analyze_stock(data)
         recommendation_mode = st.session_state.get('recommendation_mode', 'Standard')
