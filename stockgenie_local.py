@@ -28,9 +28,42 @@ from dotenv import load_dotenv
 from scipy.stats.mstats import winsorize
 from streamlit import cache_data
 from itertools import cycle
-
+import pandas as pd
+import logging
+from ta.momentum import RSIIndicator
 
 load_dotenv()
+
+def passes_multi_timeframe_check(symbol):
+    try:
+        weekly = fetch_ohlc(symbol, interval='1wk', lookback=52)
+        monthly = fetch_ohlc(symbol, interval='1mo', lookback=24)
+
+        if weekly.empty or monthly.empty:
+            return False
+
+        weekly['20EMA'] = weekly['Close'].ewm(span=20).mean()
+        monthly['50SMA'] = monthly['Close'].rolling(window=50).mean()
+
+        latest_weekly_close = weekly['Close'].iloc[-1]
+        latest_weekly_ema = weekly['20EMA'].iloc[-1]
+        latest_weekly_rsi = RSIIndicator(weekly['Close']).rsi().iloc[-1]
+
+        latest_monthly_close = monthly['Close'].iloc[-1]
+        latest_monthly_sma = monthly['50SMA'].iloc[-1]
+        last_52w_high = weekly['High'].rolling(window=52).max().iloc[-1]
+
+        return (
+            latest_weekly_close > latest_weekly_ema and
+            latest_weekly_rsi < 70 and
+            latest_monthly_close > latest_monthly_sma and
+            latest_weekly_close < last_52w_high * 0.95
+        )
+
+    except Exception as e:
+        logging.warning(f"[MTF Check Failed] {symbol}: {str(e)}")
+        return False
+
 
 @st.cache_data(ttl=86400)
 def load_symbol_token_map():
@@ -1753,9 +1786,14 @@ def analyze_stock_parallel(symbol):
         logging.info(f"Starting analysis for {symbol}")
         data = fetch_stock_data_cached(symbol)
 
-        if data.empty or len(data) < 50:
-            logging.warning(f"No sufficient data for {symbol}: {len(data)} rows")
-            return None
+    if data.empty or len(data) < 50:
+       logging.warning(f"No sufficient data for {symbol}: {len(data)} rows")
+       return None
+
+     # 🔥 Multi-Timeframe Filter (NEW)
+    if not passes_multi_timeframe_check(symbol):
+       logging.info(f"{symbol} failed multi-timeframe alignment")
+       return None
 
         data = analyze_stock(data)
         recommendation_mode = st.session_state.get('recommendation_mode', 'Standard')
