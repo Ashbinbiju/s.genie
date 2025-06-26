@@ -76,10 +76,13 @@ def fetch_ohlc(symbol, interval='1wk', lookback=52):
 
 def passes_multi_timeframe_check(symbol):
     try:
+        print(f"\n🔍 [DEBUG] Checking Multi-Timeframe Filter for: {symbol}")
+
         weekly = fetch_ohlc(symbol, interval='1wk', lookback=52)
         monthly = fetch_ohlc(symbol, interval='1mo', lookback=24)
 
         if weekly.empty or monthly.empty:
+            print(f"❌ [DEBUG] Empty weekly/monthly data for {symbol}")
             return False
 
         weekly['20EMA'] = weekly['Close'].ewm(span=20).mean()
@@ -93,15 +96,28 @@ def passes_multi_timeframe_check(symbol):
         latest_monthly_sma = monthly['50SMA'].iloc[-1]
         last_52w_high = weekly['High'].rolling(window=52).max().iloc[-1]
 
-        return (
-            latest_weekly_close > latest_weekly_ema and
-            latest_weekly_rsi < 70 and
-            latest_monthly_close > latest_monthly_sma and
-            latest_weekly_close < last_52w_high * 0.95
-        )
+        print(f"✔ [DEBUG] {symbol} Weekly Close: {latest_weekly_close}, EMA20: {latest_weekly_ema}, RSI: {latest_weekly_rsi}")
+        print(f"✔ [DEBUG] {symbol} Monthly Close: {latest_monthly_close}, SMA50: {latest_monthly_sma}")
+        print(f"✔ [DEBUG] {symbol} 52W High: {last_52w_high}")
+
+        if latest_weekly_close < latest_weekly_ema:
+            print(f"❌ {symbol} failed: Weekly Close < EMA")
+            return False
+        if latest_weekly_rsi > 70:
+            print(f"❌ {symbol} failed: RSI > 70")
+            return False
+        if latest_monthly_close < latest_monthly_sma:
+            print(f"❌ {symbol} failed: Monthly Close < SMA50")
+            return False
+        if latest_weekly_close > last_52w_high * 0.95:
+            print(f"❌ {symbol} failed: Too close to 52W high")
+            return False
+
+        print(f"✅ {symbol} PASSED Multi-Timeframe Filter")
+        return True
 
     except Exception as e:
-        logging.warning(f"[MTF Check Failed] {symbol}: {str(e)}")
+        print(f"🔥 [ERROR] {symbol} in MTF check: {str(e)}")
         return False
 
 
