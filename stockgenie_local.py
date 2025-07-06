@@ -1839,6 +1839,9 @@ def analyze_all_stocks(stock_list, batch_size=10, progress_callback=None):
         results_df = results_df[results_df["Recommendation"].str.contains("Buy|Sell", na=False)]
     return results_df.sort_values(by="Score", ascending=False).head(5)
 
+results = analyze_all_stocks(selected_stocks, batch_size=5, progress_callback=...)
+logging.info(f"Analyzed {len(results)}/{len(selected_stocks)} stocks successfully")
+
 def analyze_intraday_stocks(stock_list, batch_size=10, delay=3, top_n=5, progress_callback=None):
     if not stock_list:
         st.warning("Empty stock list provided.")
