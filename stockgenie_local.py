@@ -1695,7 +1695,7 @@ def update_progress(progress_bar, loading_text, progress_value, loading_messages
 def display_dashboard(symbol=None, data=None, recommendations=None):
     # Initialize session state
     if 'selected_sectors' not in st.session_state:
-        st.session_state.selected_sectors = ["Bank"]
+        st.session_state.selected_sectors = ["All"]
     if 'symbol' not in st.session_state:
         st.session_state.symbol = None
     if 'data' not in st.session_state:
