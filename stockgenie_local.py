@@ -77,6 +77,7 @@ def add_action_and_change(df):
 
 warnings.filterwarnings("ignore", message=".*missing ScriptRunContext.*")
 logging.getLogger("streamlit.runtime.scriptrunner").setLevel(logging.ERROR)
+
 def normalize_symbol(symbol):
     if symbol.endswith('.NS'):
         return symbol.replace('.NS', '-EQ')
@@ -86,7 +87,20 @@ def normalize_symbol(symbol):
         return symbol
     else:
         return symbol + '-EQ'
+        
 load_dotenv()
+
+@st.cache_resource(ttl=3600, show_spinner=False)
+def get_smartapi_client():
+    smart_api = SmartConnect(api_key=API_KEYS["Historical"])
+    totp = pyotp.TOTP(TOTP_SECRET)
+    data = smart_api.generateSession(CLIENT_ID, PASSWORD, totp.now())
+    if data['status']:
+        return smart_api
+    else:
+        st.error(f"⚠️ SmartAPI authentication failed: {data['message']}")
+        return None
+
 
 @st.cache_data(ttl=86400)
 def load_symbol_token_map():
@@ -394,12 +408,11 @@ def fetch_nse_stock_list():
         return list(set([stock for sector in SECTORS.values() for stock in sector]))
 
 @retry(max_retries=5, delay=5)
-def fetch_stock_data_with_auth(symbol, period="5y", interval="1d"):
+def fetch_stock_data_with_auth(symbol, period="5y", interval="1d", smart_api=None):
     symbol = normalize_symbol(symbol)
     symbol_token_map = load_symbol_token_map()
     symboltoken = symbol_token_map.get(symbol)
     if not symboltoken:
-        print(f"[DEBUG] Token not found for symbol: {symbol}")
         st.warning(f"⚠️ Token not found for symbol: {symbol}")
         return pd.DataFrame()
     cache_key = f"{symbol}_{period}_{interval}"
@@ -408,10 +421,10 @@ def fetch_stock_data_with_auth(symbol, period="5y", interval="1d"):
         return pd.read_pickle(io.BytesIO(cached_data))
 
     try:
-        smart_api = init_smartapi_client()
+        if smart_api is None:
+            smart_api = get_smartapi_client()
         if not smart_api:
             raise ValueError("SmartAPI client initialization failed")
-
         end_date = datetime.now()
         if period == "5y":
             start_date = end_date - timedelta(days=5 * 365)
@@ -463,7 +476,7 @@ def fetch_stock_data_with_auth(symbol, period="5y", interval="1d"):
 
 @lru_cache(maxsize=1000)
 def fetch_stock_data_cached(symbol, period="5y", interval="1d"):
-    return fetch_stock_data_with_auth(symbol, period, interval)
+    return ith_auth(symbol, period, interval)
 
 def calculate_advance_decline_ratio(stock_list):
     advances = 0
@@ -1591,14 +1604,11 @@ def insert_top_picks(results_df, pick_type="daily"):
     conn.close()
 
 def analyze_batch(stock_batch, progress_callback=None, status_callback=None):
-    """
-    Analyzes a batch of stocks in parallel, aggregating errors for summary reporting.
-    Returns a list of valid results.
-    """
     results = []
     errors = []
+    smart_api = get_smartapi_client()  # Only once!
     with ThreadPoolExecutor(max_workers=3) as executor:
-        futures = {executor.submit(analyze_stock_parallel, symbol): symbol for symbol in stock_batch}
+        futures = {executor.submit(analyze_stock_parallel, symbol, smart_api): symbol for symbol in stock_batch}
         for future in as_completed(futures):
             symbol = futures[future]
             try:
@@ -1613,31 +1623,22 @@ def analyze_batch(stock_batch, progress_callback=None, status_callback=None):
                 error_msg = f"Error processing {symbol}: {str(e)}"
                 errors.append(error_msg)
                 logging.error(error_msg)
-
     if errors:
         logging.error(f"Batch errors: {len(errors)} total\n" + "\n".join(errors))
         st.session_state['batch_errors'] = f"Encountered {len(errors)} errors during batch processing. Check logs for details."
-
     return results
+    
 
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
-def analyze_stock_parallel(symbol):
-    """
-    Analyzes a single stock, logging detailed context on errors.
-    Returns a dictionary with analysis results or None on failure.
-    """
+def analyze_stock_parallel(symbol, smart_api):
     try:
-        logging.info(f"Starting analysis for {symbol}")
-        data = fetch_stock_data_cached(symbol)
+        data = fetch_stock_data_with_auth(symbol, smart_api=smart_api)
         if data.empty or len(data) < 50:
             logging.warning(f"No sufficient data for {symbol}: {len(data)} rows")
             return None
-        
         data = analyze_stock(data)
         recommendation_mode = st.session_state.get('recommendation_mode', 'Standard')
-        logging.info(f"Analyzing {symbol} in {recommendation_mode} mode (data shape: {data.shape})")
-        
         if recommendation_mode == "Adaptive":
             rec = adaptive_recommendation(data, symbol)
             if not rec or not rec.get('Recommendation'):
@@ -1689,8 +1690,7 @@ def analyze_stock_parallel(symbol):
                 "Reason": None
             }
     except Exception as e:
-        error_msg = f"Error in analyze_stock_parallel for {symbol}: {str(e)} (data shape: {data.shape if 'data' in locals() else 'N/A'})"
-        logging.error(error_msg)
+        logging.error(f"Error in analyze_stock_parallel for {symbol}: {str(e)}")
         return None
 
 def analyze_all_stocks(stock_list, batch_size=10, progress_callback=None, status_callback=None):
