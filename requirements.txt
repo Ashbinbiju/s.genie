@@ -13,6 +13,7 @@ ta==0.11.0
 logzero==1.7.0
 websocket-client==1.8.0
 pycryptodome==3.20.0
+supabase
 python-dotenv
 pyotp
 chromedriver-py
