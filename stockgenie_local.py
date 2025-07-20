@@ -27,6 +27,7 @@ from dotenv import load_dotenv
 from streamlit import cache_data
 from supabase import create_client, Client
 
+
 # --- Supabase setup ---
 SUPABASE_URL = "https://uwnqchncwvcmvoyalwkt.supabase.co"
 SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InV3bnFjaG5jd3ZjbXZveWFsd2t0Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTI5OTE2MDIsImV4cCI6MjA2ODU2NzYwMn0.tADeLmGgiuG3dXJlweNRk8_lmMOcPBYAo6sCxcmaqMs"
@@ -1799,6 +1800,34 @@ def update_progress_with_status(progress_bar, loading_text, status_text, progres
     # Update status text with current stock being analyzed
     if stock_status:
         status_text.text(stock_status)
+
+def insert_top_picks_supabase(results_df, pick_type="daily"):
+    for _, row in results_df.head(5).iterrows():
+        data = {
+            "date": datetime.now().strftime('%Y-%m-%d'),
+            "symbol": row.get('Symbol'),
+            "score": row.get('Score', 0),
+            "current_price": row.get('Current Price'),
+            "buy_at": row.get('Buy At'),
+            "stop_loss": row.get('Stop Loss'),
+            "target": row.get('Target'),
+            "intraday": row.get('Intraday'),
+            "swing": row.get('Swing'),
+            "short_term": row.get('Short-Term'),
+            "long_term": row.get('Long-Term'),
+            "mean_reversion": row.get('Mean_Reversion'),
+            "breakout": row.get('Breakout'),
+            "ichimoku_trend": row.get('Ichimoku_Trend'),
+            "recommendation": row.get('Recommendation'),
+            "regime": row.get('Regime'),
+            "position_size": row.get('Position Size'),
+            "trailing_stop": row.get('Trailing Stop'),
+            "reason": row.get('Reason'),
+            "pick_type": pick_type
+        }
+        res = supabase.table("daily_picks").insert(data).execute()
+        if hasattr(res, "error") and res.error:
+            st.error(f"Supabase insert error: {res.error}")
         
 def display_dashboard(symbol=None, data=None, recommendations=None):
     # Initialize session state
@@ -1868,7 +1897,7 @@ def display_dashboard(symbol=None, data=None, recommendations=None):
             status_callback=lambda status: status_text.text(status)
         )
         
-        insert_top_picks(results_df, pick_type="daily")
+        insert_top_picks_supabase(results_df, pick_type="daily")
         progress_bar.empty()
         loading_text.empty()
         status_text.empty()
@@ -1927,7 +1956,7 @@ def display_dashboard(symbol=None, data=None, recommendations=None):
             status_callback=lambda status: status_text.text(status)  # Optional: add stock status
         )
         
-        insert_top_picks(intraday_results, pick_type="intraday")
+        insert_top_picks_supabase(intraday_results, pick_type="intraday")
         progress_bar.empty()
         loading_text.empty()
         status_text.empty()  # Clear status text if used
