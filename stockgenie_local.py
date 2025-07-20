@@ -413,18 +413,22 @@ def fetch_stock_data_with_auth(symbol, period="5y", interval="1d", smart_api=Non
     symbol_token_map = load_symbol_token_map()
     symboltoken = symbol_token_map.get(symbol)
     if not symboltoken:
+        print(f"[FAILED] Token not found for symbol: {symbol}")
         st.warning(f"⚠️ Token not found for symbol: {symbol}")
         return pd.DataFrame()
     cache_key = f"{symbol}_{period}_{interval}"
     cached_data = cache.get(cache_key)
     if cached_data is not None:
+        print(f"[SUCCESS] Loaded {symbol} from cache")
         return pd.read_pickle(io.BytesIO(cached_data))
 
     try:
         if smart_api is None:
             smart_api = get_smartapi_client()
         if not smart_api:
+            print(f"[FAILED] SmartAPI client initialization failed for {symbol}")
             raise ValueError("SmartAPI client initialization failed")
+
         end_date = datetime.now()
         if period == "5y":
             start_date = end_date - timedelta(days=5 * 365)
@@ -453,8 +457,6 @@ def fetch_stock_data_with_auth(symbol, period="5y", interval="1d", smart_api=Non
             "todate": end_date.strftime("%Y-%m-%d %H:%M")
         })
 
-        print(f"[DEBUG] API response: {historical_data}")
-
         if historical_data['status'] and historical_data['data']:
             data = pd.DataFrame(historical_data['data'], columns=['Date', 'Open', 'High', 'Low', 'Close', 'Volume'])
             data['Date'] = pd.to_datetime(data['Date'])
@@ -463,17 +465,18 @@ def fetch_stock_data_with_auth(symbol, period="5y", interval="1d", smart_api=Non
             buffer = io.BytesIO()
             data.to_pickle(buffer)
             cache.set(cache_key, buffer.getvalue(), expire=86400)
+            print(f"[SUCCESS] Data fetched for {symbol} ({len(data)} rows)")
             return data
         else:
-            print(f"[DEBUG] No data found for {symbol}: {historical_data.get('message', 'Unknown error')}")
+            print(f"[FAILED] No data for {symbol}: {historical_data.get('message', 'Unknown error')}")
             st.warning(f"⚠️ No data found for {symbol}: {historical_data.get('message', 'Unknown error')}")
             return pd.DataFrame()
 
     except Exception as e:
-        print(f"[DEBUG] Exception fetching data for {symbol}: {str(e)}")
+        print(f"[ERROR] Exception fetching data for {symbol}: {str(e)}")
         st.warning(f"⚠️ Error fetching data for {symbol}: {str(e)}")
         return pd.DataFrame()
-
+        
 @lru_cache(maxsize=1000)
 def fetch_stock_data_cached(symbol, period="5y", interval="1d"):
     return ith_auth(symbol, period, interval)
