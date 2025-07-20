@@ -2029,7 +2029,7 @@ def display_dashboard(symbol=None, data=None, recommendations=None):
                 df = add_action_and_change(df)
                 for col in ['buy_at', 'current_price', 'target', 'stop_loss', '% Change']:
                     if col in df.columns:
-                    df[col] = df[col].round(2)
+                        df[col] = df[col].round(2)
             display_cols = [
                 "symbol", "buy_at", "current_price", "% Change", "recommendation", "What to do now?", "target", "stop_loss"
             ]
