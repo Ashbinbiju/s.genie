@@ -1790,118 +1790,116 @@ def display_dashboard(symbol=None, data=None, recommendations=None):
             for name, score in top_sectors:
                 st.markdown(f"- **{name}**: {score:.2f}/7")
 
-    # Daily top picks button
-   # Fix the indentation in display_dashboard function:
-
-# Daily top picks button
-if st.button("🚀 Generate Daily Top Picks"):
-    progress_bar = st.progress(0)
-    loading_text = st.empty()
-    status_text = st.empty()
-    
-    # Show initial status
-    status_text.text(f"📊 Analyzing {len(selected_stocks)} stocks...")
-    
-    results_df = analyze_all_stocks(
-        selected_stocks,
-        batch_size=10,
-        progress_callback=lambda x: update_progress_with_status(progress_bar, loading_text, status_text, x),
-        status_callback=lambda status: status_text.text(status)
-    )
-    
-    insert_top_picks(results_df, pick_type="daily")
-    progress_bar.empty()
-    loading_text.empty()
-    status_text.empty()
-    
-    if not results_df.empty:
-        st.subheader("🏆 Today's Top 5 Stocks")
-        for _, row in results_df.iterrows():
-            with st.expander(f"{row['Symbol']} - {tooltip('Score', TOOLTIPS['Score'])}: {row['Score']}/7"):
-                current_price = row.get('Current Price', 'N/A')
-                buy_at = row.get('Buy At', 'N/A')
-                stop_loss = row.get('Stop Loss', 'N/A')
-                target = row.get('Target', 'N/A')
-                if st.session_state.recommendation_mode == "Adaptive":
-                    st.markdown(f"""
-                    {tooltip('Current Price', TOOLTIPS['Stop Loss'])}: ₹{current_price}  
-                    Buy At: ₹{buy_at} | Stop Loss: ₹{stop_loss}  
-                    Target: ₹{target}  
-                    Recommendation: {colored_recommendation(row.get('Recommendation', 'N/A'))}  
-                    Regime: {row.get('Regime', 'N/A')}  
-                    Position Size (₹): {row.get('Position Size', 'N/A')}  
-                    Trailing Stop: ₹{row.get('Trailing Stop', 'N/A')}  
-                    Reason: {row.get('Reason', 'N/A')}
-                    """)
-                else:
-                    st.markdown(f"""
-                    {tooltip('Current Price', TOOLTIPS['Stop Loss'])}: ₹{current_price}  
-                    Buy At: ₹{buy_at} | Stop Loss: ₹{stop_loss}  
-                    Target: ₹{target}  
-                    Intraday: {colored_recommendation(row.get('Intraday', 'N/A'))}  
-                    Swing: {colored_recommendation(row.get('Swing', 'N/A'))}  
-                    Short-Term: {colored_recommendation(row.get('Short-Term', 'N/A'))}  
-                    Long-Term: {colored_recommendation(row.get('Long-Term', 'N/A'))}  
-                    Mean Reversion: {colored_recommendation(row.get('Mean_Reversion', 'N/A'))}  
-                    Breakout: {colored_recommendation(row.get('Breakout', 'N/A'))}  
-                    Ichimoku Trend: {colored_recommendation(row.get('Ichimoku_Trend', 'N/A'))}
-                    """)
-    else:
-        st.warning("⚠️ No top picks available due to data issues.")
-
-# Intraday top picks button
-if st.button("⚡ Generate Intraday Top 5 Picks"):
-    progress_bar = st.progress(0)
-    loading_text = st.empty()
-    loading_messages = itertools.cycle([
-        "Scanning intraday trends...", "Detecting buy signals...", "Calculating stop-loss levels...",
-        "Optimizing targets...", "Finalizing top picks..."
-    ])
-    
-    # If you want to show stock status for intraday too, add status_text
-    status_text = st.empty()
-    
-    intraday_results = analyze_intraday_stocks(
-        selected_stocks,
-        batch_size=10,
-        progress_callback=lambda x: update_progress(progress_bar, loading_text, x, loading_messages),
-        status_callback=lambda status: status_text.text(status)  # Optional: add stock status
-    )
-    
-    insert_top_picks(intraday_results, pick_type="intraday")
-    progress_bar.empty()
-    loading_text.empty()
-    status_text.empty()  # Clear status text if used
-    
-    if not intraday_results.empty:
-        st.subheader("🏆 Top 5 Intraday Stocks")
-        for _, row in intraday_results.iterrows():
-            with st.expander(f"{row['Symbol']} - {tooltip('Score', TOOLTIPS['Score'])}: {row['Score']}/7"):
-                current_price = row.get('Current Price', 'N/A')
-                buy_at = row.get('Buy At', 'N/A')
-                stop_loss = row.get('Stop Loss', 'N/A')
-                target = row.get('Target', 'N/A')
-                if st.session_state.recommendation_mode == "Adaptive":
-                    st.markdown(f"""
-                    {tooltip('Current Price', TOOLTIPS['Stop Loss'])}: ₹{current_price}  
-                    Buy At: ₹{buy_at} | Stop Loss: ₹{stop_loss}  
-                    Target: ₹{target}  
-                    Recommendation: {colored_recommendation(row.get('Recommendation', 'N/A'))}  
-                    Regime: {row.get('Regime', 'N/A')}  
-                    Position Size (₹): {row.get('Position Size', 'N/A')}  
-                    Trailing Stop: ₹{row.get('Trailing Stop', 'N/A')}  
-                    Reason: {row.get('Reason', 'N/A')}
-                    """)
-                else:
-                    st.markdown(f"""
-                    {tooltip('Current Price', TOOLTIPS['Stop Loss'])}: ₹{current_price}  
-                    Buy At: ₹{buy_at} | Stop Loss: ₹{stop_loss}  
-                    Target: ₹{target}  
-                    Intraday: {colored_recommendation(row.get('Intraday', 'N/A'))}
-                    """)
-    else:
-        st.warning("⚠️ No intraday picks available due to data issues.")
+    # Daily top picks button - PROPERLY INDENTED INSIDE display_dashboard
+    if st.button("🚀 Generate Daily Top Picks"):
+        progress_bar = st.progress(0)
+        loading_text = st.empty()
+        status_text = st.empty()
         
+        # Show initial status
+        status_text.text(f"📊 Analyzing {len(selected_stocks)} stocks...")
+        
+        results_df = analyze_all_stocks(
+            selected_stocks,
+            batch_size=10,
+            progress_callback=lambda x: update_progress_with_status(progress_bar, loading_text, status_text, x),
+            status_callback=lambda status: status_text.text(status)
+        )
+        
+        insert_top_picks(results_df, pick_type="daily")
+        progress_bar.empty()
+        loading_text.empty()
+        status_text.empty()
+        
+        if not results_df.empty:
+            st.subheader("🏆 Today's Top 5 Stocks")
+            for _, row in results_df.iterrows():
+                with st.expander(f"{row['Symbol']} - {tooltip('Score', TOOLTIPS['Score'])}: {row['Score']}/7"):
+                    current_price = row.get('Current Price', 'N/A')
+                    buy_at = row.get('Buy At', 'N/A')
+                    stop_loss = row.get('Stop Loss', 'N/A')
+                    target = row.get('Target', 'N/A')
+                    if st.session_state.recommendation_mode == "Adaptive":
+                        st.markdown(f"""
+                        {tooltip('Current Price', TOOLTIPS['Stop Loss'])}: ₹{current_price}  
+                        Buy At: ₹{buy_at} | Stop Loss: ₹{stop_loss}  
+                        Target: ₹{target}  
+                        Recommendation: {colored_recommendation(row.get('Recommendation', 'N/A'))}  
+                        Regime: {row.get('Regime', 'N/A')}  
+                        Position Size (₹): {row.get('Position Size', 'N/A')}  
+                        Trailing Stop: ₹{row.get('Trailing Stop', 'N/A')}  
+                        Reason: {row.get('Reason', 'N/A')}
+                        """)
+                    else:
+                        st.markdown(f"""
+                        {tooltip('Current Price', TOOLTIPS['Stop Loss'])}: ₹{current_price}  
+                        Buy At: ₹{buy_at} | Stop Loss: ₹{stop_loss}  
+                        Target: ₹{target}  
+                        Intraday: {colored_recommendation(row.get('Intraday', 'N/A'))}  
+                        Swing: {colored_recommendation(row.get('Swing', 'N/A'))}  
+                        Short-Term: {colored_recommendation(row.get('Short-Term', 'N/A'))}  
+                        Long-Term: {colored_recommendation(row.get('Long-Term', 'N/A'))}  
+                        Mean Reversion: {colored_recommendation(row.get('Mean_Reversion', 'N/A'))}  
+                        Breakout: {colored_recommendation(row.get('Breakout', 'N/A'))}  
+                        Ichimoku Trend: {colored_recommendation(row.get('Ichimoku_Trend', 'N/A'))}
+                        """)
+        else:
+            st.warning("⚠️ No top picks available due to data issues.")
+
+    # Intraday top picks button - PROPERLY INDENTED INSIDE display_dashboard
+    if st.button("⚡ Generate Intraday Top 5 Picks"):
+        progress_bar = st.progress(0)
+        loading_text = st.empty()
+        loading_messages = itertools.cycle([
+            "Scanning intraday trends...", "Detecting buy signals...", "Calculating stop-loss levels...",
+            "Optimizing targets...", "Finalizing top picks..."
+        ])
+        
+        # If you want to show stock status for intraday too, add status_text
+        status_text = st.empty()
+        
+        intraday_results = analyze_intraday_stocks(
+            selected_stocks,
+            batch_size=10,
+            progress_callback=lambda x: update_progress(progress_bar, loading_text, x, loading_messages),
+            status_callback=lambda status: status_text.text(status)  # Optional: add stock status
+        )
+        
+        insert_top_picks(intraday_results, pick_type="intraday")
+        progress_bar.empty()
+        loading_text.empty()
+        status_text.empty()  # Clear status text if used
+        
+        if not intraday_results.empty:
+            st.subheader("🏆 Top 5 Intraday Stocks")
+            for _, row in intraday_results.iterrows():
+                with st.expander(f"{row['Symbol']} - {tooltip('Score', TOOLTIPS['Score'])}: {row['Score']}/7"):
+                    current_price = row.get('Current Price', 'N/A')
+                    buy_at = row.get('Buy At', 'N/A')
+                    stop_loss = row.get('Stop Loss', 'N/A')
+                    target = row.get('Target', 'N/A')
+                    if st.session_state.recommendation_mode == "Adaptive":
+                        st.markdown(f"""
+                        {tooltip('Current Price', TOOLTIPS['Stop Loss'])}: ₹{current_price}  
+                        Buy At: ₹{buy_at} | Stop Loss: ₹{stop_loss}  
+                        Target: ₹{target}  
+                        Recommendation: {colored_recommendation(row.get('Recommendation', 'N/A'))}  
+                        Regime: {row.get('Regime', 'N/A')}  
+                        Position Size (₹): {row.get('Position Size', 'N/A')}  
+                        Trailing Stop: ₹{row.get('Trailing Stop', 'N/A')}  
+                        Reason: {row.get('Reason', 'N/A')}
+                        """)
+                    else:
+                        st.markdown(f"""
+                        {tooltip('Current Price', TOOLTIPS['Stop Loss'])}: ₹{current_price}  
+                        Buy At: ₹{buy_at} | Stop Loss: ₹{stop_loss}  
+                        Target: ₹{target}  
+                        Intraday: {colored_recommendation(row.get('Intraday', 'N/A'))}
+                        """)
+        else:
+            st.warning("⚠️ No intraday picks available due to data issues.")
+
+    # Rest of the display_dashboard function continues here...
     # Historical picks button
     if st.button("📜 View Historical Picks"):
         conn = sqlite3.connect('stock_picks.db')
