@@ -1961,28 +1961,26 @@ def display_dashboard(symbol=None, data=None, recommendations=None):
         else:
             st.warning("⚠️ No intraday picks available due to data issues.")
 
-    # Rest of the display_dashboard function continues here...
-    # Historical picks button
-   if st.button("📜 View Historical Picks"):
-    # Fetch all unique dates from Supabase
-    res = supabase.table("daily_picks").select("date").order("date", desc=True).execute()
-    if res.data:
-        all_dates = sorted({row['date'] for row in res.data}, reverse=True)
-        date_filter = st.selectbox("Select Date", all_dates)
-        # Fetch picks for the selected date
-        res2 = supabase.table("daily_picks").select("*").eq("date", date_filter).execute()
-        if res2.data:
-            df = pd.DataFrame(res2.data)
-            df = add_action_and_change(df)
-            display_cols = [
-                "symbol", "buy_at", "current_price", "target", "stop_loss", "recommendation", "% Change", "What to do now?"
-            ]
-            styled_df = style_picks_df(df[display_cols])
-            st.dataframe(styled_df, use_container_width=True)
+    if st.button("📜 View Historical Picks"):
+        # Fetch all unique dates from Supabase
+        res = supabase.table("daily_picks").select("date").order("date", desc=True).execute()
+        if res.data:
+            all_dates = sorted({row['date'] for row in res.data}, reverse=True)
+            date_filter = st.selectbox("Select Date", all_dates)
+            # Fetch picks for the selected date
+            res2 = supabase.table("daily_picks").select("*").eq("date", date_filter).execute()
+            if res2.data:
+                df = pd.DataFrame(res2.data)
+                df = add_action_and_change(df)
+                display_cols = [
+                    "symbol", "buy_at", "current_price", "target", "stop_loss", "recommendation", "% Change", "What to do now?"
+                ]
+                styled_df = style_picks_df(df[display_cols])
+                st.dataframe(styled_df, use_container_width=True)
+            else:
+                st.warning("No picks found for this date.")
         else:
-            st.warning("No picks found for this date.")
-    else:
-        st.warning("No historical data available.")
+            st.warning("No historical data available.")
 
     # Display stock analysis if symbol is available
     if st.session_state.symbol and st.session_state.data is not None and st.session_state.recommendations is not None:
