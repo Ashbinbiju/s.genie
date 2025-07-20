@@ -372,8 +372,11 @@ def fetch_stock_data_with_auth(symbol, period="5y", interval="1d"):
         symbol_token_map = load_symbol_token_map()
         symboltoken = symbol_token_map.get(symbol)
         if not symboltoken:
+            print(f"[DEBUG] Token not found for symbol: {symbol}")
             st.warning(f"⚠️ Token not found for symbol: {symbol}")
             return pd.DataFrame()
+
+        print(f"[DEBUG] Fetching {symbol} (token: {symboltoken}) from {start_date} to {end_date} interval={api_interval}")
 
         historical_data = smart_api.getCandleData({
             "exchange": "NSE",
@@ -382,6 +385,8 @@ def fetch_stock_data_with_auth(symbol, period="5y", interval="1d"):
             "fromdate": start_date.strftime("%Y-%m-%d %H:%M"),
             "todate": end_date.strftime("%Y-%m-%d %H:%M")
         })
+
+        print(f"[DEBUG] API response: {historical_data}")
 
         if historical_data['status'] and historical_data['data']:
             data = pd.DataFrame(historical_data['data'], columns=['Date', 'Open', 'High', 'Low', 'Close', 'Volume'])
@@ -393,14 +398,12 @@ def fetch_stock_data_with_auth(symbol, period="5y", interval="1d"):
             cache.set(cache_key, buffer.getvalue(), expire=86400)
             return data
         else:
-            raise ValueError(f"No data found for {symbol}: {historical_data.get('message', 'Unknown error')}")
-
-    except requests.exceptions.HTTPError as e:
-        if e.response.status_code == 429:
-            st.warning(f"⚠️ Rate limit exceeded for {symbol}. Skipping...")
+            print(f"[DEBUG] No data found for {symbol}: {historical_data.get('message', 'Unknown error')}")
+            st.warning(f"⚠️ No data found for {symbol}: {historical_data.get('message', 'Unknown error')}")
             return pd.DataFrame()
-        raise e
+
     except Exception as e:
+        print(f"[DEBUG] Exception fetching data for {symbol}: {str(e)}")
         st.warning(f"⚠️ Error fetching data for {symbol}: {str(e)}")
         return pd.DataFrame()
 
