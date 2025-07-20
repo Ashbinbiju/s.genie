@@ -2001,32 +2001,31 @@ def display_dashboard(symbol=None, data=None, recommendations=None):
                         """)
         else:
             st.warning("⚠️ No intraday picks available due to data issues.")
-            
+        
         if st.button("📜 View Historical Picks"):
-        res = supabase.table("daily_picks").select("date").order("date", desc=True).execute()
-        if res.data:
-            all_dates = sorted({row['date'] for row in res.data}, reverse=True)
-            date_filter = st.selectbox("Select Date", all_dates)
-            res2 = supabase.table("daily_picks").select("*").eq("date", date_filter).execute()
+            res = supabase.table("daily_picks").select("date").order("date", desc=True).execute()
+            if res.data:
+                all_dates = sorted({row['date'] for row in res.data}, reverse=True)
+                date_filter = st.selectbox("Select Date", all_dates)
+                res2 = supabase.table("daily_picks").select("*").eq("date", date_filter).execute()
             if res2.data:
                 df = pd.DataFrame(res2.data)
                 df = update_with_latest_prices(df)  # Update current_price with latest
                 df = add_action_and_change(df)      # Recalculate % Change and What to do now?
-                # Format numbers
+            # Format numbers
                 for col in ['buy_at', 'current_price', 'target', 'stop_loss', '% Change']:
                     if col in df.columns:
                         df[col] = df[col].round(2)
-                display_cols = [
-                    "symbol", "buy_at", "current_price", "% Change", "recommendation", "What to do now?", "target", "stop_loss"
-                ]
-                styled_df = style_picks_df(df[display_cols])
-                st.dataframe(styled_df, use_container_width=True)
+                    display_cols = [
+                        "symbol", "buy_at", "current_price", "% Change", "recommendation", "What to do now?", "target", "stop_loss"
+                    ]
+                    styled_df = style_picks_df(df[display_cols])
+                    st.dataframe(styled_df, use_container_width=True)
             else:
                 st.warning("No picks found for this date.")
         else:
-            st.warning("No historical data available.")
-
-    # Display stock analysis if symbol is available
+            st.warning("No historical data available.")       
+        
     if st.session_state.symbol and st.session_state.data is not None and st.session_state.recommendations is not None:
         symbol = st.session_state.symbol
         data = st.session_state.data
