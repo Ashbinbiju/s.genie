@@ -25,6 +25,13 @@ import pyotp
 import os
 from dotenv import load_dotenv
 from streamlit import cache_data
+from supabase import create_client, Client
+
+# --- Supabase setup ---
+SUPABASE_URL = "https://uwnqchncwvcmvoyalwkt.supabase.co"
+SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFz..."
+supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
+
 
 warnings.filterwarnings("ignore", message=".*missing ScriptRunContext.*")
 logging.getLogger("streamlit.runtime.scriptrunner").setLevel(logging.ERROR)
@@ -53,6 +60,50 @@ def load_symbol_token_map():
 
 warnings.filterwarnings("ignore", category=FutureWarning)
 warnings.filterwarnings("ignore", category=UserWarning)
+
+
+def color_code_action(val):
+    if isinstance(val, str):
+        if "Book Profit" in val:
+            return "color: green; font-weight: bold"
+        elif "Review" in val:
+            return "color: red; font-weight: bold"
+        elif "Hold" in val:
+            return "color: orange; font-weight: bold"
+    return ""
+
+def color_code_change(val):
+    try:
+        v = float(val)
+        if v > 0:
+            return "color: green"
+        elif v < 0:
+            return "color: red"
+        else:
+            return ""
+    except:
+        return ""
+
+def style_picks_df(df):
+    return df.style.applymap(color_code_action, subset=["What to do now?"]) \
+                   .applymap(color_code_change, subset=["% Change"])
+
+def add_action_and_change(df):
+    def action(row):
+        try:
+            buy_at = float(row['buy_at'])
+            current_price = float(row['current_price'])
+            if current_price > buy_at * 1.05:
+                return "Book Profit / Hold"
+            elif current_price < buy_at * 0.97:
+                return "Review / Consider Stop Loss"
+            else:
+                return "Hold"
+        except Exception:
+            return "N/A"
+    df['% Change'] = ((df['current_price'] - df['buy_at']) / df['buy_at'] * 100).round(2)
+    df['What to do now?'] = df.apply(action, axis=1)
+    return df
 
 CLIENT_ID = os.getenv("CLIENT_ID")
 PASSWORD = os.getenv("PASSWORD")
@@ -1913,22 +1964,6 @@ def display_dashboard(symbol=None, data=None, recommendations=None):
     # Rest of the display_dashboard function continues here...
     # Historical picks button
     if st.button("📜 View Historical Picks"):
-        conn = sqlite3.connect('stock_picks.db')
-        history_df = pd.read_sql_query("SELECT * FROM daily_picks ORDER BY date DESC", conn)
-        conn.close()
-        if not history_df.empty:
-            st.subheader("📜 Historical Top Picks")
-            all_dates = sorted(history_df['date'].unique(), reverse=True)
-            date_filter = st.selectbox("Filter by Date", ["All"] + all_dates)
-            pick_type_filter = st.selectbox("Filter by Pick Type", ["All", "daily", "intraday"])
-            filtered_df = history_df.copy()
-            if pick_type_filter != "All":
-                filtered_df = filtered_df[filtered_df['pick_type'] == pick_type_filter]
-            if date_filter != "All":
-                filtered_df = filtered_df[filtered_df['date'] == date_filter]
-            st.dataframe(filtered_df)
-        else:
-            st.warning("⚠️ No historical data available.")
 
     # Display stock analysis if symbol is available
     if st.session_state.symbol and st.session_state.data is not None and st.session_state.recommendations is not None:
