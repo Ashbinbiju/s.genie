@@ -25,6 +25,55 @@ import pyotp
 import os
 from dotenv import load_dotenv
 from streamlit import cache_data
+from supabase import create_client, Client
+# --- Supabase setup ---
+SUPABASE_URL = "https://uwnqchncwvcmvoyalwkt.supabase.co"
+SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InV3bnFjaG5jd3ZjbXZveWFsd2t0Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTI5OTE2MDIsImV4cCI6MjA2ODU2NzYwMn0.tADeLmGgiuG3dXJlweNRk8_lmMOcPBYAo6sCxcmaqMs"
+supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
+
+def color_code_action(val):
+    if isinstance(val, str):
+        if "Book Profit" in val:
+            return "color: green; font-weight: bold"
+        elif "Review" in val:
+            return "color: red; font-weight: bold"
+        elif "Hold" in val:
+            return "color: orange; font-weight: bold"
+    return ""
+
+def color_code_change(val):
+    try:
+        v = float(val)
+        if v > 0:
+            return "color: green"
+        elif v < 0:
+            return "color: red"
+        else:
+            return ""
+    except:
+        return ""
+
+def style_picks_df(df):
+    return df.style.applymap(color_code_action, subset=["What to do now?"]) \
+                   .applymap(color_code_change, subset=["% Change"])
+
+def add_action_and_change(df):
+    def action(row):
+        try:
+            buy_at = float(row['buy_at'])
+            current_price = float(row['current_price'])
+            if current_price > buy_at * 1.05:
+                return "Book Profit / Hold"
+            elif current_price < buy_at * 0.97:
+                return "Review / Consider Stop Loss"
+            else:
+                return "Hold"
+        except Exception:
+            return "N/A"
+    df['% Change'] = ((df['current_price'] - df['buy_at']) / df['buy_at'] * 100).round(2)
+    df['What to do now?'] = df.apply(action, axis=1)
+    return df
+
 
 warnings.filterwarnings("ignore", message=".*missing ScriptRunContext.*")
 logging.getLogger("streamlit.runtime.scriptrunner").setLevel(logging.ERROR)
