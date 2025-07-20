@@ -1468,10 +1468,10 @@ def get_top_sectors_cached(rate_limit_delay=2, stocks_per_sector=2):
             rec = generate_recommendations(data, symbol)
             total_score += rec.get("Score", 0)
             count += 1
-            time.sleep(rate_limit_delay)  # Delay per API call
+            time.sleep(10)  # Delay per API call
         avg_score = total_score / count if count else 0
         sector_scores[sector] = avg_score
-        time.sleep(1)  # Optional: delay between sectors
+        time.sleep(5)  # Optional: delay between sectors
     return sorted(sector_scores.items(), key=lambda x: x[1], reverse=True)[:3]
 
 @st.cache_data
@@ -1703,7 +1703,7 @@ def analyze_all_stocks(stock_list, batch_size=10, progress_callback=None, status
     
     for i in range(0, len(stock_list), batch_size):
         batch = stock_list[i:i + batch_size]
-        
+        time.sleep(15)
         # Update status for current batch
         if status_callback:
             batch_names = ", ".join(batch[:3])  # Show first 3 stocks
@@ -1718,7 +1718,7 @@ def analyze_all_stocks(stock_list, batch_size=10, progress_callback=None, status
         if progress_callback:
             progress_callback(processed / total_stocks)
         
-        time.sleep(3)
+        time.sleep(10)
     
     results_df = pd.DataFrame(results)
     if results_df.empty:
@@ -1755,7 +1755,7 @@ def analyze_intraday_stocks(stock_list, batch_size=10, progress_callback=None, s
         if progress_callback:
             progress_callback(processed / total_stocks)
         
-        time.sleep(3)
+        time.sleep(10)
     
     results_df = pd.DataFrame(results)
     if results_df.empty:
@@ -1892,7 +1892,7 @@ def display_dashboard(symbol=None, data=None, recommendations=None):
     # Top sectors button
     if st.button("🔎 Analyze Top Performing Sectors"):
         with st.spinner("🔍 Crunching sector data ..."):
-            top_sectors = get_top_sectors_cached(rate_limit_delay=2, stocks_per_sector=2)
+            top_sectors = get_top_sectors_cached(rate_limit_delay=10, stocks_per_sector=10)
             st.subheader("🔝 Top 3 Performing Sectors Today")
             for name, score in top_sectors:
                 st.markdown(f"- **{name}**: {score:.2f}/7")
