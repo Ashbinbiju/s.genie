@@ -26,6 +26,9 @@ import os
 from dotenv import load_dotenv
 from streamlit import cache_data
 
+warnings.filterwarnings("ignore", message=".*missing ScriptRunContext.*")
+logging.getLogger("streamlit.runtime.scriptrunner").setLevel(logging.ERROR)
+
 load_dotenv()
 
 @st.cache_data(ttl=86400)
