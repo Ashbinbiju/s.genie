@@ -28,7 +28,15 @@ from streamlit import cache_data
 
 warnings.filterwarnings("ignore", message=".*missing ScriptRunContext.*")
 logging.getLogger("streamlit.runtime.scriptrunner").setLevel(logging.ERROR)
-
+def normalize_symbol(symbol):
+    if symbol.endswith('.NS'):
+        return symbol.replace('.NS', '-EQ')
+    elif symbol.endswith('.BO'):
+        return symbol.replace('.BO', '-EQ')
+    elif '-EQ' in symbol:
+        return symbol
+    else:
+        return symbol + '-EQ'
 load_dotenv()
 
 @st.cache_data(ttl=86400)
@@ -338,15 +346,19 @@ def fetch_nse_stock_list():
 
 @retry(max_retries=5, delay=5)
 def fetch_stock_data_with_auth(symbol, period="5y", interval="1d"):
+    symbol = normalize_symbol(symbol)
+    symbol_token_map = load_symbol_token_map()
+    symboltoken = symbol_token_map.get(symbol)
+    if not symboltoken:
+        print(f"[DEBUG] Token not found for symbol: {symbol}")
+        st.warning(f"⚠️ Token not found for symbol: {symbol}")
+        return pd.DataFrame()
     cache_key = f"{symbol}_{period}_{interval}"
     cached_data = cache.get(cache_key)
     if cached_data is not None:
         return pd.read_pickle(io.BytesIO(cached_data))
 
     try:
-        if "-EQ" not in symbol:
-            symbol = f"{symbol.split('.')[0]}-EQ"
-
         smart_api = init_smartapi_client()
         if not smart_api:
             raise ValueError("SmartAPI client initialization failed")
@@ -368,13 +380,6 @@ def fetch_stock_data_with_auth(symbol, period="5y", interval="1d"):
             "15m": "FIFTEEN_MINUTE"
         }
         api_interval = interval_map.get(interval, "ONE_DAY")
-
-        symbol_token_map = load_symbol_token_map()
-        symboltoken = symbol_token_map.get(symbol)
-        if not symboltoken:
-            print(f"[DEBUG] Token not found for symbol: {symbol}")
-            st.warning(f"⚠️ Token not found for symbol: {symbol}")
-            return pd.DataFrame()
 
         print(f"[DEBUG] Fetching {symbol} (token: {symboltoken}) from {start_date} to {end_date} interval={api_interval}")
 
