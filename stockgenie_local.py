@@ -2006,17 +2006,14 @@ def display_dashboard(symbol=None, data=None, recommendations=None):
     if "show_history" not in st.session_state:
         st.session_state.show_history = False
 
-    # Button to toggle the historical picks view
     if st.button("📜 View Historical Picks"):
         st.session_state.show_history = not st.session_state.show_history
 
-    # Show the historical picks view if toggled on
     if st.session_state.show_history:
         st.markdown("### 📜 Historical Picks")
-        # Optional: Add a close button
         if st.button("Close Historical Picks"):
             st.session_state.show_history = False
-            st.stop()  # Stop further execution to immediately hide the table
+            st.experimental_rerun()  # This will immediately hide the view
 
         res = supabase.table("daily_picks").select("date").order("date", desc=True).execute()
         if res.data:
@@ -2039,7 +2036,7 @@ def display_dashboard(symbol=None, data=None, recommendations=None):
             st.warning("No picks found for this date.")
     else:
         st.warning("No historical data available.")
-
+        
     # Display stock analysis if symbol is available
     if st.session_state.symbol and st.session_state.data is not None and st.session_state.recommendations is not None:
         symbol = st.session_state.symbol
