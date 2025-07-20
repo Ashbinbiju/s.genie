@@ -1828,6 +1828,18 @@ def insert_top_picks_supabase(results_df, pick_type="daily"):
         res = supabase.table("daily_picks").insert(data).execute()
         if hasattr(res, "error") and res.error:
             st.error(f"Supabase insert error: {res.error}")
+
+def update_with_latest_prices(df):
+    for idx, row in df.iterrows():
+        symbol = row['symbol']
+        try:
+            latest_data = fetch_stock_data_with_auth(symbol, period="1mo", interval="1d")
+            if not latest_data.empty:
+                latest_close = float(latest_data['Close'].iloc[-1])
+                df.at[idx, 'current_price'] = latest_close
+        except Exception as e:
+            st.warning(f"Could not fetch latest price for {symbol}: {e}")
+    return df
         
 def display_dashboard(symbol=None, data=None, recommendations=None):
     # Initialize session state
@@ -1990,41 +2002,29 @@ def display_dashboard(symbol=None, data=None, recommendations=None):
         else:
             st.warning("⚠️ No intraday picks available due to data issues.")
 
-def update_with_latest_prices(df):
-    for idx, row in df.iterrows():
-        symbol = row['symbol']
-        try:
-            latest_data = fetch_stock_data_with_auth(symbol, period="1mo", interval="1d")
-            if not latest_data.empty:
-                latest_close = float(latest_data['Close'].iloc[-1])
-                df.at[idx, 'current_price'] = latest_close
-        except Exception as e:
-            st.warning(f"Could not fetch latest price for {symbol}: {e}")
-    return df
-
-    if st.button("📜 View Historical Picks"):
-    res = supabase.table("daily_picks").select("date").order("date", desc=True).execute()
-    if res.data:
-        all_dates = sorted({row['date'] for row in res.data}, reverse=True)
-        date_filter = st.selectbox("Select Date", all_dates)
-        res2 = supabase.table("daily_picks").select("*").eq("date", date_filter).execute()
-        if res2.data:
-            df = pd.DataFrame(res2.data)
-            df = update_with_latest_prices(df)  # Update current_price with latest
-            df = add_action_and_change(df)      # Recalculate % Change and What to do now?
-            # Format numbers
-            for col in ['buy_at', 'current_price', 'target', 'stop_loss', '% Change']:
-                if col in df.columns:
-                    df[col] = df[col].round(2)
-            display_cols = [
-                "symbol", "buy_at", "current_price", "% Change", "recommendation", "What to do now?", "target", "stop_loss"
-            ]
-            styled_df = style_picks_df(df[display_cols])
-            st.dataframe(styled_df, use_container_width=True)
+        if st.button("📜 View Historical Picks"):
+        res = supabase.table("daily_picks").select("date").order("date", desc=True).execute()
+        if res.data:
+            all_dates = sorted({row['date'] for row in res.data}, reverse=True)
+            date_filter = st.selectbox("Select Date", all_dates)
+            res2 = supabase.table("daily_picks").select("*").eq("date", date_filter).execute()
+            if res2.data:
+                df = pd.DataFrame(res2.data)
+                df = update_with_latest_prices(df)  # Update current_price with latest
+                df = add_action_and_change(df)      # Recalculate % Change and What to do now?
+                # Format numbers
+                for col in ['buy_at', 'current_price', 'target', 'stop_loss', '% Change']:
+                    if col in df.columns:
+                        df[col] = df[col].round(2)
+                display_cols = [
+                    "symbol", "buy_at", "current_price", "% Change", "recommendation", "What to do now?", "target", "stop_loss"
+                ]
+                styled_df = style_picks_df(df[display_cols])
+                st.dataframe(styled_df, use_container_width=True)
+            else:
+                st.warning("No picks found for this date.")
         else:
-            st.warning("No picks found for this date.")
-    else:
-        st.warning("No historical data available.")
+            st.warning("No historical data available.")
 
     # Display stock analysis if symbol is available
     if st.session_state.symbol and st.session_state.data is not None and st.session_state.recommendations is not None:
