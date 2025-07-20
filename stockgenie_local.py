@@ -2001,7 +2001,7 @@ def display_dashboard(symbol=None, data=None, recommendations=None):
                         """)
         else:
             st.warning("⚠️ No intraday picks available due to data issues.")
-
+            
         if st.button("📜 View Historical Picks"):
         res = supabase.table("daily_picks").select("date").order("date", desc=True).execute()
         if res.data:
