@@ -1822,9 +1822,13 @@ def insert_top_picks_supabase(results_df, pick_type="daily"):
             "reason": row.get('Reason'),
             "pick_type": pick_type
         }
-        res = supabase.table("daily_picks").insert(data).execute()
-        if hasattr(res, "error") and res.error:
-            st.error(f"Supabase insert error: {res.error}")
+        print("Inserting to Supabase:", data)
+        try:
+            res = supabase.table("daily_picks").upsert(data).execute()
+            if hasattr(res, "error") and res.error:
+                st.error(f"Supabase insert error: {res.error}")
+        except Exception as e:
+            st.error(f"Supabase insert exception: {e}")
 
 def update_with_latest_prices(df):
     for idx, row in df.iterrows():
