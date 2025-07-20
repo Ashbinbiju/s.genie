@@ -1530,7 +1530,7 @@ def insert_top_picks(results_df, pick_type="daily"):
     conn.commit()
     conn.close()
 
-def analyze_batch(stock_batch):
+def analyze_batch(stock_batch, progress_callback=None, status_callback=None):
     """
     Analyzes a batch of stocks in parallel, aggregating errors for summary reporting.
     Returns a list of valid results.
@@ -1542,20 +1542,24 @@ def analyze_batch(stock_batch):
         for future in as_completed(futures):
             symbol = futures[future]
             try:
+                if status_callback:
+                    status_callback(f"✅ Completed: {symbol}")
                 result = future.result()
                 if result:
                     results.append(result)
             except Exception as e:
+                if status_callback:
+                    status_callback(f"❌ Failed: {symbol}")
                 error_msg = f"Error processing {symbol}: {str(e)}"
                 errors.append(error_msg)
                 logging.error(error_msg)
 
     if errors:
         logging.error(f"Batch errors: {len(errors)} total\n" + "\n".join(errors))
-        # Display summary warning in main thread
         st.session_state['batch_errors'] = f"Encountered {len(errors)} errors during batch processing. Check logs for details."
 
     return results
+
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 def analyze_stock_parallel(symbol):
@@ -1629,15 +1633,28 @@ def analyze_stock_parallel(symbol):
         logging.error(error_msg)
         return None
 
-def analyze_all_stocks(stock_list, batch_size=10, progress_callback=None):
+def analyze_all_stocks(stock_list, batch_size=10, progress_callback=None, status_callback=None):
     results = []
-    total_batches = (len(stock_list) // batch_size) + (1 if len(stock_list) % batch_size != 0 else 0)
+    total_stocks = len(stock_list)
+    processed = 0
+    
     for i in range(0, len(stock_list), batch_size):
         batch = stock_list[i:i + batch_size]
-        batch_results = analyze_batch(batch)
+        
+        # Update status for current batch
+        if status_callback:
+            batch_names = ", ".join(batch[:3])  # Show first 3 stocks
+            if len(batch) > 3:
+                batch_names += f" and {len(batch)-3} more"
+            status_callback(f"🔄 Analyzing: {batch_names}")
+        
+        batch_results = analyze_batch(batch, progress_callback=progress_callback, status_callback=status_callback)
         results.extend([r for r in batch_results if r is not None])
+        
+        processed += len(batch)
         if progress_callback:
-            progress_callback((i + len(batch)) / len(stock_list))
+            progress_callback(processed / total_stocks)
+        
         time.sleep(3)
     
     results_df = pd.DataFrame(results)
@@ -1652,16 +1669,29 @@ def analyze_all_stocks(stock_list, batch_size=10, progress_callback=None):
     if recommendation_mode == "Adaptive":
         results_df = results_df[results_df["Recommendation"].str.contains("Buy|Sell", na=False)]
     return results_df.sort_values(by="Score", ascending=False).head(5)
-
-def analyze_intraday_stocks(stock_list, batch_size=10, progress_callback=None):
+    
+def analyze_intraday_stocks(stock_list, batch_size=10, progress_callback=None, status_callback=None):
     results = []
-    total_batches = (len(stock_list) // batch_size) + (1 if len(stock_list) % batch_size != 0 else 0)
+    total_stocks = len(stock_list)
+    processed = 0
+    
     for i in range(0, len(stock_list), batch_size):
         batch = stock_list[i:i + batch_size]
-        batch_results = analyze_batch(batch)
+        
+        # Update status for current batch
+        if status_callback:
+            batch_names = ", ".join(batch[:3])  # Show first 3 stocks
+            if len(batch) > 3:
+                batch_names += f" and {len(batch)-3} more"
+            status_callback(f"🔄 Analyzing: {batch_names}")
+        
+        batch_results = analyze_batch(batch, progress_callback=progress_callback, status_callback=status_callback)
         results.extend([r for r in batch_results if r is not None])
+        
+        processed += len(batch)
         if progress_callback:
-            progress_callback((i + len(batch)) / len(stock_list))
+            progress_callback(processed / total_stocks)
+        
         time.sleep(3)
     
     results_df = pd.DataFrame(results)
@@ -1693,7 +1723,21 @@ def update_progress(progress_bar, loading_text, progress_value, loading_messages
     loading_message = next(loading_messages)
     dots = "." * int((progress_value * 10) % 4)
     loading_text.text(f"{loading_message}{dots}")
-
+    
+# Add the new function for stock status updates
+def update_progress_with_status(progress_bar, loading_text, status_text, progress_value, stock_status=None):
+    progress_bar.progress(progress_value)
+    
+    # Calculate percentage
+    percentage = int(progress_value * 100)
+    
+    # Update loading text with percentage
+    loading_text.text(f"Progress: {percentage}%")
+    
+    # Update status text with current stock being analyzed
+    if stock_status:
+        status_text.text(stock_status)
+        
 def display_dashboard(symbol=None, data=None, recommendations=None):
     # Initialize session state
     if 'selected_sectors' not in st.session_state:
@@ -1748,22 +1792,27 @@ def display_dashboard(symbol=None, data=None, recommendations=None):
 
     # Daily top picks button
     if st.button("🚀 Generate Daily Top Picks"):
-        progress_bar = st.progress(0)
-        loading_text = st.empty()
-        loading_messages = itertools.cycle([
-            "Analyzing trends...", "Fetching data...", "Crunching numbers...",
-            "Evaluating indicators...", "Finalizing results..."
-        ])
-        results_df = analyze_all_stocks(
-            selected_stocks,
-            batch_size=10,
-            progress_callback=lambda x: update_progress(progress_bar, loading_text, x, loading_messages)
-        )
-        insert_top_picks(results_df, pick_type="daily")
-        progress_bar.empty()
-        loading_text.empty()
-        if not results_df.empty:
-            st.subheader("🏆 Today's Top 5 Stocks")
+    progress_bar = st.progress(0)
+    loading_text = st.empty()
+    status_text = st.empty()
+    
+    # Show initial status
+    status_text.text(f"📊 Analyzing {len(selected_stocks)} stocks...")
+    
+    results_df = analyze_all_stocks(
+        selected_stocks,
+        batch_size=10,
+        progress_callback=lambda x: update_progress_with_status(progress_bar, loading_text, status_text, x),
+        status_callback=lambda status: status_text.text(status)
+    )
+    
+    insert_top_picks(results_df, pick_type="daily")
+    progress_bar.empty()
+    loading_text.empty()
+    status_text.empty()
+    
+    if not results_df.empty:
+        st.subheader("🏆 Today's Top 5 Stocks")
             for _, row in results_df.iterrows():
                 with st.expander(f"{row['Symbol']} - {tooltip('Score', TOOLTIPS['Score'])}: {row['Score']}/7"):
                     current_price = row.get('Current Price', 'N/A')
@@ -1798,23 +1847,31 @@ def display_dashboard(symbol=None, data=None, recommendations=None):
             st.warning("⚠️ No top picks available due to data issues.")
 
     # Intraday top picks button
-    if st.button("⚡ Generate Intraday Top 5 Picks"):
-        progress_bar = st.progress(0)
-        loading_text = st.empty()
-        loading_messages = itertools.cycle([
-            "Scanning intraday trends...", "Detecting buy signals...", "Calculating stop-loss levels...",
-            "Optimizing targets...", "Finalizing top picks..."
-        ])
-        intraday_results = analyze_intraday_stocks(
-            selected_stocks,
-            batch_size=10,
-            progress_callback=lambda x: update_progress(progress_bar, loading_text, x, loading_messages)
-        )
-        insert_top_picks(intraday_results, pick_type="intraday")
-        progress_bar.empty()
-        loading_text.empty()
-        if not intraday_results.empty:
-            st.subheader("🏆 Top 5 Intraday Stocks")
+   if st.button("⚡ Generate Intraday Top 5 Picks"):
+    progress_bar = st.progress(0)
+    loading_text = st.empty()
+    loading_messages = itertools.cycle([
+        "Scanning intraday trends...", "Detecting buy signals...", "Calculating stop-loss levels...",
+        "Optimizing targets...", "Finalizing top picks..."
+    ])
+    
+    # If you want to show stock status for intraday too, add status_text
+    status_text = st.empty()
+    
+    intraday_results = analyze_intraday_stocks(
+        selected_stocks,
+        batch_size=10,
+        progress_callback=lambda x: update_progress(progress_bar, loading_text, x, loading_messages),
+        status_callback=lambda status: status_text.text(status)  # Optional: add stock status
+    )
+    
+    insert_top_picks(intraday_results, pick_type="intraday")
+    progress_bar.empty()
+    loading_text.empty()
+    status_text.empty()  # Clear status text if used
+    
+    if not intraday_results.empty:
+        st.subheader("🏆 Top 5 Intraday Stocks")
             for _, row in intraday_results.iterrows():
                 with st.expander(f"{row['Symbol']} - {tooltip('Score', TOOLTIPS['Score'])}: {row['Score']}/7"):
                     current_price = row.get('Current Price', 'N/A')
