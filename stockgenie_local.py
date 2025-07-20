@@ -25,7 +25,6 @@ import pyotp
 import os
 from dotenv import load_dotenv
 from streamlit import cache_data
-import supabase
 from supabase import create_client, Client
 
 # --- Supabase setup ---
