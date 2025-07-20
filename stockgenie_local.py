@@ -2016,11 +2016,11 @@ def display_dashboard(symbol=None, data=None, recommendations=None):
                 for col in ['buy_at', 'current_price', 'target', 'stop_loss', '% Change']:
                     if col in df.columns:
                         df[col] = df[col].round(2)
-                    display_cols = [
-                        "symbol", "buy_at", "current_price", "% Change", "recommendation", "What to do now?", "target", "stop_loss"
-                    ]
-                    styled_df = style_picks_df(df[display_cols])
-                    st.dataframe(styled_df, use_container_width=True)
+                display_cols = [
+                    "symbol", "buy_at", "current_price", "% Change", "recommendation", "What to do now?", "target", "stop_loss"
+                ]
+                styled_df = style_picks_df(df[display_cols])
+                st.dataframe(styled_df, use_container_width=True)
             else:
                 st.warning("No picks found for this date.")
         else:
