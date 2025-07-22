@@ -1610,7 +1610,7 @@ def analyze_batch(stock_batch, progress_callback=None, status_callback=None):
     results = []
     errors = []
     smart_api = get_smartapi_client()  # Only once!
-    with ThreadPoolExecutor(max_workers=3) as executor:
+    with ThreadPoolExecutor(max_workers=2) as executor:
         futures = {executor.submit(analyze_stock_parallel, symbol, smart_api): symbol for symbol in stock_batch}
         for future in as_completed(futures):
             symbol = futures[future]
@@ -1696,14 +1696,14 @@ def analyze_stock_parallel(symbol, smart_api):
         logging.error(f"Error in analyze_stock_parallel for {symbol}: {str(e)}")
         return None
 
-def analyze_all_stocks(stock_list, batch_size=10, progress_callback=None, status_callback=None):
+def analyze_all_stocks(stock_list, batch_size=3, progress_callback=None, status_callback=None):
     results = []
     total_stocks = len(stock_list)
     processed = 0
     
     for i in range(0, len(stock_list), batch_size):
         batch = stock_list[i:i + batch_size]
-        time.sleep(15)
+        time.sleep(30)
         # Update status for current batch
         if status_callback:
             batch_names = ", ".join(batch[:3])  # Show first 3 stocks
@@ -1733,7 +1733,7 @@ def analyze_all_stocks(stock_list, batch_size=10, progress_callback=None, status
         results_df = results_df[results_df["Recommendation"].str.contains("Buy|Sell", na=False)]
     return results_df.sort_values(by="Score", ascending=False).head(5)
     
-def analyze_intraday_stocks(stock_list, batch_size=10, progress_callback=None, status_callback=None):
+def analyze_intraday_stocks(stock_list, batch_size=3, progress_callback=None, status_callback=None):
     results = []
     total_stocks = len(stock_list)
     processed = 0
@@ -1755,7 +1755,7 @@ def analyze_intraday_stocks(stock_list, batch_size=10, progress_callback=None, s
         if progress_callback:
             progress_callback(processed / total_stocks)
         
-        time.sleep(10)
+        time.sleep(30)
     
     results_df = pd.DataFrame(results)
     if results_df.empty:
