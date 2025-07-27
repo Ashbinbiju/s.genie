@@ -19,3 +19,4 @@ pyotp
 chromedriver-py
 selenium
 webdriver-manager
+dhanhq
