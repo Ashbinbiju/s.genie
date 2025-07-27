@@ -3,7 +3,8 @@ import ta
 import logging
 import numpy as np
 import streamlit as st
-from datetime import datetime, time, timedelta
+from datetime import datetime, time  
+from datetime import datetime,timedelta
 import pytz
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from functools import lru_cache
@@ -1085,15 +1086,15 @@ def send_telegram_message(message):
         st.error(f"❌ Failed to send Telegram message: {e}")
         return False
 
-
-
 def is_market_open():
-    """Check if current time is within NSE market hours (9:15 AM to 3:30 PM IST, Mon-Fri)."""
+    """
+    Check if the NSE market is open (9:15 AM to 3:30 PM IST, Monday to Friday).
+    """
     ist = pytz.timezone('Asia/Kolkata')
     now = datetime.now(ist)
     is_weekday = now.weekday() < 5  # Monday to Friday
-    market_open = time(9, 15)
-    market_close = time(15, 30)
+    market_open = time(9, 15)  # Use datetime.time
+    market_close = time(15, 30)  # Use datetime.time
     current_time = now.time()
     return is_weekday and market_open <= current_time <= market_close
 
