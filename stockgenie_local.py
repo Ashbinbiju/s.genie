@@ -1833,7 +1833,6 @@ def display_dashboard(symbol=None, data=None, recommendations=None):
                     st.write(f"**{tooltip(name, tooltip_text)}**: {value}")
             
 def main():
-    init_database()
     
     # Test Dhan connection first
     if st.sidebar.button("Test Dhan Connection"):
