@@ -47,21 +47,21 @@ def load_dhan_instrument_master():
     url = "https://images.dhan.co/api-data/api-scrip-master.csv"
     df = pd.read_csv(url, low_memory=False)
     # Filter for NSE Equity
-    df = df[(df['EXCH_ID'] == 'NSE') & (df['SEGMENT'] == 'E')]
+    df = df[(df['SEM_EXM_EXCH_ID'] == 'NSE') & (df['SEM_SEGMENT'] == 'E')]
     return df
 
 def get_dhan_security_id(symbol):
     df = load_dhan_instrument_master()
     symbol_clean = symbol.replace(".NS", "").replace(".BO", "").replace("-EQ", "")
-    # Try to match with SYMBOL_NAME
-    row = df[df['SYMBOL_NAME'] == symbol_clean]
+    # Try to match with SM_SYMBOL_NAME
+    row = df[df['SM_SYMBOL_NAME'] == symbol_clean]
     if not row.empty:
-        return row.iloc[0]['SECURITY_ID']
-    # Fallback: try TRADING_SYMBOL if present
-    if 'TRADING_SYMBOL' in df.columns:
-        row = df[df['TRADING_SYMBOL'] == symbol_clean]
+        return row.iloc[0]['SEM_SMST_SECURITY_ID']
+    # Fallback: try SEM_TRADING_SYMBOL if present
+    if 'SEM_TRADING_SYMBOL' in df.columns:
+        row = df[df['SEM_TRADING_SYMBOL'] == symbol_clean]
         if not row.empty:
-            return row.iloc[0]['SECURITY_ID']
+            return row.iloc[0]['SEM_SMST_SECURITY_ID']
     return None
 
 def normalize_symbol_dhan(symbol):
