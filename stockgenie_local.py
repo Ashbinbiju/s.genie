@@ -42,6 +42,24 @@ def dhan_headers():
         "Accept": "application/json"
     }
 
+# Download and cache the Dhan instrument master (once per day)
+@st.cache_data(ttl=86400)
+def load_dhan_instrument_master():
+    url = "https://api.dhan.co/market/instruments/master"
+    df = pd.read_csv(url)
+    # Filter for NSE_EQ segment only
+    df = df[df['exchange_segment'] == 'NSE_EQ']
+    return df
+
+def get_dhan_security_id(symbol):
+    df = load_dhan_instrument_master()
+    # Remove .NS, .BO, -EQ for matching
+    symbol_clean = symbol.replace(".NS", "").replace(".BO", "").replace("-EQ", "")
+    row = df[df['trading_symbol'] == symbol_clean]
+    if not row.empty:
+        return row.iloc[0]['security_id']
+    return None
+
 def normalize_symbol_dhan(symbol):
     # Remove .NS, .BO, and -EQ
     return symbol.replace(".NS", "").replace(".BO", "").replace("-EQ", "")
@@ -385,10 +403,10 @@ def fetch_nse_stock_list():
 
 @retry(max_retries=5, delay=5)
 def fetch_stock_data_with_dhan(symbol, period="5y", interval="1d"):
-    """
-    Fetch historical OHLCV data from Dhan API.
-    """
-    symbol = normalize_symbol_dhan(symbol)
+    security_id = get_dhan_security_id(symbol)
+    if not security_id:
+        print(f"Error: No Dhan security_id found for {symbol}")
+        return pd.DataFrame()
     interval_map = {
         "1d": "DAY",
         "1h": "1HOUR",
@@ -409,9 +427,9 @@ def fetch_stock_data_with_dhan(symbol, period="5y", interval="1d"):
 
     url = f"https://api.dhan.co/market/v1/historical/ohlc"
     params = {
-        "securityId": symbol,
+        "securityId": security_id,
         "exchangeSegment": "NSE_EQ",
-        "instrument": symbol,
+        "instrument": security_id,
         "fromDate": start_date.strftime("%Y-%m-%d"),
         "toDate": end_date.strftime("%Y-%m-%d"),
         "interval": dhan_interval
@@ -423,7 +441,6 @@ def fetch_stock_data_with_dhan(symbol, period="5y", interval="1d"):
         if "data" not in data or not data["data"]:
             return pd.DataFrame()
         df = pd.DataFrame(data["data"])
-        # Dhan returns: timestamp, open, high, low, close, volume
         df['Date'] = pd.to_datetime(df['timestamp'])
         df = df.rename(columns={
             "open": "Open",
