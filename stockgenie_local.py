@@ -1,16 +1,14 @@
+from datetime import datetime, time, timedelta
 import pandas as pd
 import ta
 import logging
 import numpy as np
 import streamlit as st
-from datetime import datetime, time  
-from datetime import datetime,timedelta
 import pytz
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from functools import lru_cache
 from tqdm import tqdm
 import plotly.express as px
-import time
 import requests
 import io
 import random
@@ -21,7 +19,6 @@ from arch import arch_model
 import warnings
 import sqlite3
 from diskcache import Cache
-import os
 from dotenv import load_dotenv
 from streamlit import cache_data
 from supabase import create_client, Client
@@ -1087,6 +1084,9 @@ def send_telegram_message(message):
         return False
 
 
+from datetime import datetime, time
+import pytz
+
 def is_market_open():
     """
     Check if the NSE market is open (9:15 AM to 3:30 PM IST, Monday to Friday).
@@ -1094,8 +1094,8 @@ def is_market_open():
     ist = pytz.timezone('Asia/Kolkata')
     now = datetime.now(ist)
     is_weekday = now.weekday() < 5  # Monday to Friday
-    market_open = time(9, 15)  # Corrected
-    market_close = time(15, 30)  # Corrected
+    market_open = datetime.time(9, 15)  # Explicitly use datetime.time
+    market_close = datetime.time(15, 30)  # Explicitly use datetime.time
     current_time = now.time()
     return is_weekday and market_open <= current_time <= market_close
 
