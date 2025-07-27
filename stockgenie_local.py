@@ -34,7 +34,11 @@ from ta.momentum import RSIIndicator, StochasticOscillator
 from ta.trend import MACD, ADXIndicator, IchimokuIndicator
 from ta.volatility import AverageTrueRange, BollingerBands
 from ta.volume import OnBalanceVolumeIndicator, ChaikinMoneyFlowIndicator
+
+data_api_calls = 0
+data_api_lock = Lock()
 # Configure logging
+
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
 #load_dotenv()
@@ -450,86 +454,53 @@ def fetch_nse_stock_list():
     except Exception:
         return list(set([stock for sector in SECTORS.values() for stock in sector]))
 
-@retry(max_retries=5, delay=5)
-@retry(max_retries=5, delay=5)
+@RateLimiter(max_calls=5, period=1)
 def fetch_stock_data_with_dhan(symbol, period="5y", interval="1d"):
-    """Fetch historical stock data from Dhan API"""
+    global data_api_calls
+    with data_api_lock:
+        if data_api_calls >= 90000:
+            st.warning(f"⚠️ Approaching Data API daily limit: {data_api_calls}/100000")
+        if data_api_calls >= 100000:
+            st.error("⚠️ Reached daily Data API limit of 100,000 requests.")
+            return pd.DataFrame()
+        data_api_calls += 1
     security_id = get_dhan_security_id(symbol)
     if not security_id:
-        logging.error(f"No Dhan security_id found for {symbol}")
-        st.warning(f"No Dhan security_id found for {symbol}")
+        logging.error(f"No security ID found for {symbol}")
         return pd.DataFrame()
-
-    end_date = datetime.now()
-    if period == "5y":
-        start_date = end_date - timedelta(days=5 * 365)
-    elif period == "1y":
-        start_date = end_date - timedelta(days=365)
-    elif period == "1mo":
-        start_date = end_date - timedelta(days=30)
-    else:
-        start_date = end_date - timedelta(days=365)
-
-    from_date = start_date.strftime("%Y-%m-%d")
-    to_date = end_date.strftime("%Y-%m-%d")
-
     url = "https://api.dhan.co/v2/charts/historical"
     headers = dhan_headers()
     payload = {
         "securityId": str(security_id),
         "exchangeSegment": "NSE_EQ",
         "instrument": "EQUITY",
-        "expiryCode": 0,
-        "fromDate": from_date,
-        "toDate": to_date
+        "interval": interval,
+        "fromDate": (pd.Timestamp.now() - pd.to_timedelta(period)).strftime("%Y-%m-%d"),
+        "toDate": pd.Timestamp.now().strftime("%Y-%m-%d")
     }
-
     try:
-        response = requests.post(url, headers=headers, json=payload, timeout=10)
-        response.raise_for_status()  # Raises exception for 4xx/5xx errors
+        response = requests.post(url, headers=headers, data=json.dumps(payload), timeout=10)
+        response.raise_for_status()
         data = response.json()
-        
-        # Log the full response for debugging
-        logging.info(f"Dhan API response for {symbol}: {data.keys() if isinstance(data, dict) else type(data)}")
-        
-        # Check if response contains expected fields
-        required_fields = ["open", "high", "low", "close", "volume", "timestamp"]
-        if not isinstance(data, dict) or not all(key in data for key in required_fields):
-            logging.error(f"Unexpected data format for {symbol}: {data}")
-            st.error(f"Unexpected data format from Dhan API for {symbol}")
+        df = pd.DataFrame(data.get("data", []))
+        if df.empty:
+            logging.warning(f"No data returned for {symbol}")
             return pd.DataFrame()
-
-        # Create DataFrame
-        df = pd.DataFrame({
-            "Open": data["open"],
-            "High": data["high"],
-            "Low": data["low"],
-            "Close": data["close"],
-            "Volume": data["volume"],
-            "Date": [datetime.fromtimestamp(ts / 1000) for ts in data["timestamp"]]  # Adjust timestamp if needed
+        df = df.rename(columns={
+            "open": "Open",
+            "high": "High",
+            "low": "Low",
+            "close": "Close",
+            "volume": "Volume",
+            "timestamp": "Date"
         })
+        df["Date"] = pd.to_datetime(df["Date"])
         df.set_index("Date", inplace=True)
-        df = df.sort_index()
-
-        # Validate DataFrame
-        if not validate_data(df):
-            logging.error(f"Invalid data for {symbol}: {df.head()}")
-            st.warning(f"Invalid data for {symbol}")
-            return pd.DataFrame()
-
-        logging.info(f"Successfully fetched data for {symbol}: {df.shape}")
-        return df
-
-    except requests.exceptions.HTTPError as e:
-        logging.error(f"HTTP error for {symbol}: {e.response.status_code} - {e.response.text}")
-        st.error(f"Dhan API error {e.response.status_code}: {e.response.text}")
-        return pd.DataFrame()
+        return df[["Open", "High", "Low", "Close", "Volume"]]
     except Exception as e:
-        logging.error(f"Error fetching Dhan data for {symbol}: {str(e)}")
-        st.error(f"Error fetching Dhan data for {symbol}: {str(e)}")
+        logging.error(f"Error fetching data for {symbol}: {e}")
         return pd.DataFrame()
-        
-        
+       
 @lru_cache(maxsize=1000)
 def fetch_stock_data_cached(symbol, period="5y", interval="1d"):
     return fetch_stock_data_with_dhan(symbol, period, interval)
@@ -1271,12 +1242,12 @@ def generate_recommendations(data, symbol=None):
         return recommendations
 
 @st.cache_data(ttl=3600)  # Cache results for 1 hour to avoid repeated API hits
-def get_top_sectors_cached(rate_limit_delay=2, stocks_per_sector=2):
+def get_top_sectors_cached(rate_limit_delay=0.2, stocks_per_sector=5):
     sector_scores = {}
     for sector, stocks in SECTORS.items():
         total_score = 0
         count = 0
-        for symbol in stocks[:stocks_per_sector]:  # Only analyze top N stocks per sector
+        for symbol in stocks[:stocks_per_sector]:
             data = fetch_stock_data_cached(symbol)
             if data.empty:
                 continue
@@ -1284,10 +1255,9 @@ def get_top_sectors_cached(rate_limit_delay=2, stocks_per_sector=2):
             rec = generate_recommendations(data, symbol)
             total_score += rec.get("Score", 0)
             count += 1
-            time.sleep(10)  # Delay per API call
+            time.sleep(rate_limit_delay)
         avg_score = total_score / count if count else 0
         sector_scores[sector] = avg_score
-        time.sleep(5)  # Optional: delay between sectors
     return sorted(sector_scores.items(), key=lambda x: x[1], reverse=True)[:3]
 
 @st.cache_data
@@ -1425,28 +1395,27 @@ def insert_top_picks(results_df, pick_type="daily"):
 def analyze_batch(stock_batch, progress_callback=None, status_callback=None):
     results = []
     errors = []
-    with ThreadPoolExecutor(max_workers=2) as executor:
+    with ThreadPoolExecutor(max_workers=5) as executor:
         futures = {executor.submit(analyze_stock_parallel, symbol): symbol for symbol in stock_batch}
         for future in as_completed(futures):
             symbol = futures[future]
             try:
-                if status_callback:
-                    status_callback(f"✅ Completed: {symbol}")
                 result = future.result()
                 if result:
-                    results.append(result)
-            except Exception as e:
+                    if "Error" in result:
+                        errors.append(result["Error"])
+                    else:
+                        results.append(result)
                 if status_callback:
-                    status_callback(f"❌ Failed: {symbol}")
+                    status_callback(f"✅ Completed: {symbol}")
+            except Exception as e:
                 error_msg = f"Error processing {symbol}: {str(e)}"
                 errors.append(error_msg)
-                logging.error(error_msg)
+                if status_callback:
+                    status_callback(f"❌ Failed: {symbol}")
     if errors:
-        logging.error(f"Batch errors: {len(errors)} total\n" + "\n".join(errors))
-        st.session_state['batch_errors'] = f"Encountered {len(errors)} errors during batch processing. Check logs for details."
+        st.error(f"Encountered {len(errors)} errors during batch processing:\n" + "\n".join(errors))
     return results
-    
-
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 def analyze_stock_parallel(symbol):
@@ -1510,12 +1479,11 @@ def analyze_stock_parallel(symbol):
     except Exception as e:
         logging.error(f"Error in analyze_stock_parallel for {symbol}: {str(e)}")
         return None
-
-def analyze_all_stocks(stock_list, batch_size=3, progress_callback=None, status_callback=None):
+        
+def analyze_all_stocks(stock_list, batch_size=10, progress_callback=None, status_callback=None):
     results = []
     total_stocks = len(stock_list)
     processed = 0
-    
     for i in range(0, len(stock_list), batch_size):
         batch = stock_list[i:i + batch_size]
         if status_callback:
@@ -1523,16 +1491,12 @@ def analyze_all_stocks(stock_list, batch_size=3, progress_callback=None, status_
             if len(batch) > 3:
                 batch_names += f" and {len(batch)-3} more"
             status_callback(f"🔄 Analyzing: {batch_names}")
-        
         batch_results = analyze_batch(batch, progress_callback=progress_callback, status_callback=status_callback)
         results.extend([r for r in batch_results if r is not None])
-        
         processed += len(batch)
         if progress_callback:
             progress_callback(processed / total_stocks)
-        
-        time.sleep(30)  # Increased delay to avoid rate limits
-    
+        time.sleep(max(2, batch_size / 5))
     results_df = pd.DataFrame(results)
     if results_df.empty:
         st.warning("⚠️ No valid stock data retrieved.")
@@ -1542,6 +1506,7 @@ def analyze_all_stocks(stock_list, batch_size=3, progress_callback=None, status_
     if "Current Price" not in results_df.columns:
         results_df["Current Price"] = None
     return results_df.sort_values(by="Score", ascending=False).head(5)
+
     
 def analyze_intraday_stocks(stock_list, batch_size=3, progress_callback=None, status_callback=None):
     results = []
@@ -1645,13 +1610,20 @@ def insert_top_picks_supabase(results_df, pick_type="daily"):
             logging.error(f"Supabase insert exception: {e}")
             st.error(f"Supabase insert exception: {e}")
 
+
+@RateLimiter(max_calls=1, period=1)
+def fetch_latest_price(symbol):
+    data = fetch_stock_data_with_dhan(symbol, period="1mo", interval="1d")
+    if not data.empty:
+        return float(data['Close'].iloc[-1])
+    return None
+
 def update_with_latest_prices(df):
     for idx, row in df.iterrows():
         symbol = row['symbol']
         try:
-            latest_data = fetch_stock_data_with_dhan(symbol, period="1mo", interval="1d")
-            if not latest_data.empty:
-                latest_close = float(latest_data['Close'].iloc[-1])
+            latest_close = fetch_latest_price(symbol)
+            if latest_close is not None:
                 df.at[idx, 'current_price'] = latest_close
         except Exception as e:
             st.warning(f"Could not fetch latest price for {symbol}: {e}")
