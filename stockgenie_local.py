@@ -413,14 +413,8 @@ def fetch_stock_data_with_dhan(symbol, period="5y", interval="1d"):
     if not security_id:
         print(f"Error: No Dhan security_id found for {symbol}")
         return pd.DataFrame()
-    interval_map = {
-        "1d": "DAY",
-        "1h": "1HOUR",
-        "5m": "5MIN",
-        "15m": "15MIN"
-    }
-    dhan_interval = interval_map.get(interval, "DAY")
 
+    # Calculate from_date and to_date
     end_date = datetime.now()
     if period == "5y":
         start_date = end_date - timedelta(days=5 * 365)
@@ -431,34 +425,44 @@ def fetch_stock_data_with_dhan(symbol, period="5y", interval="1d"):
     else:
         start_date = end_date - timedelta(days=365)
 
-    url = f"https://api.dhan.co/market/v1/historical/ohlc"
-    params = {
-        "securityId": security_id,
+    from_date = start_date.strftime("%Y-%m-%d")
+    to_date = end_date.strftime("%Y-%m-%d")
+
+    url = "https://api.dhan.co/v2/charts/historical"
+    headers = {
+        "Content-Type": "application/json",
+        "access-token": DHAN_ACCESS_TOKEN,
+        "Dhan-Client-Id": DHAN_CLIENT_ID
+    }
+    payload = {
+        "securityId": str(security_id),
         "exchangeSegment": "NSE_EQ",
-        "instrument": security_id,
-        "fromDate": start_date.strftime("%Y-%m-%d"),
-        "toDate": end_date.strftime("%Y-%m-%d"),
-        "interval": dhan_interval
+        "instrument": "EQUITY",
+        "expiryCode": 0,
+        "oi": False,
+        "fromDate": from_date,
+        "toDate": to_date
     }
     try:
-        response = requests.get(url, headers=dhan_headers(), params=params)
-        response.raise_for_status()
-        data = response.json()
-        if "data" not in data or not data["data"]:
-            print(f"Dhan API returned no data for {symbol} (security_id: {security_id})")
+        response = requests.post(url, headers=headers, data=json.dumps(payload))
+        if response.status_code == 200:
+            data = response.json()
+            if not data or not data.get("open"):
+                print("No data returned from Dhan API.")
+                return pd.DataFrame()
+            df = pd.DataFrame({
+                "Open": data["open"],
+                "High": data["high"],
+                "Low": data["low"],
+                "Close": data["close"],
+                "Volume": data["volume"],
+                "Date": [datetime.fromtimestamp(ts) for ts in data["timestamp"]]
+            })
+            df.set_index("Date", inplace=True)
+            return df
+        else:
+            print(f"Error {response.status_code} from Dhan API:", response.text)
             return pd.DataFrame()
-        df = pd.DataFrame(data["data"])
-        df['Date'] = pd.to_datetime(df['timestamp'])
-        df = df.rename(columns={
-            "open": "Open",
-            "high": "High",
-            "low": "Low",
-            "close": "Close",
-            "volume": "Volume"
-        })
-        df = df[["Date", "Open", "High", "Low", "Close", "Volume"]]
-        df.set_index("Date", inplace=True)
-        return df
     except Exception as e:
         print(f"Error fetching Dhan data for {symbol}: {e}")
         return pd.DataFrame()
