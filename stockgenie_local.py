@@ -714,22 +714,25 @@ def validate_data(data, min_length=50):
         return False
     return True
 
+
 def analyze_stock(data):
     """
     Computes technical indicators for stock data after validation.
     Returns data with indicators or an empty DataFrame on failure.
     """
+    # Define columns list at function scope to avoid UnboundLocalError
+    columns = [
+        'RSI', 'MACD', 'MACD_signal', 'MACD_hist', 'SMA_50', 'SMA_200', 'EMA_20', 'EMA_50',
+        'Upper_Band', 'Middle_Band', 'Lower_Band', 'SlowK', 'SlowD', 'ATR', 'ADX', 'OBV',
+        'VWAP', 'Avg_Volume', 'Volume_Spike', 'Parabolic_SAR', 'Fib_23.6', 'Fib_38.2',
+        'Fib_50.0', 'Fib_61.8', 'Divergence', 'Ichimoku_Tenkan', 'Ichimoku_Kijun',
+        'Ichimoku_Span_A', 'Ichimoku_Span_B', 'Ichimoku_Chikou', 'CMF', 'Donchian_Upper',
+        'Donchian_Lower', 'Donchian_Middle', 'Keltner_Upper', 'Keltner_Middle', 'Keltner_Lower',
+        'TRIX', 'Ultimate_Osc', 'CMO', 'VPT'
+    ]
+
     if not validate_data(data, min_length=50):
         logging.warning("Data validation failed in analyze_stock")
-        columns = [
-            'RSI', 'MACD', 'MACD_signal', 'MACD_hist', 'SMA_50', 'SMA_200', 'EMA_20', 'EMA_50',
-            'Upper_Band', 'Middle_Band', 'Lower_Band', 'SlowK', 'SlowD', 'ATR', 'ADX', 'OBV',
-            'VWAP', 'Avg_Volume', 'Volume_Spike', 'Parabolic_SAR', 'Fib_23.6', 'Fib_38.2',
-            'Fib_50.0', 'Fib_61.8', 'Divergence', 'Ichimoku_Tenkan', 'Ichimoku_Kijun',
-            'Ichimoku_Span_A', 'Ichimoku_Span_B', 'Ichimoku_Chikou', 'CMF', 'Donchian_Upper',
-            'Donchian_Lower', 'Donchian_Middle', 'Keltner_Upper', 'Keltner_Middle', 'Keltner_Lower',
-            'TRIX', 'Ultimate_Osc', 'CMO', 'VPT'
-        ]
         for col in columns:
             data[col] = None
         return data
@@ -844,12 +847,18 @@ def analyze_stock(data):
         data['Avg_Volume'] = data['Volume'].rolling(window=20).mean()
         data['Volume_Spike'] = data['Volume'] > data['Avg_Volume'] * 2
 
-        # Initialize remaining columns as None (for extensibility)
+        # Initialize remaining columns as None
         for col in ['VWAP', 'Parabolic_SAR', 'Fib_23.6', 'Fib_38.2', 'Fib_50.0', 'Fib_61.8', 'Divergence',
                     'Donchian_Upper', 'Donchian_Lower', 'Donchian_Middle', 'Keltner_Upper', 'Keltner_Middle',
                     'Keltner_Lower', 'TRIX', 'Ultimate_Osc', 'CMO', 'VPT']:
             data[col] = None
 
+        return data
+
+    except Exception as e:
+        logging.error(f"Error in analyze_stock: {str(e)}")
+        for col in columns:
+            data[col] = None
         return data
 
     except Exception as e:
@@ -1024,7 +1033,6 @@ def compute_signal_score(data, symbol=None):
 
     logging.info(f"Final score for {symbol}: {score}")
     return min(max(score, -10), 10)
-
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
 def adaptive_recommendation(data, market_regime="normal"):
