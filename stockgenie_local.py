@@ -165,31 +165,37 @@ def style_picks_df(df):
             return "background-color: #f4e6e6; color: red"
         return ""
 
-    # Check if required columns exist
-    required_columns = ["What to do now?", "percent_change", "Target_Hit"]
-    missing_columns = [col for col in required_columns if col not in df.columns]
+    # Define columns to style
+    style_columns = {
+        "What to do now?": color_code_action,
+        "percent_change": color_code_change,
+        "Target_Hit": color_code_target_hit
+    }
+    
+    # Check for missing columns
+    missing_columns = [col for col in style_columns.keys() if col not in df.columns]
     if missing_columns:
-        logging.error(f"Missing columns in DataFrame for styling: {missing_columns}")
+        logging.warning(f"Missing columns for styling: {missing_columns}")
         st.warning(f"⚠️ Missing columns for styling: {missing_columns}")
-        # Return unstyled DataFrame with formatting to avoid crashing
-        return df.style.format({
-            'Buy At': "{:.2f}",
-            'Current Price': "{:.2f}",
-            'percent_change': "{:.2f}%",
-            'Target': "{:.2f}",
-            'Stop Loss': "{:.2f}"
-        }, na_rep="N/A")
 
-    return df.style.applymap(color_code_action, subset=["What to do now?"]) \
-                  .applymap(color_code_change, subset=["percent_change"]) \
-                  .applymap(color_code_target_hit, subset=["Target_Hit"]) \
-                  .format({
-                      'Buy At': "{:.2f}",
-                      'Current Price': "{:.2f}",
-                      'percent_change': "{:.2f}%",
-                      'Target': "{:.2f}",
-                      'Stop Loss': "{:.2f}"
-                  }, na_rep="N/A")
+    # Apply styling only to available columns
+    styler = df.style
+    for col, style_func in style_columns.items():
+        if col in df.columns:
+            styler = styler.applymap(style_func, subset=[col])
+
+    # Format numeric columns
+    format_dict = {
+        'Buy At': "{:.2f}",
+        'Current Price': "{:.2f}",
+        'percent_change': "{:.2f}%",
+        'Target': "{:.2f}",
+        'Stop Loss': "{:.2f}"
+    }
+    available_formats = {k: v for k, v in format_dict.items() if k in df.columns}
+    styler = styler.format(available_formats, na_rep="N/A")
+    
+    return styler
     
 def add_action_and_change(df):
     def action(row):
@@ -197,6 +203,7 @@ def add_action_and_change(df):
             buy_at = float(row['buy_at']) if pd.notnull(row['buy_at']) else None
             current_price = float(row['current_price']) if pd.notnull(row['current_price']) else None
             if buy_at is None or current_price is None:
+                logging.warning(f"Missing buy_at or current_price for {row.get('symbol', 'Unknown')}")
                 return "N/A"
             if current_price > buy_at * 1.05:
                 return "Book Profit / Hold"
@@ -204,18 +211,22 @@ def add_action_and_change(df):
                 return "Review / Consider Stop Loss"
             else:
                 return "Hold"
-        except Exception:
+        except Exception as e:
+            logging.error(f"Error computing action for {row.get('symbol', 'Unknown')}: {e}")
             return "N/A"
     
+    # Compute percent_change
     df['percent_change'] = df.apply(
         lambda row: ((float(row['current_price']) - float(row['buy_at'])) / float(row['buy_at']) * 100)
-        if pd.notnull(row['current_price']) and pd.notnull(row['buy_at']) else None,
+        if pd.notnull(row.get('current_price')) and pd.notnull(row.get('buy_at')) else None,
         axis=1
     ).round(2)
+    
+    # Compute what_to_do_now
     df['what_to_do_now'] = df.apply(action, axis=1)
+    
+    logging.info(f"After add_action_and_change, columns: {df.columns.tolist()}")
     return df
-
-
 warnings.filterwarnings("ignore", message=".*missing ScriptRunContext.*")
 logging.getLogger("streamlit.runtime.scriptrunner").setLevel(logging.ERROR)
 
@@ -1749,8 +1760,8 @@ def fetch_latest_price(symbol):
 
 def update_with_latest_prices(df):
     for idx, row in df.iterrows():
-        symbol = row['symbol']
-        recommendation_date = row['date']
+        symbol = row.get('symbol', 'Unknown')
+        recommendation_date = row.get('date')
         target_price = row.get('target')
         try:
             latest_close = fetch_latest_price(symbol)
@@ -1759,11 +1770,25 @@ def update_with_latest_prices(df):
                 buy_at = row.get('buy_at')
                 if pd.notnull(buy_at) and pd.notnull(latest_close):
                     df.at[idx, 'percent_change'] = ((latest_close - float(buy_at)) / float(buy_at) * 100)
-                # Check if target was hit
-                if pd.notnull(target_price):
-                    df.at[idx, 'Target_Hit'] = check_target_hit(symbol, recommendation_date, float(target_price))
+                else:
+                    df.at[idx, 'percent_change'] = None
+                    logging.warning(f"Cannot compute percent_change for {symbol}: buy_at={buy_at}, latest_close={latest_close}")
+            else:
+                df.at[idx, 'percent_change'] = None
+                logging.warning(f"No latest price fetched for {symbol}")
+
+            if pd.notnull(target_price) and pd.notnull(recommendation_date):
+                df.at[idx, 'Target_Hit'] = check_target_hit(symbol, recommendation_date, float(target_price))
+            else:
+                df.at[idx, 'Target_Hit'] = 'N/A'
+                logging.warning(f"Cannot compute Target_Hit for {symbol}: target={target_price}, date={recommendation_date}")
         except Exception as e:
+            df.at[idx, 'percent_change'] = None
+            df.at[idx, 'Target_Hit'] = 'N/A'
+            logging.error(f"Error updating prices or target for {symbol}: {e}")
             st.warning(f"Could not fetch latest price or target status for {symbol}: {e}")
+    
+    logging.info(f"After update_with_latest_prices, columns: {df.columns.tolist()}")
     return df
         
 def display_dashboard(symbol=None, data=None, recommendations=None):
@@ -1826,7 +1851,6 @@ def display_dashboard(symbol=None, data=None, recommendations=None):
         loading_text = st.empty()
         status_text = st.empty()
         
-        # Show initial status
         status_text.text(f"📊 Analyzing {len(selected_stocks)} stocks...")
         
         results_df = analyze_all_stocks(
@@ -1955,13 +1979,32 @@ def display_dashboard(symbol=None, data=None, recommendations=None):
                 res2 = supabase.table("daily_picks").select("*").eq("date", date_filter).eq("pick_type", pick_type).execute()
                 if res2.data:
                     df = pd.DataFrame(res2.data)
+                    logging.info(f"Fetched {pick_type} picks for {date_filter}: {df.columns.tolist()}")
+                    
+                    # Validate required columns
+                    required_cols = ['symbol', 'buy_at', 'current_price', 'recommendation', 'target', 'stop_loss', 'date', 'pick_type']
+                    missing_cols = [col for col in required_cols if col not in df.columns]
+                    if missing_cols:
+                        st.error(f"⚠️ Missing required columns in {pick_type} picks data: {missing_cols}")
+                        logging.error(f"Missing columns in Supabase data: {missing_cols}")
+                        continue
+                    
                     df = update_with_latest_prices(df)  # Update prices and check target hit
                     df = add_action_and_change(df)  # Recalculate % Change and action
+                    logging.info(f"After processing, columns: {df.columns.tolist()}")
+                    
                     display_cols = [
                         "symbol", "buy_at", "current_price", "percent_change", "recommendation",
                         "what_to_do_now", "target", "stop_loss", "Target_Hit"
                     ]
-                    df_display = df[display_cols].rename(columns={
+                    # Filter only available columns
+                    available_cols = [col for col in display_cols if col in df.columns]
+                    if not available_cols:
+                        st.error(f"No valid columns found for {pick_type} picks on {date_filter}.")
+                        logging.error(f"No valid columns for {pick_type} picks on {date_filter}")
+                        continue
+                    
+                    df_display = df[available_cols].rename(columns={
                         "symbol": "Symbol",
                         "buy_at": "Buy At",
                         "current_price": "Current Price",
@@ -1972,12 +2015,19 @@ def display_dashboard(symbol=None, data=None, recommendations=None):
                         "stop_loss": "Stop Loss",
                         "Target_Hit": "Target Hit"
                     })
+                    
                     # Sorting option
-                    sort_column = st.selectbox(
-                        f"Sort {pick_type.capitalize()} Picks By",
-                        ["Symbol", "% Change", "Target Hit", "Recommendation"],
-                        key=f"sort_{pick_type}"
-                    )
+                    sort_options = ["Symbol", "% Change", "Target Hit", "Recommendation"]
+                    available_sort_options = [opt for opt in sort_options if opt in df_display.columns]
+                    if not available_sort_options:
+                        st.warning(f"No sortable columns available for {pick_type} picks.")
+                        sort_column = "Symbol"  # Fallback
+                    else:
+                        sort_column = st.selectbox(
+                            f"Sort {pick_type.capitalize()} Picks By",
+                            available_sort_options,
+                            key=f"sort_{pick_type}"
+                        )
                     df_display = df_display.sort_values(sort_column)
                     
                     styled_df = style_picks_df(df_display)
@@ -1997,13 +2047,18 @@ def display_dashboard(symbol=None, data=None, recommendations=None):
                     for _, row in df.iterrows():
                         with st.expander(f"{row['symbol']} Details"):
                             target_hit = row.get('Target_Hit', 'N/A')
+                            percent_change = row.get('percent_change', 'N/A')
+                            try:
+                                percent_change = f"{float(percent_change):.2f}%" if pd.notnull(percent_change) else "N/A"
+                            except:
+                                percent_change = "N/A"
                             st.markdown(f"""
                             **Date**: {row['date']}  
                             **Pick Type**: {row['pick_type'].capitalize()}  
                             **Recommendation**: {colored_recommendation(row['recommendation'])}  
                             **Target Hit**: {target_hit} {'🟢' if target_hit == 'Yes' else '🔴' if target_hit == 'No' else '⚪'}  
-                            **% Change**: {row['percent_change']:.2f}%  
-                            **What to do now?**: {row['what_to_do_now']}
+                            **% Change**: {percent_change}  
+                            **What to do now?**: {row.get('what_to_do_now', 'N/A')}
                             """)
                 else:
                     st.warning(f"No {pick_type} picks found for {date_filter}.")
