@@ -492,16 +492,27 @@ def fetch_stock_data_with_dhan(symbol, period="5y", interval="1d"):
         logging.error(f"No security ID found for {symbol}")
         return pd.DataFrame()
 
-    url = "https://api.dhan.co/v2/charts/historical"
+    # Select endpoint based on interval
+    if interval in ["1m", "5m", "15m", "30m", "60m"]:
+        url = "https://api.dhan.co/v2/charts/intraday"
+        # Intraday data: max 5 trading days
+        days = min(parse_period_to_days(period), 5)
+        from_date = (pd.Timestamp.now() - pd.to_timedelta(days, unit='D')).strftime("%Y-%m-%d %H:%M:%S")
+        to_date = pd.Timestamp.now().strftime("%Y-%m-%d %H:%M:%S")
+    else:  # Default to historical endpoint for daily or higher intervals
+        url = "https://api.dhan.co/v2/charts/historical"
+        days = parse_period_to_days(period)
+        from_date = (pd.Timestamp.now() - pd.to_timedelta(days, unit='D')).strftime("%Y-%m-%d")
+        to_date = pd.Timestamp.now().strftime("%Y-%m-%d")
+
     headers = dhan_headers()
-    days = parse_period_to_days(period)
     payload = {
         "securityId": str(security_id),
         "exchangeSegment": "NSE_EQ",
         "instrument": "EQUITY",
         "interval": interval,
-        "fromDate": (pd.Timestamp.now() - pd.to_timedelta(days, unit='D')).strftime("%Y-%m-%d"),
-        "toDate": pd.Timestamp.now().strftime("%Y-%m-%d")
+        "fromDate": from_date,
+        "toDate": to_date
     }
 
     try:
@@ -510,26 +521,19 @@ def fetch_stock_data_with_dhan(symbol, period="5y", interval="1d"):
         response.raise_for_status()
         data = response.json()
 
-        # Log the full response for debugging
         logging.debug(f"API response for {symbol}: {data}")
 
-        # --- NEW LOGIC STARTS HERE ---
+        # Process API response
         api_data = data.get("data", data)
-
-        # If api_data is a dict with lists (columnar), convert to list of dicts (row format)
         if isinstance(api_data, dict) and all(isinstance(v, list) for v in api_data.values()):
             n = len(next(iter(api_data.values())))
-            row_data = [
-                {k: api_data[k][i] for k in api_data}
-                for i in range(n)
-            ]
+            row_data = [{k: api_data[k][i] for k in api_data} for i in range(n)]
             df = pd.DataFrame(row_data)
         elif isinstance(api_data, list):
             df = pd.DataFrame(api_data)
         else:
             logging.warning(f"Unknown data format for {symbol}: {type(api_data)}")
             return pd.DataFrame()
-        # --- NEW LOGIC ENDS HERE ---
 
         if df.empty:
             logging.warning(f"Empty DataFrame created for {symbol}. Response data: {api_data}")
