@@ -29,6 +29,7 @@ import requests
 from dotenv import load_dotenv
 import pandas as pd
 from datetime import datetime, timedelta
+import json 
 
 load_dotenv()
 
@@ -51,20 +52,75 @@ def load_dhan_instrument_master():
     return df
 
 def get_dhan_security_id(symbol):
+    """Get Dhan security ID for a given symbol"""
     df = load_dhan_instrument_master()
-    symbol_clean = symbol.replace(".NS", "").replace(".BO", "").replace("-EQ", "")
+    
+    # Clean the symbol
+    symbol_clean = symbol.replace(".NS", "").replace(".BO", "").replace("-EQ", "").upper()
+    
+    # Try exact match first
+    row = df[df['SEM_SMST_SECURITY_ID'].astype(str) == symbol_clean]
+    if not row.empty:
+        security_id = row.iloc[0]['SEM_SMST_SECURITY_ID']
+        print(f"Found security_id for {symbol}: {security_id}")
+        return security_id
+    
+    # Try symbol name match
     row = df[df['SM_SYMBOL_NAME'] == symbol_clean]
     if not row.empty:
-        print(f"Found security_id for {symbol}: {row.iloc[0]['SEM_SMST_SECURITY_ID']}")
-        return row.iloc[0]['SEM_SMST_SECURITY_ID']
-    # Fallback: try SEM_TRADING_SYMBOL if present
+        security_id = row.iloc[0]['SEM_SMST_SECURITY_ID']
+        print(f"Found security_id for {symbol}: {security_id}")
+        return security_id
+    
+    # Try trading symbol if present
     if 'SEM_TRADING_SYMBOL' in df.columns:
         row = df[df['SEM_TRADING_SYMBOL'] == symbol_clean]
         if not row.empty:
-            print(f"Found security_id (trading symbol) for {symbol}: {row.iloc[0]['SEM_SMST_SECURITY_ID']}")
-            return row.iloc[0]['SEM_SMST_SECURITY_ID']
+            security_id = row.iloc[0]['SEM_SMST_SECURITY_ID']
+            print(f"Found security_id (trading symbol) for {symbol}: {security_id}")
+            return security_id
+    
+    # Try custom symbol if present
+    if 'SEM_CUSTOM_SYMBOL' in df.columns:
+        row = df[df['SEM_CUSTOM_SYMBOL'] == symbol_clean]
+        if not row.empty:
+            security_id = row.iloc[0]['SEM_SMST_SECURITY_ID']
+            print(f"Found security_id (custom symbol) for {symbol}: {security_id}")
+            return security_id
+    
     print(f"NOT FOUND: {symbol} ({symbol_clean})")
     return None
+
+
+# Add a test function to verify Dhan connection
+def test_dhan_connection():
+    """Test if Dhan API credentials are working"""
+    url = "https://api.dhan.co/v2/charts/intraday"
+    headers = {
+        "Content-Type": "application/json",
+        "access-token": DHAN_ACCESS_TOKEN,
+        "client-id": DHAN_CLIENT_ID
+    }
+    
+    # Test with a known security ID (e.g., for RELIANCE)
+    payload = {
+        "securityId": "1333",  # RELIANCE security ID
+        "exchangeSegment": "NSE_EQ",
+        "instrument": "EQUITY"
+    }
+    
+    try:
+        response = requests.post(url, headers=headers, data=json.dumps(payload), timeout=10)
+        if response.status_code == 200:
+            print("✅ Dhan API connection successful!")
+            return True
+        else:
+            print(f"❌ Dhan API error: {response.status_code} - {response.text}")
+            return False
+    except Exception as e:
+        print(f"❌ Connection error: {e}")
+        return False
+
 
 def normalize_symbol_dhan(symbol):
     # Remove .NS, .BO, and -EQ
@@ -408,7 +464,9 @@ def fetch_nse_stock_list():
         return list(set([stock for sector in SECTORS.values() for stock in sector]))
 
 @retry(max_retries=5, delay=5)
+
 def fetch_stock_data_with_dhan(symbol, period="5y", interval="1d"):
+    """Fetch historical stock data from Dhan API"""
     security_id = get_dhan_security_id(symbol)
     if not security_id:
         print(f"Error: No Dhan security_id found for {symbol}")
@@ -428,44 +486,65 @@ def fetch_stock_data_with_dhan(symbol, period="5y", interval="1d"):
     from_date = start_date.strftime("%Y-%m-%d")
     to_date = end_date.strftime("%Y-%m-%d")
 
+    # Dhan API endpoint for historical data
     url = "https://api.dhan.co/v2/charts/historical"
+    
     headers = {
         "Content-Type": "application/json",
         "access-token": DHAN_ACCESS_TOKEN,
-        "Dhan-Client-Id": DHAN_CLIENT_ID
+        "client-id": DHAN_CLIENT_ID  # Changed from "Dhan-Client-Id" to "client-id"
     }
+    
+    # Correct payload structure for Dhan API
     payload = {
         "securityId": str(security_id),
         "exchangeSegment": "NSE_EQ",
         "instrument": "EQUITY",
         "expiryCode": 0,
-        "oi": False,
         "fromDate": from_date,
-        "toDate": to_date
+        "toDate": to_date,
+        "interval": "DAY"  # Add interval parameter
     }
+    
     try:
-        response = requests.post(url, headers=headers, data=json.dumps(payload))
+        response = requests.post(url, headers=headers, data=json.dumps(payload), timeout=10)
+        print(f"Dhan API Response Status: {response.status_code}")
+        
         if response.status_code == 200:
             data = response.json()
-            if not data or not data.get("open"):
-                print("No data returned from Dhan API.")
+            
+            # Check if data is in the expected format
+            if isinstance(data, dict) and all(key in data for key in ["open", "high", "low", "close", "volume", "timestamp"]):
+                # Create DataFrame from the response
+                df = pd.DataFrame({
+                    "Open": data["open"],
+                    "High": data["high"],
+                    "Low": data["low"],
+                    "Close": data["close"],
+                    "Volume": data["volume"],
+                    "Date": [datetime.fromtimestamp(ts) for ts in data["timestamp"]]
+                })
+                df.set_index("Date", inplace=True)
+                df = df.sort_index()  # Ensure chronological order
+                print(f"Successfully fetched {len(df)} rows for {symbol}")
+                return df
+            else:
+                print(f"Unexpected data format from Dhan API: {data}")
                 return pd.DataFrame()
-            df = pd.DataFrame({
-                "Open": data["open"],
-                "High": data["high"],
-                "Low": data["low"],
-                "Close": data["close"],
-                "Volume": data["volume"],
-                "Date": [datetime.fromtimestamp(ts) for ts in data["timestamp"]]
-            })
-            df.set_index("Date", inplace=True)
-            return df
         else:
-            print(f"Error {response.status_code} from Dhan API:", response.text)
+            print(f"Error {response.status_code} from Dhan API: {response.text}")
             return pd.DataFrame()
-    except Exception as e:
-        print(f"Error fetching Dhan data for {symbol}: {e}")
+            
+    except requests.exceptions.Timeout:
+        print(f"Timeout error fetching data for {symbol}")
         return pd.DataFrame()
+    except requests.exceptions.RequestException as e:
+        print(f"Request error fetching data for {symbol}: {e}")
+        return pd.DataFrame()
+    except Exception as e:
+        print(f"Unexpected error fetching Dhan data for {symbol}: {e}")
+        return pd.DataFrame()
+
         
 @lru_cache(maxsize=1000)
 def fetch_stock_data_cached(symbol, period="5y", interval="1d"):
@@ -2194,6 +2273,14 @@ def display_dashboard(symbol=None, data=None, recommendations=None):
             
 def main():
     init_database()
+    
+    # Test Dhan connection first
+    if st.sidebar.button("Test Dhan Connection"):
+        with st.spinner("Testing Dhan API connection..."):
+            if test_dhan_connection():
+                st.success("✅ Dhan API is working!")
+            else:
+                st.error("❌ Dhan API connection failed. Check your credentials.")
     st.sidebar.title("🔍 Stock Selection")
     stock_list = fetch_nse_stock_list()
 
