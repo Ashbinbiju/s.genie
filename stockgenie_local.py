@@ -1096,7 +1096,7 @@ def is_market_open():
     #market_close = time(15, 30)  # Use time directly
     #current_time = now.time()
     #return is_weekday and market_open <= current_time <= market_close 
-    return true
+    return True
 
 
 def monitor_top_picks_continuously(top_picks_df, recommendation_mode="Standard", check_interval=120, alert_cooldown=1800):
