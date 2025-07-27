@@ -1102,19 +1102,12 @@ def is_market_open():
 def monitor_top_picks_continuously(top_picks_df, recommendation_mode="Standard", check_interval=120, alert_cooldown=1800):
     """
     Continuously monitor top picks for buy/sell signals during market hours.
-    Args:
-        top_picks_df: DataFrame with top picks.
-        recommendation_mode: "Standard" or "Adaptive".
-        check_interval: Seconds between checks (default: 2 minutes).
-        alert_cooldown: Seconds before sending another alert for the same stock (default: 30 minutes).
     """
     if top_picks_df.empty:
         st.warning("⚠️ No top picks available to monitor.")
         return
 
-    # Initialize alert tracker
     initialize_alert_tracker()
-
     st.info("🔔 Started continuous monitoring of top picks (checking every 2 minutes). Press 'Stop Monitoring' to halt.")
     stop_button = st.button("🛑 Stop Monitoring", key="stop_monitoring")
 
@@ -1124,7 +1117,7 @@ def monitor_top_picks_continuously(top_picks_df, recommendation_mode="Standard",
             break
 
         for _, row in top_picks_df.iterrows():
-            symbol = row['Symbol']
+            symbol = row['symbol']  # Lowercase to match Supabase
             current_time = datetime.now(pytz.timezone('Asia/Kolkata'))
 
             # Check alert cooldown
@@ -1134,22 +1127,23 @@ def monitor_top_picks_continuously(top_picks_df, recommendation_mode="Standard",
                 continue
 
             try:
-                # Fetch real-time data (1-minute interval for intraday)
+                # Fetch real-time data
                 data = fetch_stock_data_with_dhan(symbol, period="1d", interval="1m")
                 if data.empty or len(data) < 10:
                     logging.warning(f"No sufficient real-time data for {symbol}")
                     continue
 
-                # Analyze stock with fresh data
+                # Analyze stock
                 data = analyze_stock(data)
 
                 # Generate recommendations
                 if recommendation_mode == "Adaptive":
-                    recommendations = adaptive_recommendation(data, symbol)
+                    market_regime = classify_market_regime(data)
+                    recommendations = adaptive_recommendation(data, symbol, market_regime=market_regime)
                 else:
                     recommendations = generate_recommendations(data, symbol)
 
-                # Check for buy or sell signals
+                # Check for signals
                 signal = None
                 if recommendation_mode == "Adaptive":
                     recommendation = recommendations.get("Recommendation", "Hold")
@@ -1172,7 +1166,7 @@ def monitor_top_picks_continuously(top_picks_df, recommendation_mode="Standard",
                     elif "Sell" in intraday:
                         signal = "Sell"
 
-                # Send Telegram alert if there's a valid signal
+                # Send Telegram alert
                 if signal and signal != "Hold":
                     current_price = recommendations.get("Current Price", "N/A")
                     buy_at = recommendations.get("Buy At", "N/A")
@@ -1194,18 +1188,15 @@ def monitor_top_picks_continuously(top_picks_df, recommendation_mode="Standard",
                     else:
                         st.error(f"❌ Failed to send Telegram alert for {symbol}")
 
-                # Respect Dhan API rate limit (5 calls/second)
-                time.sleep(0.2)  # 0.2 seconds delay per stock
+                time.sleep(0.2)  # Respect Dhan API rate limit (5 calls/second)
 
             except Exception as e:
                 logging.error(f"Error monitoring {symbol}: {str(e)}")
                 st.warning(f"⚠️ Error monitoring {symbol}: {str(e)}")
 
-        # Wait for the next check cycle
         st.write(f"⏳ Next check in {check_interval} seconds...")
         time.sleep(check_interval)
 
-        # Check if stop button was pressed
         if st.session_state.get('stop_monitoring', False):
             break
 
