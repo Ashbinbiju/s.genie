@@ -449,6 +449,35 @@ def fetch_nse_stock_list():
     except Exception:
         return list(set([stock for sector in SECTORS.values() for stock in sector]))
 
+# Helper function to parse period strings to days
+def parse_period_to_days(period):
+    """Convert period string (e.g., '5y', '1mo') to number of days."""
+    period = period.lower()
+    if period.endswith('y'):
+        try:
+            years = float(period[:-1])
+            return int(years * 365)  # Approximate years to days
+        except ValueError:
+            logging.error(f"Invalid period format: {period}")
+            return 365  # Default to 1 year
+    elif period.endswith('mo'):
+        try:
+            months = float(period[:-2])
+            return int(months * 30)  # Approximate months to days
+        except ValueError:
+            logging.error(f"Invalid period format: {period}")
+            return 30  # Default to 1 month
+    elif period.endswith('d'):
+        try:
+            days = float(period[:-1])
+            return int(days)
+        except ValueError:
+            logging.error(f"Invalid period format: {period}")
+            return 30  # Default to 30 days
+    else:
+        logging.warning(f"Unsupported period unit: {period}. Defaulting to 30 days.")
+        return 30  # Default to 30 days
+
 @RateLimiter(calls=5, period=1)
 def fetch_stock_data_with_dhan(symbol, period="5y", interval="1d"):
     global data_api_calls
@@ -465,12 +494,14 @@ def fetch_stock_data_with_dhan(symbol, period="5y", interval="1d"):
         return pd.DataFrame()
     url = "https://api.dhan.co/v2/charts/historical"
     headers = dhan_headers()
+    # Convert period to days
+    days = parse_period_to_days(period)
     payload = {
         "securityId": str(security_id),
         "exchangeSegment": "NSE_EQ",
         "instrument": "EQUITY",
         "interval": interval,
-        "fromDate": (pd.Timestamp.now() - pd.to_timedelta(period)).strftime("%Y-%m-%d"),
+        "fromDate": (pd.Timestamp.now() - pd.to_timedelta(days, unit='D')).strftime("%Y-%m-%d"),
         "toDate": pd.Timestamp.now().strftime("%Y-%m-%d")
     }
     try:
