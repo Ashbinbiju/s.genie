@@ -3,7 +3,8 @@ import ta
 import logging
 import numpy as np
 import streamlit as st
-from datetime import datetime, timedelta
+from datetime import datetime, time, timedelta
+import pytz
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from functools import lru_cache
 from tqdm import tqdm
@@ -38,6 +39,10 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(
 
 #load_dotenv()
 
+DHAN_CLIENT_ID = st.secrets["DHAN_CLIENT_ID"]
+DHAN_ACCESS_TOKEN = st.secrets["DHAN_ACCESS_TOKEN"]
+TELEGRAM_BOT_TOKEN = st.secrets["TELEGRAM_BOT_TOKEN"]
+TELEGRAM_CHAT_ID = st.secrets["TELEGRAM_CHAT_ID"]
 DHAN_CLIENT_ID = st.secrets["DHAN_CLIENT_ID"]
 DHAN_ACCESS_TOKEN = st.secrets["DHAN_ACCESS_TOKEN"]
 
@@ -77,6 +82,10 @@ def get_dhan_security_id(symbol):
     st.warning(f"NOT FOUND: {symbol} ({symbol_clean})")
     return None
 
+def initialize_alert_tracker():
+    """Initialize alert tracker in session state."""
+    if 'alert_tracker' not in st.session_state:
+        st.session_state.alert_tracker = {}  # {symbol: last_alert_timestamp}
 
 # Add a test function to verify Dhan connection
 def test_dhan_connection():
@@ -1057,9 +1066,150 @@ def compute_signal_score(data, symbol=None):
     logging.info(f"Final score for {symbol}: {score}")
     return min(max(score, -10), 10)
 
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
-def adaptive_recommendation(data, market_regime="normal"):
+def send_telegram_message(message):
+    """Send a message to Telegram."""
+    url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
+    payload = {
+        "chat_id": TELEGRAM_CHAT_ID,
+        "text": message,
+        "parse_mode": "Markdown"
+    }
+    try:
+        response = requests.post(url, json=payload, timeout=10)
+        response.raise_for_status()
+        logging.info(f"Telegram message sent: {message}")
+        return True
+    except requests.exceptions.RequestException as e:
+        logging.error(f"Failed to send Telegram message: {e}")
+        st.error(f"❌ Failed to send Telegram message: {e}")
+        return False
+
+
+
+def is_market_open():
+    """Check if current time is within NSE market hours (9:15 AM to 3:30 PM IST, Mon-Fri)."""
+    ist = pytz.timezone('Asia/Kolkata')
+    now = datetime.now(ist)
+    is_weekday = now.weekday() < 5  # Monday to Friday
+    market_open = time(9, 15)
+    market_close = time(15, 30)
+    current_time = now.time()
+    return is_weekday and market_open <= current_time <= market_close
+
+def monitor_top_picks_continuously(top_picks_df, recommendation_mode="Standard", check_interval=120, alert_cooldown=1800):
+    """
+    Continuously monitor top picks for buy/sell signals during market hours.
+    Args:
+        top_picks_df: DataFrame with top picks.
+        recommendation_mode: "Standard" or "Adaptive".
+        check_interval: Seconds between checks (default: 2 minutes).
+        alert_cooldown: Seconds before sending another alert for the same stock (default: 30 minutes).
+    """
+    if top_picks_df.empty:
+        st.warning("⚠️ No top picks available to monitor.")
+        return
+
+    # Initialize alert tracker
+    initialize_alert_tracker()
+
+    st.info("🔔 Started continuous monitoring of top picks (checking every 2 minutes). Press 'Stop Monitoring' to halt.")
+    stop_button = st.button("🛑 Stop Monitoring", key="stop_monitoring")
+
+    while not stop_button:
+        if not is_market_open():
+            st.warning("⚠️ Market is closed. Monitoring paused until market hours (9:15 AM - 3:30 PM IST, Mon-Fri).")
+            break
+
+        for _, row in top_picks_df.iterrows():
+            symbol = row['Symbol']
+            current_time = datetime.now(pytz.timezone('Asia/Kolkata'))
+
+            # Check alert cooldown
+            last_alert_time = st.session_state.alert_tracker.get(symbol)
+            if last_alert_time and (current_time - last_alert_time).total_seconds() < alert_cooldown:
+                logging.info(f"Skipping {symbol}: Within cooldown period.")
+                continue
+
+            try:
+                # Fetch real-time data (1-minute interval for intraday)
+                data = fetch_stock_data_with_dhan(symbol, period="1d", interval="1m")
+                if data.empty or len(data) < 10:
+                    logging.warning(f"No sufficient real-time data for {symbol}")
+                    continue
+
+                # Analyze stock with fresh data
+                data = analyze_stock(data)
+
+                # Generate recommendations
+                if recommendation_mode == "Adaptive":
+                    recommendations = adaptive_recommendation(data, symbol)
+                else:
+                    recommendations = generate_recommendations(data, symbol)
+
+                # Check for buy or sell signals
+                signal = None
+                if recommendation_mode == "Adaptive":
+                    recommendation = recommendations.get("Recommendation", "Hold")
+                    if "Strong Buy" in recommendation:
+                        signal = "Strong Buy"
+                    elif "Buy" in recommendation:
+                        signal = "Buy"
+                    elif "Strong Sell" in recommendation:
+                        signal = "Strong Sell"
+                    elif "Sell" in recommendation:
+                        signal = "Sell"
+                else:
+                    intraday = recommendations.get("Intraday", "Hold")
+                    if "Strong Buy" in intraday:
+                        signal = "Strong Buy"
+                    elif "Buy" in intraday:
+                        signal = "Buy"
+                    elif "Strong Sell" in intraday:
+                        signal = "Strong Sell"
+                    elif "Sell" in intraday:
+                        signal = "Sell"
+
+                # Send Telegram alert if there's a valid signal
+                if signal and signal != "Hold":
+                    current_price = recommendations.get("Current Price", "N/A")
+                    buy_at = recommendations.get("Buy At", "N/A")
+                    stop_loss = recommendations.get("Stop Loss", "N/A")
+                    target = recommendations.get("Target", "N/A")
+                    score = recommendations.get("Score", "N/A")
+                    message = (
+                        f"📈 *{symbol} Alert* ({current_time.strftime('%Y-%m-%d %H:%M:%S')})\n"
+                        f"Signal: *{signal}*\n"
+                        f"Current Price: ₹{current_price}\n"
+                        f"Buy At: ₹{buy_at}\n"
+                        f"Stop Loss: ₹{stop_loss}\n"
+                        f"Target: ₹{target}\n"
+                        f"Score: {score}/7"
+                    )
+                    if send_telegram_message(message):
+                        st.success(f"✅ Sent Telegram alert for {symbol}: {signal}")
+                        st.session_state.alert_tracker[symbol] = current_time
+                    else:
+                        st.error(f"❌ Failed to send Telegram alert for {symbol}")
+
+                # Respect Dhan API rate limit (5 calls/second)
+                time.sleep(0.2)  # 0.2 seconds delay per stock
+
+            except Exception as e:
+                logging.error(f"Error monitoring {symbol}: {str(e)}")
+                st.warning(f"⚠️ Error monitoring {symbol}: {str(e)}")
+
+        # Wait for the next check cycle
+        st.write(f"⏳ Next check in {check_interval} seconds...")
+        time.sleep(check_interval)
+
+        # Check if stop button was pressed
+        if st.session_state.get('stop_monitoring', False):
+            break
+
+    st.success("✅ Continuous monitoring stopped.")
+    
+def adaptive_recommendation(data, symbol=None, market_regime="normal"):
     """
     Generates adaptive trading recommendations based on market regime and technical indicators.
     """
@@ -1080,7 +1230,7 @@ def adaptive_recommendation(data, market_regime="normal"):
     }
 
     if not validate_data(data, min_length=27):
-        logging.warning(f"Invalid data for adaptive recommendations")
+        logging.warning(f"Invalid data for adaptive recommendations for {symbol if symbol else 'unknown'}")
         return recommendations
 
     try:
@@ -1116,7 +1266,7 @@ def adaptive_recommendation(data, market_regime="normal"):
                 elif rsi > 70:
                     sell_score += 2 * rsi_weight
                     recommendations["Mean_Reversion"] = "Sell"
-            logging.info(f"Adaptive RSI score: buy={buy_score}, sell={sell_score}")
+            logging.info(f"Adaptive RSI score for {symbol if symbol else 'unknown'}: buy={buy_score}, sell={sell_score}")
 
         # MACD
         if 'MACD' in data.columns and 'MACD_signal' in data.columns and pd.notnull(data['MACD'].iloc[-1]) and pd.notnull(data['MACD_signal'].iloc[-1]):
@@ -1130,7 +1280,7 @@ def adaptive_recommendation(data, market_regime="normal"):
             elif macd_diff < 0:
                 sell_score += 2 * macd_weight
                 recommendations["Swing"] = "Sell"
-            logging.info(f"Adaptive MACD score: buy={buy_score}, sell={sell_score}")
+            logging.info(f"Adaptive MACD score for {symbol if symbol else 'unknown'}: buy={buy_score}, sell={sell_score}")
 
         # Ichimoku
         if all(col in data.columns and pd.notnull(data[col].iloc[-1]) for col in ['Ichimoku_Span_A', 'Ichimoku_Span_B', 'Close']):
@@ -1146,7 +1296,7 @@ def adaptive_recommendation(data, market_regime="normal"):
             elif close < span_a and close < span_b:
                 sell_score += 3 * ichimoku_weight
                 recommendations["Ichimoku_Trend"] = "Sell"
-            logging.info(f"Adaptive Ichimoku score: buy={buy_score}, sell={sell_score}")
+            logging.info(f"Adaptive Ichimoku score for {symbol if symbol else 'unknown'}: buy={buy_score}, sell={sell_score}")
 
         # Bollinger Bands Breakout
         if 'Upper_Band' in data.columns and 'Lower_Band' in data.columns and pd.notnull(data['Upper_Band'].iloc[-1]):
@@ -1160,7 +1310,7 @@ def adaptive_recommendation(data, market_regime="normal"):
             elif close < data['Lower_Band'].iloc[-1]:
                 sell_score += 2
                 recommendations["Breakout"] = "Sell"
-            logging.info(f"Adaptive Breakout score: buy={buy_score}, sell={sell_score}")
+            logging.info(f"Adaptive Breakout score for {symbol if symbol else 'unknown'}: buy={buy_score}, sell={sell_score}")
 
         # Generate recommendations based on scores
         net_score = buy_score - sell_score
@@ -1180,11 +1330,11 @@ def adaptive_recommendation(data, market_regime="normal"):
         recommendations["Target"] = calculate_target(data)
         recommendations["Score"] = min(max(net_score, -7), 7)
 
-        logging.info(f"Adaptive recommendations: {recommendations}")
+        logging.info(f"Adaptive recommendations for {symbol if symbol else 'unknown'}: {recommendations}")
         return recommendations
 
     except Exception as e:
-        logging.error(f"Error in adaptive_recommendation: {str(e)}")
+        logging.error(f"Error in adaptive_recommendation for {symbol if symbol else 'unknown'}: {str(e)}")
         return recommendations
         
 def generate_recommendations(data, symbol=None):
@@ -1343,20 +1493,20 @@ def analyze_batch(stock_batch, progress_callback=None, status_callback=None):
         st.error(f"Encountered {len(errors)} errors during batch processing:\n" + "\n".join(errors))
     return results
 
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 def analyze_stock_parallel(symbol):
     try:
         data = fetch_stock_data_with_dhan(symbol)
         if data.empty or len(data) < 50:
             logging.warning(f"No sufficient data for {symbol}: {len(data)} rows")
-            return None
+            return {"Symbol": symbol, "Error": f"No sufficient data: {len(data)} rows"}
         data = analyze_stock(data)
         recommendation_mode = st.session_state.get('recommendation_mode', 'Standard')
         if recommendation_mode == "Adaptive":
-            rec = adaptive_recommendation(data, symbol)
+            market_regime = classify_market_regime(data)
+            rec = adaptive_recommendation(data, symbol, market_regime=market_regime)
             if not rec or not rec.get('Recommendation'):
                 logging.error(f"Invalid adaptive_recommendation output for {symbol}: {rec}")
-                return None
+                return {"Symbol": symbol, "Error": f"Invalid adaptive recommendation output: {rec}"}
             return {
                 "Symbol": symbol,
                 "Current Price": rec.get("Current Price"),
@@ -1381,7 +1531,7 @@ def analyze_stock_parallel(symbol):
             rec = generate_recommendations(data, symbol)
             if not rec or not rec.get('Intraday'):
                 logging.error(f"Invalid generate_recommendations output for {symbol}: {rec}")
-                return None
+                return {"Symbol": symbol, "Error": f"Invalid generate recommendations output: {rec}"}
             return {
                 "Symbol": symbol,
                 "Current Price": rec.get("Current Price"),
@@ -1404,7 +1554,7 @@ def analyze_stock_parallel(symbol):
             }
     except Exception as e:
         logging.error(f"Error in analyze_stock_parallel for {symbol}: {str(e)}")
-        return None
+        return {"Symbol": symbol, "Error": str(e)}
         
 def analyze_all_stocks(stock_list, batch_size=10, progress_callback=None, status_callback=None):
     results = []
@@ -1422,7 +1572,7 @@ def analyze_all_stocks(stock_list, batch_size=10, progress_callback=None, status
         processed += len(batch)
         if progress_callback:
             progress_callback(processed / total_stocks)
-        time.sleep(max(2, batch_size / 5))
+        time.sleep(1.5)  # Reduced from 2 to 1.5 seconds
     results_df = pd.DataFrame(results)
     if results_df.empty:
         st.warning("⚠️ No valid stock data retrieved.")
@@ -1433,31 +1583,23 @@ def analyze_all_stocks(stock_list, batch_size=10, progress_callback=None, status
         results_df["Current Price"] = None
     return results_df.sort_values(by="Score", ascending=False).head(5)
 
-    
-def analyze_intraday_stocks(stock_list, batch_size=3, progress_callback=None, status_callback=None):
+def analyze_intraday_stocks(stock_list, batch_size=10, progress_callback=None, status_callback=None):
     results = []
     total_stocks = len(stock_list)
     processed = 0
-    
     for i in range(0, len(stock_list), batch_size):
         batch = stock_list[i:i + batch_size]
-        
-        # Update status for current batch
         if status_callback:
-            batch_names = ", ".join(batch[:3])  # Show first 3 stocks
+            batch_names = ", ".join(batch[:3])
             if len(batch) > 3:
                 batch_names += f" and {len(batch)-3} more"
             status_callback(f"🔄 Analyzing: {batch_names}")
-        
         batch_results = analyze_batch(batch, progress_callback=progress_callback, status_callback=status_callback)
         results.extend([r for r in batch_results if r is not None])
-        
         processed += len(batch)
         if progress_callback:
             progress_callback(processed / total_stocks)
-        
-        time.sleep(30)
-    
+        time.sleep(1.5)  # Reduced from 30 to 1.5 seconds
     results_df = pd.DataFrame(results)
     if results_df.empty:
         return pd.DataFrame()
@@ -1571,6 +1713,8 @@ def display_dashboard(symbol=None, data=None, recommendations=None):
         st.session_state.backtest_results_intraday = None
     if 'recommendation_mode' not in st.session_state:
         st.session_state.recommendation_mode = "Standard"
+    if 'alert_tracker' not in st.session_state:
+        st.session_state.alert_tracker = {}
 
     # Update session state if new data is provided
     if symbol and data is not None and recommendations is not None:
@@ -1607,13 +1751,12 @@ def display_dashboard(symbol=None, data=None, recommendations=None):
             for name, score in top_sectors:
                 st.markdown(f"- **{name}**: {score:.2f}/7")
 
-    # Daily top picks button - PROPERLY INDENTED INSIDE display_dashboard
+    # Daily top picks button
     if st.button("🚀 Generate Daily Top Picks"):
         progress_bar = st.progress(0)
         loading_text = st.empty()
         status_text = st.empty()
         
-        # Show initial status
         status_text.text(f"📊 Analyzing {len(selected_stocks)} stocks...")
         
         results_df = analyze_all_stocks(
@@ -1663,7 +1806,7 @@ def display_dashboard(symbol=None, data=None, recommendations=None):
         else:
             st.warning("⚠️ No top picks available due to data issues.")
 
-    # Intraday top picks button - PROPERLY INDENTED INSIDE display_dashboard
+    # Intraday top picks button
     if st.button("⚡ Generate Intraday Top 5 Picks"):
         progress_bar = st.progress(0)
         loading_text = st.empty()
@@ -1672,20 +1815,19 @@ def display_dashboard(symbol=None, data=None, recommendations=None):
             "Optimizing targets...", "Finalizing top picks..."
         ])
         
-        # If you want to show stock status for intraday too, add status_text
         status_text = st.empty()
         
         intraday_results = analyze_intraday_stocks(
             selected_stocks,
             batch_size=10,
             progress_callback=lambda x: update_progress(progress_bar, loading_text, x, loading_messages),
-            status_callback=lambda status: status_text.text(status)  # Optional: add stock status
+            status_callback=lambda status: status_text.text(status)
         )
         
         insert_top_picks_supabase(intraday_results, pick_type="intraday")
         progress_bar.empty()
         loading_text.empty()
-        status_text.empty()  # Clear status text if used
+        status_text.empty()
         
         if not intraday_results.empty:
             st.subheader("🏆 Top 5 Intraday Stocks")
@@ -1716,10 +1858,23 @@ def display_dashboard(symbol=None, data=None, recommendations=None):
         else:
             st.warning("⚠️ No intraday picks available due to data issues.")
 
-    # Rest of the display_dashboard function continues here...
-    # Historical picks button
-    # At the top of your display_dashboard function (or before the button block):
+    # Continuous Monitoring Button
+    if st.button("🔔 Start Continuous Monitoring of Today's Top Picks"):
+        # Fetch today's top picks from Supabase
+        today = datetime.now().strftime('%Y-%m-%d')
+        res = supabase.table("daily_picks").select("*").eq("date", today).eq("pick_type", "daily").execute()
+        if res.data:
+            top_picks_df = pd.DataFrame(res.data)
+            monitor_top_picks_continuously(
+                top_picks_df,
+                recommendation_mode=st.session_state.recommendation_mode,
+                check_interval=120,  # 5 minutes
+                alert_cooldown=1800  # 30 minutes
+            )
+        else:
+            st.warning("⚠️ No top picks found for today.")
 
+    # Historical picks button
     if "show_history" not in st.session_state:
         st.session_state.show_history = False
 
@@ -1730,7 +1885,7 @@ def display_dashboard(symbol=None, data=None, recommendations=None):
         st.markdown("### 📜 Historical Picks")
         if st.button("Close Historical Picks"):
             st.session_state.show_history = False
-            st.experimental_rerun()  # This will immediately hide the view
+            st.experimental_rerun()
 
         res = supabase.table("daily_picks").select("date").order("date", desc=True).execute()
         if res.data:
@@ -1744,16 +1899,16 @@ def display_dashboard(symbol=None, data=None, recommendations=None):
                 for col in ['buy_at', 'current_price', 'target', 'stop_loss', '% Change']:
                     if col in df.columns:
                         df[col] = df[col].map(lambda x: f"{x:.2f}" if pd.notnull(x) else x)
-            display_cols = [
-                "symbol", "buy_at", "current_price", "% Change", "recommendation", "What to do now?", "target", "stop_loss"
-            ]
-            styled_df = style_picks_df(df[display_cols])
-            st.dataframe(styled_df, use_container_width=True)
+                display_cols = [
+                    "symbol", "buy_at", "current_price", "% Change", "recommendation", "What to do now?", "target", "stop_loss"
+                ]
+                styled_df = style_picks_df(df[display_cols])
+                st.dataframe(styled_df, use_container_width=True)
         else:
             st.warning("No picks found for this date.")
     else:
         st.warning("No historical data available.")
-        
+
     # Display stock analysis if symbol is available
     if st.session_state.symbol and st.session_state.data is not None and st.session_state.recommendations is not None:
         symbol = st.session_state.symbol
@@ -1804,7 +1959,6 @@ def display_dashboard(symbol=None, data=None, recommendations=None):
                 st.write(f"**Ichimoku Trend**: {colored_recommendation(recommendations.get('Ichimoku_Trend', 'N/A'))}")
             st.write(f"**{tooltip('Score', TOOLTIPS['Score'])}**: {recommendations.get('Score', 'N/A')}/7")
             st.write(f"**Volatility**: {assess_risk(data)}")
-
 
         # Technical Indicators
         st.subheader("📊 Technical Indicators")
