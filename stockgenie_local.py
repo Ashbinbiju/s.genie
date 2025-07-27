@@ -1084,9 +1084,6 @@ def send_telegram_message(message):
         return False
 
 
-from datetime import datetime, time
-import pytz
-
 def is_market_open():
     """
     Check if the NSE market is open (9:15 AM to 3:30 PM IST, Monday to Friday).
@@ -1094,8 +1091,8 @@ def is_market_open():
     ist = pytz.timezone('Asia/Kolkata')
     now = datetime.now(ist)
     is_weekday = now.weekday() < 5  # Monday to Friday
-    market_open = datetime(1900, 1, 1, 9, 15).time()  # Create a datetime object and extract time
-    market_close = datetime(1900, 1, 1, 15, 30).time()  # Create a datetime object and extract time
+    market_open = datetime.time(9, 15)  # Explicitly use datetime.time
+    market_close = datetime.time(15, 30)  # Explicitly use datetime.time
     current_time = now.time()
     return is_weekday and market_open <= current_time <= market_close
 
