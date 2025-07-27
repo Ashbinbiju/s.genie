@@ -469,84 +469,35 @@ def parse_period_to_days(period):
     except ValueError as e:
         logging.error(f"Invalid period format: {period}, error: {e}. Defaulting to 30 days.")
         return 30
-
+        
 @RateLimiter(calls=5, period=1)
-
-@RateLimiter(calls=5, period=1)
-def fetch_stock_data_with_dhan(symbol, period="5y", interval="1d"):
-    global data_api_calls
-    with data_api_lock:
-        if data_api_calls >= 90000:
-            st.warning(f"⚠️ Approaching Data API daily limit: {data_api_calls}/100000")
-        if data_api_calls >= 100000:
-            st.error("⚠️ Reached daily Data API limit of 100,000 requests.")
+if not data.get("data"):
+    # Handle alternative (columnar) response format
+    if "open" in data:
+        logging.info(f"Alternative response format detected for {symbol}, attempting to parse...")
+        try:
+            df = pd.DataFrame({
+                "Open": data.get("open", []),
+                "High": data.get("high", []),
+                "Low": data.get("low", []),
+                "Close": data.get("close", []),
+                "Volume": data.get("volume", []),
+                "Date": data.get("timestamp", [])
+            })
+            if not df.empty and len(df) >= 50 and all(col in df for col in ["Open", "High", "Low", "Close", "Volume", "Date"]):
+                df["Date"] = pd.to_datetime(df["Date"])
+                df.set_index("Date", inplace=True)
+                df = df[["Open", "High", "Low", "Close", "Volume"]]
+                logging.info(f"Successfully parsed alternative format for {symbol}: {len(df)} rows")
+                return df
+            else:
+                logging.warning(f"Alternative format parsing failed for {symbol}: {df.columns}")
+                return pd.DataFrame()
+        except Exception as e:
+            logging.error(f"Failed to parse alternative format for {symbol}: {str(e)}")
             return pd.DataFrame()
-        data_api_calls += 1
-    
-    security_id = get_dhan_security_id(symbol)
-    if not security_id:
-        logging.error(f"No security ID found for {symbol}")
-        return pd.DataFrame()
-    
-    url = "https://api.dhan.co/v2/charts/historical"
-    headers = dhan_headers()
-    days = parse_period_to_days(period)
-    payload = {
-        "securityId": str(security_id),
-        "exchangeSegment": "NSE_EQ",
-        "instrument": "EQUITY",
-        "interval": interval,
-        "fromDate": (pd.Timestamp.now() - pd.to_timedelta(days, unit='D')).strftime("%Y-%m-%d"),
-        "toDate": pd.Timestamp.now().strftime("%Y-%m-%d")
-    }
-    
-    try:
-        logging.info(f"Requesting data for {symbol} with payload: {payload}")
-        response = requests.post(url, headers=headers, data=json.dumps(payload), timeout=10)
-        response.raise_for_status()
-        data = response.json()
-        
-        # Log the full response for debugging
-        logging.debug(f"API response for {symbol}: {data}")
-        
-        if not data.get("data"):
-            logging.warning(f"No data returned for {symbol}. Response: {data}")
-            return pd.DataFrame()
-        
-        df = pd.DataFrame(data.get("data", []))
-        if df.empty:
-            logging.warning(f"Empty DataFrame created for {symbol}. Response data: {data.get('data')}")
-            return pd.DataFrame()
-        
-        df = df.rename(columns={
-            "open": "Open",
-            "high": "High",
-            "low": "Low",
-            "close": "Close",
-            "volume": "Volume",
-            "timestamp": "Date"
-        })
-        df["Date"] = pd.to_datetime(df["Date"])
-        df.set_index("Date", inplace=True)
-        
-        # Validate required columns
-        required_columns = ["Open", "High", "Low", "Close", "Volume"]
-        missing_columns = [col for col in required_columns if col not in df.columns]
-        if missing_columns:
-            logging.error(f"Missing required columns for {symbol}: {missing_columns}")
-            return pd.DataFrame()
-        
-        logging.info(f"Successfully fetched data for {symbol}: {len(df)} rows")
-        return df[required_columns]
-    
-    except requests.exceptions.HTTPError as e:
-        logging.error(f"HTTP error for {symbol}: {e}, Response: {e.response.text if e.response else 'No response'}")
-        return pd.DataFrame()
-    except requests.exceptions.RequestException as e:
-        logging.error(f"Request error for {symbol}: {e}")
-        return pd.DataFrame()
-    except Exception as e:
-        logging.error(f"Unexpected error for {symbol}: {e}")
+    else:
+        logging.warning(f"No valid data returned for {symbol}. Response: {data}")
         return pd.DataFrame()
        
 @lru_cache(maxsize=1000)
