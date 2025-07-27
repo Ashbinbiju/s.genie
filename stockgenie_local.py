@@ -28,7 +28,7 @@ from ta.momentum import RSIIndicator, StochasticOscillator
 from ta.trend import MACD, ADXIndicator, IchimokuIndicator
 from ta.volatility import AverageTrueRange, BollingerBands
 from ta.volume import OnBalanceVolumeIndicator, ChaikinMoneyFlowIndicator
-from ratelimiter import RateLimiter
+from ratelimit import RateLimitDecorator as RateLimiter
 from threading import Lock
 data_api_calls = 0
 data_api_lock = Lock()
@@ -449,7 +449,7 @@ def fetch_nse_stock_list():
     except Exception:
         return list(set([stock for sector in SECTORS.values() for stock in sector]))
 
-@RateLimiter(max_calls=5, period=1)
+@RateLimiter(calls=5, period=1)
 def fetch_stock_data_with_dhan(symbol, period="5y", interval="1d"):
     global data_api_calls
     with data_api_lock:
@@ -1236,7 +1236,7 @@ def generate_recommendations(data, symbol=None):
         logging.error(f"Error generating recommendations for {symbol}: {str(e)}")
         return recommendations
 
-@st.cache_data(ttl=3600)  # Cache results for 1 hour to avoid repeated API hits
+@st.cache_data(ttl=3600)
 def get_top_sectors_cached(rate_limit_delay=0.2, stocks_per_sector=5):
     sector_scores = {}
     for sector, stocks in SECTORS.items():
@@ -1606,7 +1606,7 @@ def insert_top_picks_supabase(results_df, pick_type="daily"):
             st.error(f"Supabase insert exception: {e}")
 
 
-@RateLimiter(max_calls=1, period=1)
+@RateLimiter(calls=1, period=1)
 def fetch_latest_price(symbol):
     data = fetch_stock_data_with_dhan(symbol, period="1mo", interval="1d")
     if not data.empty:
