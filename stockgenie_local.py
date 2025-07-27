@@ -492,18 +492,22 @@ def fetch_stock_data_with_dhan(symbol, period="5y", interval="1d"):
         logging.error(f"No security ID found for {symbol}")
         return pd.DataFrame()
 
-    # Select endpoint based on interval
+    # Determine endpoint and date format based on interval
+    now = pd.Timestamp.now(tz='Asia/Kolkata')
     if interval in ["1m", "5m", "15m", "30m", "60m"]:
         url = "https://api.dhan.co/v2/charts/intraday"
-        # Intraday data: max 5 trading days
-        days = min(parse_period_to_days(period), 5)
-        from_date = (pd.Timestamp.now() - pd.to_timedelta(days, unit='D')).strftime("%Y-%m-%d %H:%M:%S")
-        to_date = pd.Timestamp.now().strftime("%Y-%m-%d %H:%M:%S")
-    else:  # Default to historical endpoint for daily or higher intervals
+        days = min(parse_period_to_days(period), 5)  # Intraday limited to 5 days
+        # Adjust for non-trading days (weekends)
+        if now.weekday() >= 5:  # Saturday (5) or Sunday (6)
+            days_to_subtract = now.weekday() - 4  # Go back to last Friday
+            now = now - pd.Timedelta(days=days_to_subtract)
+        from_date = (now - pd.Timedelta(days=days)).strftime("%Y-%m-%d 09:15:00")
+        to_date = now.strftime("%Y-%m-%d 15:30:00")
+    else:
         url = "https://api.dhan.co/v2/charts/historical"
         days = parse_period_to_days(period)
-        from_date = (pd.Timestamp.now() - pd.to_timedelta(days, unit='D')).strftime("%Y-%m-%d")
-        to_date = pd.Timestamp.now().strftime("%Y-%m-%d")
+        from_date = (now - pd.Timedelta(days=days)).strftime("%Y-%m-%d")
+        to_date = now.strftime("%Y-%m-%d")
 
     headers = dhan_headers()
     payload = {
@@ -523,7 +527,6 @@ def fetch_stock_data_with_dhan(symbol, period="5y", interval="1d"):
 
         logging.debug(f"API response for {symbol}: {data}")
 
-        # Process API response
         api_data = data.get("data", data)
         if isinstance(api_data, dict) and all(isinstance(v, list) for v in api_data.values()):
             n = len(next(iter(api_data.values())))
@@ -550,7 +553,6 @@ def fetch_stock_data_with_dhan(symbol, period="5y", interval="1d"):
         df["Date"] = pd.to_datetime(df["Date"])
         df.set_index("Date", inplace=True)
 
-        # Validate required columns
         required_columns = ["Open", "High", "Low", "Close", "Volume"]
         missing_columns = [col for col in required_columns if col not in df.columns]
         if missing_columns:
