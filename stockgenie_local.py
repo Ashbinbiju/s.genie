@@ -31,16 +31,17 @@ import pandas as pd
 from datetime import datetime, timedelta
 import json 
 
-load_dotenv()
+#load_dotenv()
 
-DHAN_CLIENT_ID = os.getenv("DHAN_CLIENT_ID")
-DHAN_ACCESS_TOKEN = os.getenv("DHAN_ACCESS_TOKEN")
+DHAN_CLIENT_ID = st.secrets["DHAN_CLIENT_ID"]
+DHAN_ACCESS_TOKEN = st.secrets["DHAN_ACCESS_TOKEN"]
 
 def dhan_headers():
     return {
         "access-token": DHAN_ACCESS_TOKEN,
-        "dhan-client-id": DHAN_CLIENT_ID,
-        "Accept": "application/json"
+        "client-id": DHAN_CLIENT_ID,  # Note: Use "client-id" not "dhan-client-id"
+        "Accept": "application/json",
+        "Content-Type": "application/json"
     }
 
 @st.cache_data(ttl=86400)
@@ -464,12 +465,11 @@ def fetch_nse_stock_list():
         return list(set([stock for sector in SECTORS.values() for stock in sector]))
 
 @retry(max_retries=5, delay=5)
-
 def fetch_stock_data_with_dhan(symbol, period="5y", interval="1d"):
     """Fetch historical stock data from Dhan API"""
     security_id = get_dhan_security_id(symbol)
     if not security_id:
-        print(f"Error: No Dhan security_id found for {symbol}")
+        st.warning(f"No Dhan security_id found for {symbol}")
         return pd.DataFrame()
 
     # Calculate from_date and to_date
@@ -486,36 +486,30 @@ def fetch_stock_data_with_dhan(symbol, period="5y", interval="1d"):
     from_date = start_date.strftime("%Y-%m-%d")
     to_date = end_date.strftime("%Y-%m-%d")
 
-    # Dhan API endpoint for historical data
+    # Dhan API endpoint
     url = "https://api.dhan.co/v2/charts/historical"
     
-    headers = {
-        "Content-Type": "application/json",
-        "access-token": DHAN_ACCESS_TOKEN,
-        "client-id": DHAN_CLIENT_ID  # Changed from "Dhan-Client-Id" to "client-id"
-    }
+    headers = dhan_headers()  # Use the updated headers function
     
-    # Correct payload structure for Dhan API
     payload = {
         "securityId": str(security_id),
         "exchangeSegment": "NSE_EQ",
         "instrument": "EQUITY",
         "expiryCode": 0,
         "fromDate": from_date,
-        "toDate": to_date,
-        "interval": "DAY"  # Add interval parameter
+        "toDate": to_date
     }
     
     try:
-        response = requests.post(url, headers=headers, data=json.dumps(payload), timeout=10)
-        print(f"Dhan API Response Status: {response.status_code}")
+        response = requests.post(url, headers=headers, json=payload, timeout=10)
         
         if response.status_code == 200:
             data = response.json()
             
-            # Check if data is in the expected format
+            # Debug: Print the structure of the response
+            st.write(f"API Response keys: {list(data.keys()) if isinstance(data, dict) else 'Not a dict'}")
+            
             if isinstance(data, dict) and all(key in data for key in ["open", "high", "low", "close", "volume", "timestamp"]):
-                # Create DataFrame from the response
                 df = pd.DataFrame({
                     "Open": data["open"],
                     "High": data["high"],
@@ -525,24 +519,17 @@ def fetch_stock_data_with_dhan(symbol, period="5y", interval="1d"):
                     "Date": [datetime.fromtimestamp(ts) for ts in data["timestamp"]]
                 })
                 df.set_index("Date", inplace=True)
-                df = df.sort_index()  # Ensure chronological order
-                print(f"Successfully fetched {len(df)} rows for {symbol}")
+                df = df.sort_index()
                 return df
             else:
-                print(f"Unexpected data format from Dhan API: {data}")
+                st.error(f"Unexpected data format from Dhan API")
                 return pd.DataFrame()
         else:
-            print(f"Error {response.status_code} from Dhan API: {response.text}")
+            st.error(f"Dhan API Error {response.status_code}: {response.text}")
             return pd.DataFrame()
             
-    except requests.exceptions.Timeout:
-        print(f"Timeout error fetching data for {symbol}")
-        return pd.DataFrame()
-    except requests.exceptions.RequestException as e:
-        print(f"Request error fetching data for {symbol}: {e}")
-        return pd.DataFrame()
     except Exception as e:
-        print(f"Unexpected error fetching Dhan data for {symbol}: {e}")
+        st.error(f"Error fetching Dhan data: {str(e)}")
         return pd.DataFrame()
 
         
