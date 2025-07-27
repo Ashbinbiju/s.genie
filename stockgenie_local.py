@@ -14,7 +14,6 @@ import io
 import random
 import spacy
 from pytrends.request import TrendReq
-import numpy as np
 import itertools
 from arch import arch_model
 import warnings
@@ -24,16 +23,13 @@ import os
 from dotenv import load_dotenv
 from streamlit import cache_data
 from supabase import create_client, Client
-import os
-import requests
-from dotenv import load_dotenv
-import pandas as pd
-from datetime import datetime, timedelta
-import json 
+import json
 from ta.momentum import RSIIndicator, StochasticOscillator
 from ta.trend import MACD, ADXIndicator, IchimokuIndicator
 from ta.volatility import AverageTrueRange, BollingerBands
 from ta.volume import OnBalanceVolumeIndicator, ChaikinMoneyFlowIndicator
+from ratelimiter import RateLimiter
+from threading import Lock
 
 data_api_calls = 0
 data_api_lock = Lock()
