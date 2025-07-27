@@ -53,15 +53,17 @@ def load_dhan_instrument_master():
 def get_dhan_security_id(symbol):
     df = load_dhan_instrument_master()
     symbol_clean = symbol.replace(".NS", "").replace(".BO", "").replace("-EQ", "")
-    # Try to match with SM_SYMBOL_NAME
     row = df[df['SM_SYMBOL_NAME'] == symbol_clean]
     if not row.empty:
+        print(f"Found security_id for {symbol}: {row.iloc[0]['SEM_SMST_SECURITY_ID']}")
         return row.iloc[0]['SEM_SMST_SECURITY_ID']
     # Fallback: try SEM_TRADING_SYMBOL if present
     if 'SEM_TRADING_SYMBOL' in df.columns:
         row = df[df['SEM_TRADING_SYMBOL'] == symbol_clean]
         if not row.empty:
+            print(f"Found security_id (trading symbol) for {symbol}: {row.iloc[0]['SEM_SMST_SECURITY_ID']}")
             return row.iloc[0]['SEM_SMST_SECURITY_ID']
+    print(f"NOT FOUND: {symbol} ({symbol_clean})")
     return None
 
 def normalize_symbol_dhan(symbol):
@@ -443,6 +445,7 @@ def fetch_stock_data_with_dhan(symbol, period="5y", interval="1d"):
         response.raise_for_status()
         data = response.json()
         if "data" not in data or not data["data"]:
+            print(f"Dhan API returned no data for {symbol} (security_id: {security_id})")
             return pd.DataFrame()
         df = pd.DataFrame(data["data"])
         df['Date'] = pd.to_datetime(df['timestamp'])
