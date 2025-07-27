@@ -140,14 +140,30 @@ def color_code_change(val):
         return ""
 
 def style_picks_df(df):
-    return df.style.applymap(color_code_action, subset=["What to do now?"]) \
-                   .applymap(color_code_change, subset=["% Change"])
+    def color_code_target_hit(val):
+        if val == 'Yes':
+            return "background-color: #e6f4e6; color: green; font-weight: bold"
+        elif val == 'No':
+            return "background-color: #f4e6e6; color: red"
+        return ""
 
+    return df.style.applymap(color_code_action, subset=["what_to_do_now"]) \
+                  .applymap(color_code_change, subset=["percent_change"]) \
+                  .applymap(color_code_target_hit, subset=["Target_Hit"]) \
+                  .format({
+                      'buy_at': "{:.2f}",
+                      'current_price': "{:.2f}",
+                      'percent_change': "{:.2f}%",
+                      'target': "{:.2f}",
+                      'stop_loss': "{:.2f}"
+                  }, na_rep="N/A")
 def add_action_and_change(df):
     def action(row):
         try:
-            buy_at = float(row['buy_at'])
-            current_price = float(row['current_price'])
+            buy_at = float(row['buy_at']) if pd.notnull(row['buy_at']) else None
+            current_price = float(row['current_price']) if pd.notnull(row['current_price']) else None
+            if buy_at is None or current_price is None:
+                return "N/A"
             if current_price > buy_at * 1.05:
                 return "Book Profit / Hold"
             elif current_price < buy_at * 0.97:
@@ -156,8 +172,13 @@ def add_action_and_change(df):
                 return "Hold"
         except Exception:
             return "N/A"
-    df['% Change'] = ((df['current_price'] - df['buy_at']) / df['buy_at'] * 100).round(2)
-    df['What to do now?'] = df.apply(action, axis=1)
+    
+    df['percent_change'] = df.apply(
+        lambda row: ((float(row['current_price']) - float(row['buy_at'])) / float(row['buy_at']) * 100)
+        if pd.notnull(row['current_price']) and pd.notnull(row['buy_at']) else None,
+        axis=1
+    ).round(2)
+    df['what_to_do_now'] = df.apply(action, axis=1)
     return df
 
 
@@ -1640,23 +1661,13 @@ def insert_top_picks_supabase(results_df, pick_type="daily"):
         data = {
             "date": datetime.now().strftime('%Y-%m-%d'),
             "symbol": row.get('Symbol') or row.get('symbol', 'Unknown'),
-            "score": row.get('Score', 0) or 0,
-            "current_price": row.get('Current Price') or row.get('current_price', None),
             "buy_at": row.get('Buy At') or row.get('buy_at', None),
-            "stop_loss": row.get('Stop Loss') or row.get('stop_loss', None),
-            "target": row.get('Target') or row.get('target', None),
-            "intraday": row.get('Intraday', 'Hold'),
-            "swing": row.get('Swing', 'Hold'),
-            "short_term": row.get('Short-Term', 'Hold'),
-            "long_term": row.get('Long-Term', 'Hold'),
-            "mean_reversion": row.get('Mean_Reversion', 'Hold'),
-            "breakout": row.get('Breakout', 'Hold'),
-            "ichimoku_trend": row.get('Ichimoku_Trend', 'Hold'),
+            "current_price": row.get('Current Price') or row.get('current_price', None),
+            "percent_change": row.get('% Change', None),
             "recommendation": row.get('Recommendation') or row.get('recommendation', 'Hold'),
-            "regime": row.get('Regime', 'Unknown'),
-            "position_size": row.get('Position Size', None),
-            "trailing_stop": row.get('Trailing Stop', None),
-            "reason": row.get('Reason', 'No reason provided'),
+            "what_to_do_now": row.get('What to do now?', 'N/A'),
+            "target": row.get('Target') or row.get('target', None),
+            "stop_loss": row.get('Stop Loss') or row.get('stop_loss', None),
             "pick_type": pick_type
         }
         logging.info(f"Inserting to Supabase: {data}")
@@ -1668,6 +1679,31 @@ def insert_top_picks_supabase(results_df, pick_type="daily"):
         except Exception as e:
             logging.error(f"Supabase insert exception: {e}")
             st.error(f"Supabase insert exception: {e}")
+@RateLimiter(calls=1, period=1)
+def check_target_hit(symbol, recommendation_date, target_price, timeframe_days=30):
+    """
+    Check if the target price was hit within timeframe_days after recommendation_date.
+    Returns 'Yes', 'No', or 'N/A' if data is unavailable.
+    """
+    try:
+        end_date = (pd.to_datetime(recommendation_date) + pd.Timedelta(days=timeframe_days)).strftime('%Y-%m-%d')
+        data = fetch_stock_data_with_dhan(symbol, period=f"{timeframe_days}d", interval="1d")
+        if data.empty:
+            logging.warning(f"No data available for {symbol} to check target hit.")
+            return 'N/A'
+        
+        # Filter data after the recommendation date
+        data = data[data.index > pd.to_datetime(recommendation_date)]
+        if data.empty:
+            return 'N/A'
+        
+        # Check if any high price in the period exceeded the target
+        if (data['High'] >= target_price).any():
+            return 'Yes'
+        return 'No'
+    except Exception as e:
+        logging.error(f"Error checking target hit for {symbol}: {e}")
+        return 'N/A'
 
 
 @RateLimiter(calls=1, period=1)
@@ -1680,12 +1716,20 @@ def fetch_latest_price(symbol):
 def update_with_latest_prices(df):
     for idx, row in df.iterrows():
         symbol = row['symbol']
+        recommendation_date = row['date']
+        target_price = row.get('target')
         try:
             latest_close = fetch_latest_price(symbol)
             if latest_close is not None:
                 df.at[idx, 'current_price'] = latest_close
+                buy_at = row.get('buy_at')
+                if pd.notnull(buy_at) and pd.notnull(latest_close):
+                    df.at[idx, 'percent_change'] = ((latest_close - float(buy_at)) / float(buy_at) * 100)
+                # Check if target was hit
+                if pd.notnull(target_price):
+                    df.at[idx, 'Target_Hit'] = check_target_hit(symbol, recommendation_date, float(target_price))
         except Exception as e:
-            st.warning(f"Could not fetch latest price for {symbol}: {e}")
+            st.warning(f"Could not fetch latest price or target status for {symbol}: {e}")
     return df
         
 def display_dashboard(symbol=None, data=None, recommendations=None):
@@ -1704,6 +1748,8 @@ def display_dashboard(symbol=None, data=None, recommendations=None):
         st.session_state.backtest_results_intraday = None
     if 'recommendation_mode' not in st.session_state:
         st.session_state.recommendation_mode = "Standard"
+    if 'show_history' not in st.session_state:
+        st.session_state.show_history = False
 
     # Update session state if new data is provided
     if symbol and data is not None and recommendations is not None:
@@ -1740,7 +1786,7 @@ def display_dashboard(symbol=None, data=None, recommendations=None):
             for name, score in top_sectors:
                 st.markdown(f"- **{name}**: {score:.2f}/7")
 
-    # Daily top picks button - PROPERLY INDENTED INSIDE display_dashboard
+    # Daily top picks button
     if st.button("🚀 Generate Daily Top Picks"):
         progress_bar = st.progress(0)
         loading_text = st.empty()
@@ -1796,7 +1842,7 @@ def display_dashboard(symbol=None, data=None, recommendations=None):
         else:
             st.warning("⚠️ No top picks available due to data issues.")
 
-    # Intraday top picks button - PROPERLY INDENTED INSIDE display_dashboard
+    # Intraday top picks button
     if st.button("⚡ Generate Intraday Top 5 Picks"):
         progress_bar = st.progress(0)
         loading_text = st.empty()
@@ -1805,20 +1851,19 @@ def display_dashboard(symbol=None, data=None, recommendations=None):
             "Optimizing targets...", "Finalizing top picks..."
         ])
         
-        # If you want to show stock status for intraday too, add status_text
         status_text = st.empty()
         
         intraday_results = analyze_intraday_stocks(
             selected_stocks,
             batch_size=10,
             progress_callback=lambda x: update_progress(progress_bar, loading_text, x, loading_messages),
-            status_callback=lambda status: status_text.text(status)  # Optional: add stock status
+            status_callback=lambda status: status_text.text(status)
         )
         
         insert_top_picks_supabase(intraday_results, pick_type="intraday")
         progress_bar.empty()
         loading_text.empty()
-        status_text.empty()  # Clear status text if used
+        status_text.empty()
         
         if not intraday_results.empty:
             st.subheader("🏆 Top 5 Intraday Stocks")
@@ -1849,13 +1894,7 @@ def display_dashboard(symbol=None, data=None, recommendations=None):
         else:
             st.warning("⚠️ No intraday picks available due to data issues.")
 
-    # Rest of the display_dashboard function continues here...
-    # Historical picks button
-    # At the top of your display_dashboard function (or before the button block):
-
-    if "show_history" not in st.session_state:
-        st.session_state.show_history = False
-
+    # Historical Picks Section
     if st.button("📜 View Historical Picks"):
         st.session_state.show_history = not st.session_state.show_history
 
@@ -1863,30 +1902,78 @@ def display_dashboard(symbol=None, data=None, recommendations=None):
         st.markdown("### 📜 Historical Picks")
         if st.button("Close Historical Picks"):
             st.session_state.show_history = False
-            st.experimental_rerun()  # This will immediately hide the view
+            st.experimental_rerun()
 
+        # Fetch all available dates from Supabase
         res = supabase.table("daily_picks").select("date").order("date", desc=True).execute()
-        if res.data:
-            all_dates = sorted({row['date'] for row in res.data}, reverse=True)
-            date_filter = st.selectbox("Select Date", all_dates, key="history_date")
-            res2 = supabase.table("daily_picks").select("*").eq("date", date_filter).execute()
-            if res2.data:
-                df = pd.DataFrame(res2.data)
-                df = update_with_latest_prices(df)
-                df = add_action_and_change(df)
-                for col in ['buy_at', 'current_price', 'target', 'stop_loss', '% Change']:
-                    if col in df.columns:
-                        df[col] = df[col].map(lambda x: f"{x:.2f}" if pd.notnull(x) else x)
-            display_cols = [
-                "symbol", "buy_at", "current_price", "% Change", "recommendation", "What to do now?", "target", "stop_loss"
-            ]
-            styled_df = style_picks_df(df[display_cols])
-            st.dataframe(styled_df, use_container_width=True)
-        else:
-            st.warning("No picks found for this date.")
-    else:
-        st.warning("No historical data available.")
-        
+        if not res.data:
+            st.warning("⚠️ No historical data available.")
+            return
+
+        all_dates = sorted({row['date'] for row in res.data}, reverse=True)
+        date_filter = st.selectbox("Select Date", all_dates, key="history_date")
+
+        # Tabs for Daily and Intraday Picks
+        daily_tab, intraday_tab = st.tabs(["Daily Picks", "Intraday Picks"])
+
+        for pick_type, tab in [("daily", daily_tab), ("intraday", intraday_tab)]:
+            with tab:
+                res2 = supabase.table("daily_picks").select("*").eq("date", date_filter).eq("pick_type", pick_type).execute()
+                if res2.data:
+                    df = pd.DataFrame(res2.data)
+                    df = update_with_latest_prices(df)  # Update prices and check target hit
+                    df = add_action_and_change(df)  # Recalculate % Change and action
+                    display_cols = [
+                        "symbol", "buy_at", "current_price", "percent_change", "recommendation",
+                        "what_to_do_now", "target", "stop_loss", "Target_Hit"
+                    ]
+                    df_display = df[display_cols].rename(columns={
+                        "symbol": "Symbol",
+                        "buy_at": "Buy At",
+                        "current_price": "Current Price",
+                        "percent_change": "% Change",
+                        "recommendation": "Recommendation",
+                        "what_to_do_now": "What to do now?",
+                        "target": "Target",
+                        "stop_loss": "Stop Loss",
+                        "Target_Hit": "Target Hit"
+                    })
+                    # Sorting option
+                    sort_column = st.selectbox(
+                        f"Sort {pick_type.capitalize()} Picks By",
+                        ["Symbol", "% Change", "Target Hit", "Recommendation"],
+                        key=f"sort_{pick_type}"
+                    )
+                    df_display = df_display.sort_values(sort_column)
+                    
+                    styled_df = style_picks_df(df_display)
+                    st.dataframe(styled_df, use_container_width=True, height=300)
+
+                    # Download button
+                    csv = df_display.to_csv(index=False)
+                    st.download_button(
+                        f"Download {pick_type.capitalize()} Picks",
+                        csv,
+                        f"historical_picks_{date_filter}_{pick_type}.csv",
+                        "text/csv",
+                        key=f"download_{pick_type}"
+                    )
+
+                    # Expandable details for each pick
+                    for _, row in df.iterrows():
+                        with st.expander(f"{row['symbol']} Details"):
+                            target_hit = row.get('Target_Hit', 'N/A')
+                            st.markdown(f"""
+                            **Date**: {row['date']}  
+                            **Pick Type**: {row['pick_type'].capitalize()}  
+                            **Recommendation**: {colored_recommendation(row['recommendation'])}  
+                            **Target Hit**: {target_hit} {'🟢' if target_hit == 'Yes' else '🔴' if target_hit == 'No' else '⚪'}  
+                            **% Change**: {row['percent_change']:.2f}%  
+                            **What to do now?**: {row['what_to_do_now']}
+                            """)
+                else:
+                    st.warning(f"No {pick_type} picks found for {date_filter}.")
+    
     # Display stock analysis if symbol is available
     if st.session_state.symbol and st.session_state.data is not None and st.session_state.recommendations is not None:
         symbol = st.session_state.symbol
@@ -2053,7 +2140,6 @@ def display_dashboard(symbol=None, data=None, recommendations=None):
                 fig_vol.add_scatter(x=spike_data.index, y=spike_data['Volume'], mode='markers', name='Volume Spike',
                                    marker=dict(color='red', size=10))
         st.plotly_chart(fig_vol, use_container_width=True)
-    
             
 def main():
     init_database()
