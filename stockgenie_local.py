@@ -453,30 +453,22 @@ def fetch_nse_stock_list():
 def parse_period_to_days(period):
     """Convert period string (e.g., '5y', '1mo') to number of days."""
     period = period.lower()
-    if period.endswith('y'):
-        try:
+    try:
+        if period.endswith('y'):
             years = float(period[:-1])
             return int(years * 365)  # Approximate years to days
-        except ValueError:
-            logging.error(f"Invalid period format: {period}")
-            return 365  # Default to 1 year
-    elif period.endswith('mo'):
-        try:
+        elif period.endswith('mo'):
             months = float(period[:-2])
             return int(months * 30)  # Approximate months to days
-        except ValueError:
-            logging.error(f"Invalid period format: {period}")
-            return 30  # Default to 1 month
-    elif period.endswith('d'):
-        try:
+        elif period.endswith('d'):
             days = float(period[:-1])
             return int(days)
-        except ValueError:
-            logging.error(f"Invalid period format: {period}")
-            return 30  # Default to 30 days
-    else:
-        logging.warning(f"Unsupported period unit: {period}. Defaulting to 30 days.")
-        return 30  # Default to 30 days
+        else:
+            logging.warning(f"Unsupported period format: {period}. Defaulting to 30 days.")
+            return 30
+    except ValueError as e:
+        logging.error(f"Invalid period format: {period}, error: {e}. Defaulting to 30 days.")
+        return 30
 
 @RateLimiter(calls=5, period=1)
 def fetch_stock_data_with_dhan(symbol, period="5y", interval="1d"):
