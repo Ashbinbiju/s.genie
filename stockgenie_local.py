@@ -1,4 +1,5 @@
 from datetime import datetime, time, timedelta
+from time import sleep
 import pandas as pd
 import ta
 import logging
@@ -428,7 +429,7 @@ def retry(max_retries=5, delay=5, backoff_factor=2, jitter=1):
                             raise e
                         sleep_time = (delay * (backoff_factor ** retries)) + random.uniform(0, jitter)
                         st.warning(f"Rate limit hit. Retrying after {sleep_time:.2f} seconds...")
-                        time.sleep(sleep_time)
+                        sleep(sleep_time)
                     else:
                         raise e
                 except (requests.exceptions.RequestException, ConnectionError) as e:
@@ -436,7 +437,7 @@ def retry(max_retries=5, delay=5, backoff_factor=2, jitter=1):
                     if retries == max_retries:
                         raise e
                     sleep_time = (delay * (backoff_factor ** retries)) + random.uniform(0, jitter)
-                    time.sleep(sleep_time)
+                    sleep(sleep_time)
         return wrapper
     return decorator
 
@@ -1091,8 +1092,8 @@ def is_market_open():
     ist = pytz.timezone('Asia/Kolkata')
     now = datetime.now(ist)
     is_weekday = now.weekday() < 5  # Monday to Friday
-    market_open = datetime.time(9, 15)  # Explicitly use datetime.time
-    market_close = datetime.time(15, 30)  # Explicitly use datetime.time
+    market_open = time(9, 15)  # Use time directly
+    market_close = time(15, 30)  # Use time directly
     current_time = now.time()
     return is_weekday and market_open <= current_time <= market_close
 
@@ -1185,14 +1186,14 @@ def monitor_top_picks_continuously(top_picks_df, recommendation_mode="Standard",
                     else:
                         st.error(f"❌ Failed to send Telegram alert for {symbol}")
 
-                time.sleep(0.2)  # Respect Dhan API rate limit (5 calls/second)
+                sleep(0.2)  # Respect Dhan API rate limit (5 calls/second)
 
             except Exception as e:
                 logging.error(f"Error monitoring {symbol}: {str(e)}")
                 st.warning(f"⚠️ Error monitoring {symbol}: {str(e)}")
 
         st.write(f"⏳ Next check in {check_interval} seconds...")
-        time.sleep(check_interval)
+        sleep(check_interval)
 
         if st.session_state.get('stop_monitoring', False):
             break
@@ -1452,7 +1453,7 @@ def get_top_sectors_cached(rate_limit_delay=0.2, stocks_per_sector=5):
             rec = generate_recommendations(data, symbol)
             total_score += rec.get("Score", 0)
             count += 1
-            time.sleep(rate_limit_delay)
+            sleep(rate_limit_delay)
         avg_score = total_score / count if count else 0
         sector_scores[sector] = avg_score
     return sorted(sector_scores.items(), key=lambda x: x[1], reverse=True)[:3]
@@ -1562,7 +1563,7 @@ def analyze_all_stocks(stock_list, batch_size=10, progress_callback=None, status
         processed += len(batch)
         if progress_callback:
             progress_callback(processed / total_stocks)
-        time.sleep(1.5)  # Reduced from 2 to 1.5 seconds
+        sleep(1.5)  # Reduced from 2 to 1.5 seconds
     results_df = pd.DataFrame(results)
     if results_df.empty:
         st.warning("⚠️ No valid stock data retrieved.")
@@ -1589,7 +1590,7 @@ def analyze_intraday_stocks(stock_list, batch_size=10, progress_callback=None, s
         processed += len(batch)
         if progress_callback:
             progress_callback(processed / total_stocks)
-        time.sleep(1.5)  # Reduced from 30 to 1.5 seconds
+        sleep(1.5)  # Reduced from 30 to 1.5 seconds
     results_df = pd.DataFrame(results)
     if results_df.empty:
         return pd.DataFrame()
