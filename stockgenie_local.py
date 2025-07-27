@@ -30,6 +30,12 @@ from dotenv import load_dotenv
 import pandas as pd
 from datetime import datetime, timedelta
 import json 
+from ta.momentum import RSIIndicator, StochasticOscillator
+from ta.trend import MACD, ADXIndicator, IchimokuIndicator
+from ta.volatility import AverageTrueRange, BollingerBands
+from ta.volume import OnBalanceVolumeIndicator, ChaikinMoneyFlowIndicator
+# Configure logging
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
 #load_dotenv()
 
