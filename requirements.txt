@@ -18,6 +18,6 @@ python-dotenv
 pyotp
 chromedriver-py
 selenium
-ratelimiter
+ratelimit
 webdriver-manager
 dhanhq
