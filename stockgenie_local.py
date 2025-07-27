@@ -1086,6 +1086,7 @@ def send_telegram_message(message):
         st.error(f"❌ Failed to send Telegram message: {e}")
         return False
 
+
 def is_market_open():
     """
     Check if the NSE market is open (9:15 AM to 3:30 PM IST, Monday to Friday).
@@ -1093,8 +1094,8 @@ def is_market_open():
     ist = pytz.timezone('Asia/Kolkata')
     now = datetime.now(ist)
     is_weekday = now.weekday() < 5  # Monday to Friday
-    market_open = time(9, 15)  # Use datetime.time
-    market_close = time(15, 30)  # Use datetime.time
+    market_open = time(9, 15)  # Corrected
+    market_close = time(15, 30)  # Corrected
     current_time = now.time()
     return is_weekday and market_open <= current_time <= market_close
 
