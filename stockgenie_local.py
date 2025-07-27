@@ -42,22 +42,26 @@ def dhan_headers():
         "Accept": "application/json"
     }
 
-# Download and cache the Dhan instrument master (once per day)
 @st.cache_data(ttl=86400)
 def load_dhan_instrument_master():
     url = "https://images.dhan.co/api-data/api-scrip-master.csv"
-    df = pd.read_csv(url)
-    # Filter for NSE_EQ segment only
-    df = df[df['segment'] == 'NSE_EQ']
+    df = pd.read_csv(url, low_memory=False)
+    # Filter for NSE Equity
+    df = df[(df['EXCH_ID'] == 'NSE') & (df['SEGMENT'] == 'E')]
     return df
 
 def get_dhan_security_id(symbol):
     df = load_dhan_instrument_master()
-    # Remove .NS, .BO, -EQ for matching
     symbol_clean = symbol.replace(".NS", "").replace(".BO", "").replace("-EQ", "")
-    row = df[df['trading_symbol'] == symbol_clean]
+    # Try to match with SYMBOL_NAME
+    row = df[df['SYMBOL_NAME'] == symbol_clean]
     if not row.empty:
-        return row.iloc[0]['security_id']
+        return row.iloc[0]['SECURITY_ID']
+    # Fallback: try TRADING_SYMBOL if present
+    if 'TRADING_SYMBOL' in df.columns:
+        row = df[df['TRADING_SYMBOL'] == symbol_clean]
+        if not row.empty:
+            return row.iloc[0]['SECURITY_ID']
     return None
 
 def normalize_symbol_dhan(symbol):
