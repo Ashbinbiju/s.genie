@@ -831,8 +831,9 @@ def analyze_stock(data):
             data['Ichimoku_Kijun'] = ichimoku.ichimoku_base_line()
             data['Ichimoku_Span_A'] = ichimoku.ichimoku_a()
             data['Ichimoku_Span_B'] = ichimoku.ichimoku_b()
-            data['Ichimoku_Chikou'] = ichimoku.ichimoku_chikou_line()
-            logging.info(f"Ichimoku computed: Span_A={data['Ichimoku_Span_A'].iloc[-1]}")
+            # Compute Chikou Span manually (shift Close price backward by 26 periods)
+            data['Ichimoku_Chikou'] = data['Close'].shift(-26)
+            logging.info(f"Ichimoku computed: Span_A={data['Ichimoku_Span_A'].iloc[-1]}, Chikou={data['Ichimoku_Chikou'].iloc[-1] if pd.notnull(data['Ichimoku_Chikou'].iloc[-1]) else 'None'}")
         else:
             data['Ichimoku_Tenkan'] = data['Ichimoku_Kijun'] = data['Ichimoku_Span_A'] = data['Ichimoku_Span_B'] = data['Ichimoku_Chikou'] = None
 
@@ -853,12 +854,6 @@ def analyze_stock(data):
                     'Keltner_Lower', 'TRIX', 'Ultimate_Osc', 'CMO', 'VPT']:
             data[col] = None
 
-        return data
-
-    except Exception as e:
-        logging.error(f"Error in analyze_stock: {str(e)}")
-        for col in columns:
-            data[col] = None
         return data
 
     except Exception as e:
@@ -1033,6 +1028,7 @@ def compute_signal_score(data, symbol=None):
 
     logging.info(f"Final score for {symbol}: {score}")
     return min(max(score, -10), 10)
+
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
 def adaptive_recommendation(data, market_regime="normal"):
