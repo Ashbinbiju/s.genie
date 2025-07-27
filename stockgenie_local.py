@@ -1094,8 +1094,8 @@ def is_market_open():
     ist = pytz.timezone('Asia/Kolkata')
     now = datetime.now(ist)
     is_weekday = now.weekday() < 5  # Monday to Friday
-    market_open = datetime.time(9, 15)  # Explicitly use datetime.time
-    market_close = datetime.time(15, 30)  # Explicitly use datetime.time
+    market_open = time(9, 15)  # Use time directly, not datetime.time
+    market_close = time(15, 30)  # Use time directly, not datetime.time
     current_time = now.time()
     return is_weekday and market_open <= current_time <= market_close
 
