@@ -20,12 +20,32 @@ from arch import arch_model
 import warnings
 import sqlite3
 from diskcache import Cache
-from SmartApi import SmartConnect
-import pyotp
 import os
 from dotenv import load_dotenv
 from streamlit import cache_data
 from supabase import create_client, Client
+import os
+import requests
+from dotenv import load_dotenv
+import pandas as pd
+from datetime import datetime, timedelta
+
+load_dotenv()
+
+DHAN_CLIENT_ID = os.getenv("DHAN_CLIENT_ID")
+DHAN_ACCESS_TOKEN = os.getenv("DHAN_ACCESS_TOKEN")
+
+def dhan_headers():
+    return {
+        "access-token": DHAN_ACCESS_TOKEN,
+        "dhan-client-id": DHAN_CLIENT_ID,
+        "Accept": "application/json"
+    }
+
+def normalize_symbol_dhan(symbol):
+    # Remove .NS, .BO, and -EQ
+    return symbol.replace(".NS", "").replace(".BO", "").replace("-EQ", "")
+    
 # --- Supabase setup ---
 SUPABASE_URL = "https://uwnqchncwvcmvoyalwkt.supabase.co"
 SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InV3bnFjaG5jd3ZjbXZveWFsd2t0Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTI5OTE2MDIsImV4cCI6MjA2ODU2NzYwMn0.tADeLmGgiuG3dXJlweNRk8_lmMOcPBYAo6sCxcmaqMs"
@@ -90,41 +110,10 @@ def normalize_symbol(symbol):
         
 load_dotenv()
 
-@st.cache_resource(ttl=3600, show_spinner=False)
-def get_smartapi_client():
-    smart_api = SmartConnect(api_key=API_KEYS["Historical"])
-    totp = pyotp.TOTP(TOTP_SECRET)
-    data = smart_api.generateSession(CLIENT_ID, PASSWORD, totp.now())
-    if data['status']:
-        return smart_api
-    else:
-        st.error(f"⚠️ SmartAPI authentication failed: {data['message']}")
-        return None
-
-
-@st.cache_data(ttl=86400)
-def load_symbol_token_map():
-    try:
-        url = "https://margincalculator.angelbroking.com/OpenAPI_File/files/OpenAPIScripMaster.json"
-        response = requests.get(url)
-        response.raise_for_status()
-        data = response.json()
-        return {entry["symbol"]: entry["token"] for entry in data if "symbol" in entry and "token" in entry}
-    except Exception as e:
-        st.warning(f"⚠️ Failed to load instrument list: {str(e)}")
-        return {}
 
 warnings.filterwarnings("ignore", category=FutureWarning)
 warnings.filterwarnings("ignore", category=UserWarning)
 
-CLIENT_ID = os.getenv("CLIENT_ID")
-PASSWORD = os.getenv("PASSWORD")
-TOTP_SECRET = os.getenv("TOTP_SECRET")
-API_KEYS = {
-    "Historical": "c3C0tMGn",
-    "Trading": os.getenv("TRADING_API_KEY"),
-    "Market": os.getenv("MARKET_API_KEY")
-}
 
 USER_AGENTS = [
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
@@ -350,19 +339,6 @@ SECTORS = {
   ]
 }
 
-def init_smartapi_client():
-    try:
-        smart_api = SmartConnect(api_key=API_KEYS["Historical"])
-        totp = pyotp.TOTP(TOTP_SECRET)
-        data = smart_api.generateSession(CLIENT_ID, PASSWORD, totp.now())
-        if data['status']:
-            return smart_api
-        else:
-            st.error(f"⚠️ SmartAPI authentication failed: {data['message']}")
-            return None
-    except Exception as e:
-        st.error(f"⚠️ Error initializing SmartAPI: {str(e)}")
-        return None
 
 def tooltip(label, explanation):
     return f"{label} 📌 ({explanation})"
@@ -402,84 +378,70 @@ def fetch_nse_stock_list():
         response = session.get(url, timeout=10)
         response.raise_for_status()
         nse_data = pd.read_csv(io.StringIO(response.text))
-        stock_list = [f"{symbol}-EQ" for symbol in nse_data['SYMBOL']]
+        stock_list = [f"{symbol}.NS" for symbol in nse_data['SYMBOL']]
         return stock_list
     except Exception:
         return list(set([stock for sector in SECTORS.values() for stock in sector]))
 
 @retry(max_retries=5, delay=5)
-def fetch_stock_data_with_auth(symbol, period="5y", interval="1d", smart_api=None):
-    symbol = normalize_symbol(symbol)
-    symbol_token_map = load_symbol_token_map()
-    symboltoken = symbol_token_map.get(symbol)
-    if not symboltoken:
-        print(f"[FAILED] Token not found for symbol: {symbol}")
-        st.warning(f"⚠️ Token not found for symbol: {symbol}")
-        return pd.DataFrame()
-    cache_key = f"{symbol}_{period}_{interval}"
-    cached_data = cache.get(cache_key)
-    if cached_data is not None:
-        print(f"[SUCCESS] Loaded {symbol} from cache")
-        return pd.read_pickle(io.BytesIO(cached_data))
+def fetch_stock_data_with_dhan(symbol, period="5y", interval="1d"):
+    """
+    Fetch historical OHLCV data from Dhan API.
+    """
+    symbol = normalize_symbol_dhan(symbol)
+    interval_map = {
+        "1d": "DAY",
+        "1h": "1HOUR",
+        "5m": "5MIN",
+        "15m": "15MIN"
+    }
+    dhan_interval = interval_map.get(interval, "DAY")
 
+    end_date = datetime.now()
+    if period == "5y":
+        start_date = end_date - timedelta(days=5 * 365)
+    elif period == "1y":
+        start_date = end_date - timedelta(days=365)
+    elif period == "1mo":
+        start_date = end_date - timedelta(days=30)
+    else:
+        start_date = end_date - timedelta(days=365)
+
+    url = f"https://api.dhan.co/market/v1/historical/ohlc"
+    params = {
+        "securityId": symbol,
+        "exchangeSegment": "NSE_EQ",
+        "instrument": symbol,
+        "fromDate": start_date.strftime("%Y-%m-%d"),
+        "toDate": end_date.strftime("%Y-%m-%d"),
+        "interval": dhan_interval
+    }
     try:
-        if smart_api is None:
-            smart_api = get_smartapi_client()
-        if not smart_api:
-            print(f"[FAILED] SmartAPI client initialization failed for {symbol}")
-            raise ValueError("SmartAPI client initialization failed")
-
-        end_date = datetime.now()
-        if period == "5y":
-            start_date = end_date - timedelta(days=5 * 365)
-        elif period == "1y":
-            start_date = end_date - timedelta(days=365)
-        elif period == "1mo":
-            start_date = end_date - timedelta(days=30)
-        else:
-            start_date = end_date - timedelta(days=365)
-
-        interval_map = {
-            "1d": "ONE_DAY",
-            "1h": "ONE_HOUR",
-            "5m": "FIVE_MINUTE",
-            "15m": "FIFTEEN_MINUTE"
-        }
-        api_interval = interval_map.get(interval, "ONE_DAY")
-
-        print(f"[DEBUG] Fetching {symbol} (token: {symboltoken}) from {start_date} to {end_date} interval={api_interval}")
-
-        historical_data = smart_api.getCandleData({
-            "exchange": "NSE",
-            "symboltoken": symboltoken,
-            "interval": api_interval,
-            "fromdate": start_date.strftime("%Y-%m-%d %H:%M"),
-            "todate": end_date.strftime("%Y-%m-%d %H:%M")
-        })
-
-        if historical_data['status'] and historical_data['data']:
-            data = pd.DataFrame(historical_data['data'], columns=['Date', 'Open', 'High', 'Low', 'Close', 'Volume'])
-            data['Date'] = pd.to_datetime(data['Date'])
-            data.set_index('Date', inplace=True)
-
-            buffer = io.BytesIO()
-            data.to_pickle(buffer)
-            cache.set(cache_key, buffer.getvalue(), expire=86400)
-            print(f"[SUCCESS] Data fetched for {symbol} ({len(data)} rows)")
-            return data
-        else:
-            print(f"[FAILED] No data for {symbol}: {historical_data.get('message', 'Unknown error')}")
-            st.warning(f"⚠️ No data found for {symbol}: {historical_data.get('message', 'Unknown error')}")
+        response = requests.get(url, headers=dhan_headers(), params=params)
+        response.raise_for_status()
+        data = response.json()
+        if "data" not in data or not data["data"]:
             return pd.DataFrame()
-
+        df = pd.DataFrame(data["data"])
+        # Dhan returns: timestamp, open, high, low, close, volume
+        df['Date'] = pd.to_datetime(df['timestamp'])
+        df = df.rename(columns={
+            "open": "Open",
+            "high": "High",
+            "low": "Low",
+            "close": "Close",
+            "volume": "Volume"
+        })
+        df = df[["Date", "Open", "High", "Low", "Close", "Volume"]]
+        df.set_index("Date", inplace=True)
+        return df
     except Exception as e:
-        print(f"[ERROR] Exception fetching data for {symbol}: {str(e)}")
-        st.warning(f"⚠️ Error fetching data for {symbol}: {str(e)}")
+        print(f"Error fetching Dhan data for {symbol}: {e}")
         return pd.DataFrame()
         
 @lru_cache(maxsize=1000)
 def fetch_stock_data_cached(symbol, period="5y", interval="1d"):
-    return ith_auth(symbol, period, interval)
+    return fetch_stock_data_with_dhan(symbol, period, interval)
 
 def calculate_advance_decline_ratio(stock_list):
     advances = 0
@@ -1006,15 +968,6 @@ def calculate_target_row(row, risk_reward_ratio=3):
             target = row['Close'] * 1.2
         return round(target, 2)
     return None
-
-def fetch_fundamentals(symbol):
-    try:
-        smart_api = init_smartapi_client()
-        if not smart_api:
-            return {'P/E': float('inf'), 'EPS': 0, 'RevenueGrowth': 0}
-        return {'P/E': float('inf'), 'EPS': 0, 'RevenueGrowth': 0}
-    except Exception:
-        return {'P/E': float('inf'), 'EPS': 0, 'RevenueGrowth': 0}
 
 # Improved strategy logic using adaptive regime detection, signal scoring, and volatility-aware filters
 
@@ -1609,9 +1562,8 @@ def insert_top_picks(results_df, pick_type="daily"):
 def analyze_batch(stock_batch, progress_callback=None, status_callback=None):
     results = []
     errors = []
-    smart_api = get_smartapi_client()  # Only once!
     with ThreadPoolExecutor(max_workers=2) as executor:
-        futures = {executor.submit(analyze_stock_parallel, symbol, smart_api): symbol for symbol in stock_batch}
+        futures = {executor.submit(analyze_stock_parallel, symbol): symbol for symbol in stock_batch}
         for future in as_completed(futures):
             symbol = futures[future]
             try:
@@ -1634,9 +1586,9 @@ def analyze_batch(stock_batch, progress_callback=None, status_callback=None):
 
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
-def analyze_stock_parallel(symbol, smart_api):
+def analyze_stock_parallel(symbol):
     try:
-        data = fetch_stock_data_with_auth(symbol, smart_api=smart_api)
+        data = fetch_stock_data_with_dhan(symbol)
         if data.empty or len(data) < 50:
             logging.warning(f"No sufficient data for {symbol}: {len(data)} rows")
             return None
@@ -1837,7 +1789,7 @@ def update_with_latest_prices(df):
     for idx, row in df.iterrows():
         symbol = row['symbol']
         try:
-            latest_data = fetch_stock_data_with_auth(symbol, period="1mo", interval="1d")
+            latest_data = fetch_stock_data_with_dhan(symbol, period="1mo", interval="1d")
             if not latest_data.empty:
                 latest_close = float(latest_data['Close'].iloc[-1])
                 df.at[idx, 'current_price'] = latest_close
@@ -2240,7 +2192,7 @@ def main():
     if st.sidebar.button("Analyze Selected Stock"):
         if symbol:
             with st.spinner("Loading stock data..."):
-                data = fetch_stock_data_with_auth(symbol)
+                data = fetch_stock_data_with_dhan(symbol)
                 if not data.empty:
                     data = analyze_stock(data)
                     recommendations = (adaptive_recommendation(data) if recommendation_mode == "Adaptive"
