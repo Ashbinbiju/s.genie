@@ -471,6 +471,8 @@ def parse_period_to_days(period):
         return 30
 
 @RateLimiter(calls=5, period=1)
+
+@RateLimiter(calls=5, period=1)
 def fetch_stock_data_with_dhan(symbol, period="5y", interval="1d"):
     global data_api_calls
     with data_api_lock:
@@ -480,13 +482,14 @@ def fetch_stock_data_with_dhan(symbol, period="5y", interval="1d"):
             st.error("⚠️ Reached daily Data API limit of 100,000 requests.")
             return pd.DataFrame()
         data_api_calls += 1
+    
     security_id = get_dhan_security_id(symbol)
     if not security_id:
         logging.error(f"No security ID found for {symbol}")
         return pd.DataFrame()
+    
     url = "https://api.dhan.co/v2/charts/historical"
     headers = dhan_headers()
-    # Convert period to days
     days = parse_period_to_days(period)
     payload = {
         "securityId": str(security_id),
@@ -496,14 +499,25 @@ def fetch_stock_data_with_dhan(symbol, period="5y", interval="1d"):
         "fromDate": (pd.Timestamp.now() - pd.to_timedelta(days, unit='D')).strftime("%Y-%m-%d"),
         "toDate": pd.Timestamp.now().strftime("%Y-%m-%d")
     }
+    
     try:
+        logging.info(f"Requesting data for {symbol} with payload: {payload}")
         response = requests.post(url, headers=headers, data=json.dumps(payload), timeout=10)
         response.raise_for_status()
         data = response.json()
+        
+        # Log the full response for debugging
+        logging.debug(f"API response for {symbol}: {data}")
+        
+        if not data.get("data"):
+            logging.warning(f"No data returned for {symbol}. Response: {data}")
+            return pd.DataFrame()
+        
         df = pd.DataFrame(data.get("data", []))
         if df.empty:
-            logging.warning(f"No data returned for {symbol}")
+            logging.warning(f"Empty DataFrame created for {symbol}. Response data: {data.get('data')}")
             return pd.DataFrame()
+        
         df = df.rename(columns={
             "open": "Open",
             "high": "High",
@@ -514,9 +528,25 @@ def fetch_stock_data_with_dhan(symbol, period="5y", interval="1d"):
         })
         df["Date"] = pd.to_datetime(df["Date"])
         df.set_index("Date", inplace=True)
-        return df[["Open", "High", "Low", "Close", "Volume"]]
+        
+        # Validate required columns
+        required_columns = ["Open", "High", "Low", "Close", "Volume"]
+        missing_columns = [col for col in required_columns if col not in df.columns]
+        if missing_columns:
+            logging.error(f"Missing required columns for {symbol}: {missing_columns}")
+            return pd.DataFrame()
+        
+        logging.info(f"Successfully fetched data for {symbol}: {len(df)} rows")
+        return df[required_columns]
+    
+    except requests.exceptions.HTTPError as e:
+        logging.error(f"HTTP error for {symbol}: {e}, Response: {e.response.text if e.response else 'No response'}")
+        return pd.DataFrame()
+    except requests.exceptions.RequestException as e:
+        logging.error(f"Request error for {symbol}: {e}")
+        return pd.DataFrame()
     except Exception as e:
-        logging.error(f"Error fetching data for {symbol}: {e}")
+        logging.error(f"Unexpected error for {symbol}: {e}")
         return pd.DataFrame()
        
 @lru_cache(maxsize=1000)
