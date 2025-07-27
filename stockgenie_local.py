@@ -45,7 +45,7 @@ def dhan_headers():
 # Download and cache the Dhan instrument master (once per day)
 @st.cache_data(ttl=86400)
 def load_dhan_instrument_master():
-    url = "https://api.dhan.co/market/instruments/master"
+    url = "https://images.dhan.co/api-data/api-scrip-master.csv"
     df = pd.read_csv(url)
     # Filter for NSE_EQ segment only
     df = df[df['exchange_segment'] == 'NSE_EQ']
