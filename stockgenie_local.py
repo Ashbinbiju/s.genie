@@ -48,7 +48,7 @@ def load_dhan_instrument_master():
     url = "https://images.dhan.co/api-data/api-scrip-master.csv"
     df = pd.read_csv(url)
     # Filter for NSE_EQ segment only
-    df = df[df['exchange_segment'] == 'NSE_EQ']
+    df = df[df['segment'] == 'NSE_EQ']
     return df
 
 def get_dhan_security_id(symbol):
