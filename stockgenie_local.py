@@ -1089,16 +1089,15 @@ def is_market_open():
     """
     Check if the NSE market is open (9:15 AM to 3:30 PM IST, Monday to Friday).
     """
-return True  # Force True for testing
-"""
-   ist = pytz.timezone('Asia/Kolkata')
-    now = datetime.now(ist)
-    is_weekday = now.weekday() < 5  # Monday to Friday
-    market_open = time(9, 15)  # Use time directly
-    market_close = time(15, 30)  # Use time directly
-    current_time = now.time()
-    return is_weekday and market_open <= current_time <= market_close 
-"""
+    #ist = pytz.timezone('Asia/Kolkata')
+    #now = datetime.now(ist)
+    #is_weekday = now.weekday() < 5  # Monday to Friday
+    #market_open = time(9, 15)  # Use time directly
+    #market_close = time(15, 30)  # Use time directly
+    #current_time = now.time()
+    #return is_weekday and market_open <= current_time <= market_close 
+    return true
+
 
 def monitor_top_picks_continuously(top_picks_df, recommendation_mode="Standard", check_interval=120, alert_cooldown=1800):
     """
