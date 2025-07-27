@@ -140,6 +140,24 @@ def color_code_change(val):
         return ""
 
 def style_picks_df(df):
+    def color_code_action(val):
+        if val == "Book Profit / Hold":
+            return "background-color: #e6f4e6; color: green; font-weight: bold"
+        elif val == "Review / Consider Stop Loss":
+            return "background-color: #f4e6e6; color: red"
+        return ""
+
+    def color_code_change(val):
+        try:
+            val = float(val) if pd.notnull(val) else 0
+            if val > 0:
+                return "background-color: #e6f4e6; color: green"
+            elif val < 0:
+                return "background-color: #f4e6e6; color: red"
+            return ""
+        except:
+            return ""
+
     def color_code_target_hit(val):
         if val == 'Yes':
             return "background-color: #e6f4e6; color: green; font-weight: bold"
@@ -147,16 +165,32 @@ def style_picks_df(df):
             return "background-color: #f4e6e6; color: red"
         return ""
 
-    return df.style.applymap(color_code_action, subset=["what_to_do_now"]) \
+    # Check if required columns exist
+    required_columns = ["What to do now?", "percent_change", "Target_Hit"]
+    missing_columns = [col for col in required_columns if col not in df.columns]
+    if missing_columns:
+        logging.error(f"Missing columns in DataFrame for styling: {missing_columns}")
+        st.warning(f"⚠️ Missing columns for styling: {missing_columns}")
+        # Return unstyled DataFrame with formatting to avoid crashing
+        return df.style.format({
+            'Buy At': "{:.2f}",
+            'Current Price': "{:.2f}",
+            'percent_change': "{:.2f}%",
+            'Target': "{:.2f}",
+            'Stop Loss': "{:.2f}"
+        }, na_rep="N/A")
+
+    return df.style.applymap(color_code_action, subset=["What to do now?"]) \
                   .applymap(color_code_change, subset=["percent_change"]) \
                   .applymap(color_code_target_hit, subset=["Target_Hit"]) \
                   .format({
-                      'buy_at': "{:.2f}",
-                      'current_price': "{:.2f}",
+                      'Buy At': "{:.2f}",
+                      'Current Price': "{:.2f}",
                       'percent_change': "{:.2f}%",
-                      'target': "{:.2f}",
-                      'stop_loss': "{:.2f}"
+                      'Target': "{:.2f}",
+                      'Stop Loss': "{:.2f}"
                   }, na_rep="N/A")
+    
 def add_action_and_change(df):
     def action(row):
         try:
