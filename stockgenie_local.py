@@ -30,7 +30,6 @@ from ta.volatility import AverageTrueRange, BollingerBands
 from ta.volume import OnBalanceVolumeIndicator, ChaikinMoneyFlowIndicator
 from ratelimiter import RateLimiter
 from threading import Lock
-
 data_api_calls = 0
 data_api_lock = Lock()
 # Configure logging
