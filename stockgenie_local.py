@@ -963,6 +963,67 @@ def calculate_target_row(row, risk_reward_ratio=3):
         return round(target, 2)
     return None
 
+# Add this function after your existing helper functions
+def calculate_performance_metrics(row):
+    """Calculate detailed performance metrics for historical picks"""
+    try:
+        buy_at = float(row.get('buy_at', 0))
+        current_price = float(row.get('current_price', 0))
+        target = float(row.get('target', 0))
+        stop_loss = float(row.get('stop_loss', 0))
+        
+        if buy_at == 0:
+            return {
+                'status': 'Invalid Data',
+                'pnl': 0,
+                'pnl_percent': 0,
+                'target_achieved': False,
+                'stop_loss_hit': False,
+                'days_held': 0
+            }
+        
+        # Calculate P&L
+        pnl = current_price - buy_at
+        pnl_percent = (pnl / buy_at) * 100
+        
+        # Check if target achieved or stop loss hit
+        target_achieved = current_price >= target if target > 0 else False
+        stop_loss_hit = current_price <= stop_loss if stop_loss > 0 else False
+        
+        # Calculate days held
+        pick_date = pd.to_datetime(row.get('date', datetime.now()))
+        days_held = (datetime.now() - pick_date).days
+        
+        # Determine status
+        if target_achieved:
+            status = "🎯 Target Achieved"
+        elif stop_loss_hit:
+            status = "🛑 Stop Loss Hit"
+        elif pnl_percent > 5:
+            status = "📈 Profitable"
+        elif pnl_percent < -3:
+            status = "📉 Loss Making"
+        else:
+            status = "➡️ In Progress"
+        
+        return {
+            'status': status,
+            'pnl': pnl,
+            'pnl_percent': pnl_percent,
+            'target_achieved': target_achieved,
+            'stop_loss_hit': stop_loss_hit,
+            'days_held': days_held
+        }
+    except Exception as e:
+        return {
+            'status': 'Error',
+            'pnl': 0,
+            'pnl_percent': 0,
+            'target_achieved': False,
+            'stop_loss_hit': False,
+            'days_held': 0
+        }
+
 # Improved strategy logic using adaptive regime detection, signal scoring, and volatility-aware filters
 
 def classify_market_regime(data):
@@ -1635,8 +1696,16 @@ def update_progress_with_status(progress_bar, loading_text, status_text, progres
     if stock_status:
         status_text.text(stock_status)
 
-def insert_top_picks_supabase(results_df, pick_type="daily"):
-    for _, row in results_df.head(5).iterrows():
+# Update the insert function to only store picks with score >= 7
+def insert_top_picks_supabase_filtered(results_df, pick_type="daily"):
+    # Filter for score >= 7
+    high_score_df = results_df[results_df['Score'] >= 7].head(5)
+    
+    if high_score_df.empty:
+        st.warning("No picks with score ≥ 7 found. Not storing any picks.")
+        return
+    
+    for _, row in high_score_df.iterrows():
         data = {
             "date": datetime.now().strftime('%Y-%m-%d'),
             "symbol": row.get('Symbol') or row.get('symbol', 'Unknown'),
@@ -1659,7 +1728,7 @@ def insert_top_picks_supabase(results_df, pick_type="daily"):
             "reason": row.get('Reason', 'No reason provided'),
             "pick_type": pick_type
         }
-        logging.info(f"Inserting to Supabase: {data}")
+        
         try:
             res = supabase.table("daily_picks").upsert(data).execute()
             if hasattr(res, "error") and res.error:
@@ -1668,7 +1737,8 @@ def insert_top_picks_supabase(results_df, pick_type="daily"):
         except Exception as e:
             logging.error(f"Supabase insert exception: {e}")
             st.error(f"Supabase insert exception: {e}")
-
+    
+    st.success(f"✅ Stored {len(high_score_df)} high-confidence picks (Score ≥ 7)")
 
 @RateLimiter(calls=1, period=1)
 def fetch_latest_price(symbol):
@@ -1848,44 +1918,218 @@ def display_dashboard(symbol=None, data=None, recommendations=None):
                         """)
         else:
             st.warning("⚠️ No intraday picks available due to data issues.")
-
-    # Rest of the display_dashboard function continues here...
-    # Historical picks button
-    # At the top of your display_dashboard function (or before the button block):
-
+def display_enhanced_historical_picks():
+    """Enhanced historical picks display with better UI and tracking"""
+    
     if "show_history" not in st.session_state:
         st.session_state.show_history = False
 
-    if st.button("📜 View Historical Picks"):
-        st.session_state.show_history = not st.session_state.show_history
+    # Styled button
+    col1, col2, col3 = st.columns([1, 2, 1])
+    with col2:
+        if st.button("📜 View Historical Picks & Performance", use_container_width=True):
+            st.session_state.show_history = not st.session_state.show_history
 
     if st.session_state.show_history:
-        st.markdown("### 📜 Historical Picks")
-        if st.button("Close Historical Picks"):
+        st.markdown("---")
+        st.markdown("## 📊 Historical Picks Performance Dashboard")
+        
+        # Close button
+        if st.button("❌ Close Historical View", key="close_history"):
             st.session_state.show_history = False
-            st.experimental_rerun()  # This will immediately hide the view
-
-        res = supabase.table("daily_picks").select("date").order("date", desc=True).execute()
+            st.rerun()
+        
+        # Fetch all historical data
+        res = supabase.table("daily_picks").select("*").order("date", desc=True).execute()
+        
         if res.data:
-            all_dates = sorted({row['date'] for row in res.data}, reverse=True)
-            date_filter = st.selectbox("Select Date", all_dates, key="history_date")
-            res2 = supabase.table("daily_picks").select("*").eq("date", date_filter).execute()
-            if res2.data:
-                df = pd.DataFrame(res2.data)
-                df = update_with_latest_prices(df)
-                df = add_action_and_change(df)
-                for col in ['buy_at', 'current_price', 'target', 'stop_loss', '% Change']:
-                    if col in df.columns:
-                        df[col] = df[col].map(lambda x: f"{x:.2f}" if pd.notnull(x) else x)
-            display_cols = [
-                "symbol", "buy_at", "current_price", "% Change", "recommendation", "What to do now?", "target", "stop_loss"
-            ]
-            styled_df = style_picks_df(df[display_cols])
-            st.dataframe(styled_df, use_container_width=True)
+            all_data_df = pd.DataFrame(res.data)
+            
+            # Update with latest prices
+            all_data_df = update_with_latest_prices(all_data_df)
+            
+            # Calculate performance metrics for each pick
+            performance_data = []
+            for _, row in all_data_df.iterrows():
+                metrics = calculate_performance_metrics(row)
+                performance_data.append({
+                    **row.to_dict(),
+                    **metrics
+                })
+            
+            performance_df = pd.DataFrame(performance_data)
+            
+            # Summary Statistics
+            st.markdown("### 📈 Overall Performance Summary")
+            col1, col2, col3, col4 = st.columns(4)
+            
+            with col1:
+                total_picks = len(performance_df)
+                profitable_picks = len(performance_df[performance_df['pnl_percent'] > 0])
+                success_rate = (profitable_picks / total_picks * 100) if total_picks > 0 else 0
+                st.metric("Success Rate", f"{success_rate:.1f}%", f"{profitable_picks}/{total_picks} picks")
+            
+            with col2:
+                targets_achieved = len(performance_df[performance_df['target_achieved'] == True])
+                target_rate = (targets_achieved / total_picks * 100) if total_picks > 0 else 0
+                st.metric("Targets Achieved", f"{target_rate:.1f}%", f"{targets_achieved} picks")
+            
+            with col3:
+                avg_return = performance_df['pnl_percent'].mean()
+                st.metric("Avg Return", f"{avg_return:.2f}%", 
+                         "Positive" if avg_return > 0 else "Negative")
+            
+            with col4:
+                stop_losses_hit = len(performance_df[performance_df['stop_loss_hit'] == True])
+                sl_rate = (stop_losses_hit / total_picks * 100) if total_picks > 0 else 0
+                st.metric("Stop Losses Hit", f"{sl_rate:.1f}%", f"{stop_losses_hit} picks")
+            
+            st.markdown("---")
+            
+            # Date Filter with better UI
+            st.markdown("### 🗓️ Filter by Date")
+            col1, col2 = st.columns([3, 1])
+            
+            with col1:
+                all_dates = sorted(performance_df['date'].unique(), reverse=True)
+                selected_date = st.selectbox(
+                    "Select Date", 
+                    ["All Dates"] + all_dates,
+                    key="history_date_filter"
+                )
+            
+            with col2:
+                pick_type_filter = st.selectbox(
+                    "Pick Type",
+                    ["All", "daily", "intraday"],
+                    key="pick_type_filter"
+                )
+            
+            # Filter data based on selection
+            if selected_date != "All Dates":
+                filtered_df = performance_df[performance_df['date'] == selected_date]
+            else:
+                filtered_df = performance_df
+            
+            if pick_type_filter != "All":
+                filtered_df = filtered_df[filtered_df['pick_type'] == pick_type_filter]
+            
+            # Display filtered picks with enhanced UI
+            st.markdown("### 📋 Detailed Pick Analysis")
+            
+            if not filtered_df.empty:
+                # Sort by score (only picks with score >= 7)
+                high_score_df = filtered_df[filtered_df['score'] >= 7].sort_values('score', ascending=False)
+                
+                if len(high_score_df) > 0:
+                    st.success(f"Showing {len(high_score_df)} high-confidence picks (Score ≥ 7)")
+                else:
+                    st.info("No picks with score ≥ 7 found. Showing all picks.")
+                    high_score_df = filtered_df.sort_values('score', ascending=False)
+                
+                # Create expandable cards for each pick
+                for idx, row in high_score_df.iterrows():
+                    # Determine card color based on performance
+                    if row['target_achieved']:
+                        card_color = "🟢"
+                    elif row['stop_loss_hit']:
+                        card_color = "🔴"
+                    elif row['pnl_percent'] > 0:
+                        card_color = "🟡"
+                    else:
+                        card_color = "⚪"
+                    
+                    with st.expander(
+                        f"{card_color} {row['symbol']} | {row['status']} | "
+                        f"Score: {row['score']:.1f} | P&L: {row['pnl_percent']:.2f}%"
+                    ):
+                        col1, col2, col3 = st.columns(3)
+                        
+                        with col1:
+                            st.markdown("**📊 Price Information**")
+                            st.write(f"Buy At: ₹{row['buy_at']:.2f}")
+                            st.write(f"Current: ₹{row['current_price']:.2f}")
+                            st.write(f"Target: ₹{row['target']:.2f}")
+                            st.write(f"Stop Loss: ₹{row['stop_loss']:.2f}")
+                        
+                        with col2:
+                            st.markdown("**📈 Performance**")
+                            st.write(f"P&L: ₹{row['pnl']:.2f}")
+                            st.write(f"Return: {row['pnl_percent']:.2f}%")
+                            st.write(f"Days Held: {row['days_held']}")
+                            
+                            # Progress towards target
+                            if row['buy_at'] > 0 and row['target'] > row['buy_at']:
+                                progress = min(
+                                    (row['current_price'] - row['buy_at']) / 
+                                    (row['target'] - row['buy_at']) * 100, 
+                                    100
+                                )
+                                st.progress(progress / 100)
+                                st.caption(f"Target Progress: {progress:.1f}%")
+                        
+                        with col3:
+                            st.markdown("**🎯 Recommendations**")
+                            st.write(f"Type: {row.get('pick_type', 'N/A')}")
+                            st.write(f"Date: {row['date']}")
+                            
+                            # Action recommendation based on current status
+                            if row['target_achieved']:
+                                st.success("✅ Target Achieved - Consider Booking Profits")
+                            elif row['stop_loss_hit']:
+                                st.error("❌ Stop Loss Hit - Exit Position")
+                            elif row['pnl_percent'] > 5:
+                                st.info("💰 Consider Partial Profit Booking")
+                            elif row['pnl_percent'] < -2:
+                                st.warning("⚠️ Monitor Closely - Near Stop Loss")
+                            else:
+                                st.info("📊 Hold - On Track")
+                
+                # Performance Chart
+                st.markdown("### 📊 Performance Visualization")
+                
+                # P&L Distribution
+                fig_pnl = px.histogram(
+                    high_score_df, 
+                    x='pnl_percent', 
+                    nbins=20,
+                    title="P&L Distribution",
+                    labels={'pnl_percent': 'Return (%)', 'count': 'Number of Picks'}
+                )
+                fig_pnl.add_vline(x=0, line_dash="dash", line_color="red")
+                st.plotly_chart(fig_pnl, use_container_width=True)
+                
+                # Success Rate by Date
+                if selected_date == "All Dates":
+                    daily_performance = high_score_df.groupby('date').agg({
+                        'pnl_percent': 'mean',
+                        'target_achieved': 'sum',
+                        'symbol': 'count'
+                    }).reset_index()
+                    daily_performance.columns = ['date', 'avg_return', 'targets_hit', 'total_picks']
+                    
+                    fig_timeline = px.line(
+                        daily_performance, 
+                        x='date', 
+                        y='avg_return',
+                        title="Average Return by Date",
+                        markers=True
+                    )
+                    st.plotly_chart(fig_timeline, use_container_width=True)
+                
+                # Export functionality
+                st.markdown("### 💾 Export Data")
+                csv = high_score_df.to_csv(index=False)
+                st.download_button(
+                    label="📥 Download Performance Report (CSV)",
+                    data=csv,
+                    file_name=f"stock_picks_performance_{datetime.now().strftime('%Y%m%d')}.csv",
+                    mime="text/csv"
+                )
+            else:
+                st.warning("No picks found for the selected criteria.")
         else:
-            st.warning("No picks found for this date.")
-    else:
-        st.warning("No historical data available.")
+            st.warning("No historical data available.")
         
     # Display stock analysis if symbol is available
     if st.session_state.symbol and st.session_state.data is not None and st.session_state.recommendations is not None:
