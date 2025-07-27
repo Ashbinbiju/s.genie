@@ -1938,52 +1938,6 @@ def display_dashboard(symbol=None, data=None, recommendations=None):
             st.write(f"**{tooltip('Score', TOOLTIPS['Score'])}**: {recommendations.get('Score', 'N/A')}/7")
             st.write(f"**Volatility**: {assess_risk(data)}")
 
-        # Backtest form
-        with st.form(key="backtest_form"):
-            col1, col2 = st.columns(2)
-            with col1:
-                swing_button = st.form_submit_button("🔍 Backtest Swing Strategy")
-            with col2:
-                intraday_button = st.form_submit_button("🔍 Backtest Intraday Strategy")
-            
-            if swing_button or intraday_button:
-                strategy = "Swing" if swing_button else "Intraday"
-                with st.spinner(f"Running {strategy} Strategy backtest..."):
-                    data_hash = hash(data.to_string())
-                    backtest_results = backtest_stock(data, symbol, strategy=strategy, _data_hash=data_hash)
-                    if strategy == "Swing":
-                        st.session_state.backtest_results_swing = backtest_results
-                    else:
-                        st.session_state.backtest_results_intraday = backtest_results
-
-        # Backtest results
-        for strategy, results_key in [("Swing", "backtest_results_swing"), ("Intraday", "backtest_results_intraday")]:
-            backtest_results = st.session_state.get(results_key)
-            if backtest_results:
-                st.subheader(f"📈 Backtest Results ({strategy} Strategy)")
-                st.write(f"**Total Return**: {backtest_results['total_return']:.2f}%")
-                st.write(f"**Annualized Return**: {backtest_results['annual_return']:.2f}%")
-                st.write(f"**Sharpe Ratio**: {backtest_results['sharpe_ratio']:.2f}")
-                st.write(f"**Max Drawdown**: {backtest_results['max_drawdown']:.2f}%")
-                st.write(f"**Number of Trades**: {backtest_results['trades']}")
-                st.write(f"**Win Rate**: {backtest_results['win_rate']:.2f}%")
-                with st.expander("Trade Details"):
-                    for trade in backtest_results["trade_details"]:
-                        profit = trade.get("profit", 0)
-                        st.write(f"Entry: {trade['entry_date']} @ ₹{trade['entry_price']:.2f}, "
-                                 f"Exit: {trade['exit_date']} @ ₹{trade['exit_price']:.2f}, "
-                                 f"Profit: ₹{profit:.2f}")
-
-                fig = px.line(data, x=data.index, y='Close', title=f"{symbol.split('-')[0]} Price with Signals")
-                if backtest_results["buy_signals"]:
-                    buy_dates, buy_prices = zip(*backtest_results["buy_signals"])
-                    fig.add_scatter(x=buy_dates, y=buy_prices, mode='markers', name='Buy Signals',
-                                   marker=dict(color='green', symbol='triangle-up', size=10))
-                if backtest_results["sell_signals"]:
-                    sell_dates, sell_prices = zip(*backtest_results["sell_signals"])
-                    fig.add_scatter(x=sell_dates, y=sell_prices, mode='markers', name='Sell Signals',
-                                   marker=dict(color='red', symbol='triangle-down', size=10))
-                st.plotly_chart(fig, use_container_width=True)
 
         # Technical Indicators
         st.subheader("📊 Technical Indicators")
@@ -2008,52 +1962,6 @@ def display_dashboard(symbol=None, data=None, recommendations=None):
                 with col2:
                     value = round(value, 2) if pd.notnull(value) else "N/A"
                     st.write(f"**{tooltip(name, tooltip_text)}**: {value}")
-
-        # Price Chart
-        st.subheader("📈 Price Chart with Indicators")
-        fig = px.line(data, x=data.index, y='Close', title=f"{symbol.split('-')[0]} Price")
-        if 'SMA_50' in data.columns and data['SMA_50'].notnull().any():
-            fig.add_scatter(x=data.index, y=data['SMA_50'], mode='lines', name='SMA 50', line=dict(color='orange'))
-        if 'SMA_200' in data.columns and data['SMA_200'].notnull().any():
-            fig.add_scatter(x=data.index, y=data['SMA_200'], mode='lines', name='SMA 200', line=dict(color='red'))
-        if 'Upper_Band' in data.columns and data['Upper_Band'].notnull().any():
-            fig.add_scatter(x=data.index, y=data['Upper_Band'], mode='lines', name='Bollinger Upper', line=dict(color='green', dash='dash'))
-        if 'Lower_Band' in data.columns and data['Lower_Band'].notnull().any():
-            fig.add_scatter(x=data.index, y=data['Lower_Band'], mode='lines', name='Bollinger Lower', line=dict(color='green', dash='dash'))
-        if 'Ichimoku_Span_A' in data.columns and data['Ichimoku_Span_A'].notnull().any():
-            fig.add_scatter(x=data.index, y=data['Ichimoku_Span_A'], mode='lines', name='Ichimoku Span A', line=dict(color='purple'))
-        if 'Ichimoku_Span_B' in data.columns and data['Ichimoku_Span_B'].notnull().any():
-            fig.add_scatter(x=data.index, y=data['Ichimoku_Span_B'], mode='lines', name='Ichimoku Span B', line=dict(color='purple', dash='dash'))
-        st.plotly_chart(fig, use_container_width=True)
-
-        # Monte Carlo Simulation
-        st.subheader("📊 Monte Carlo Simulation")
-        simulations = monte_carlo_simulation(data)
-        sim_df = pd.DataFrame(simulations).T
-        sim_df.index = [data.index[-1] + timedelta(days=i) for i in range(len(sim_df))]
-        fig_sim = px.line(sim_df, title="Monte Carlo Price Projections (30 Days)")
-        st.plotly_chart(fig_sim, use_container_width=True)
-
-        # RSI and MACD
-        st.subheader("📊 RSI and MACD")
-        fig_ind = px.line(data, x=data.index, y='RSI', title="RSI")
-        fig_ind.add_hline(y=70, line_dash="dash", line_color="red")
-        fig_ind.add_hline(y=30, line_dash="dash", line_color="green")
-        st.plotly_chart(fig_ind, use_container_width=True)
-
-        fig_macd = px.line(data, x=data.index, y=['MACD', 'MACD_signal'], title="MACD")
-        st.plotly_chart(fig_macd, use_container_width=True)
-
-        # Volume Analysis
-        st.subheader("📊 Volume Analysis")
-        fig_vol = px.bar(data, x=data.index, y='Volume', title="Volume")
-        if 'Volume_Spike' in data.columns:
-            spike_data = data[data['Volume_Spike'] == True]
-            if not spike_data.empty:
-                fig_vol.add_scatter(x=spike_data.index, y=spike_data['Volume'], mode='markers', name='Volume Spike',
-                                   marker=dict(color='red', size=10))
-        st.plotly_chart(fig_vol, use_container_width=True)
-    
             
 def main():
     init_database()
