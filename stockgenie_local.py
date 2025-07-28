@@ -492,22 +492,32 @@ def fetch_stock_data_with_dhan(symbol, period="5y", interval="1d"):
         logging.error(f"No security ID found for {symbol}")
         return pd.DataFrame()
 
-    # Determine endpoint and date format based on interval
     now = pd.Timestamp.now(tz='Asia/Kolkata')
-    if interval in ["1m", "5m", "15m", "30m", "60m"]:
+    is_market_open_flag = is_market_open()
+
+    # Determine the latest trading day
+    if now.weekday() < 5:  # Monday to Friday
+        if is_market_open_flag:
+            latest_trading_day = now  # Use current time for real-time data
+        else:
+            latest_trading_day = now.replace(hour=15, minute=30, second=0)  # Use market close time for today
+    else:  # Saturday or Sunday
+        # Go back to the last Friday
+        days_to_subtract = now.weekday() - 4 if now.weekday() >= 5 else 0
+        latest_trading_day = now - pd.Timedelta(days=days_to_subtract)
+        latest_trading_day = latest_trading_day.replace(hour=15, minute=30, second=0)
+
+    # Determine endpoint and parameters
+    if is_market_open_flag and interval in ["1m", "5m", "15m", "30m", "60m"]:
         url = "https://api.dhan.co/v2/charts/intraday"
         days = min(parse_period_to_days(period), 5)  # Intraday limited to 5 days
-        # Adjust for non-trading days (weekends)
-        if now.weekday() >= 5:  # Saturday (5) or Sunday (6)
-            days_to_subtract = now.weekday() - 4  # Go back to last Friday
-            now = now - pd.Timedelta(days=days_to_subtract)
-        from_date = (now - pd.Timedelta(days=days)).strftime("%Y-%m-%d 09:15:00")
-        to_date = now.strftime("%Y-%m-%d 15:30:00")
+        from_date = (latest_trading_day - pd.Timedelta(days=days)).strftime("%Y-%m-%d 09:15:00")
+        to_date = now.strftime("%Y-%m-%d %H:%M:%S")  # Real-time data up to now
     else:
         url = "https://api.dhan.co/v2/charts/historical"
         days = parse_period_to_days(period)
-        from_date = (now - pd.Timedelta(days=days)).strftime("%Y-%m-%d")
-        to_date = now.strftime("%Y-%m-%d")
+        from_date = (latest_trading_day - pd.Timedelta(days=days)).strftime("%Y-%m-%d")
+        to_date = latest_trading_day.strftime("%Y-%m-%d")  # Use latest trading day's close
 
     headers = dhan_headers()
     payload = {
@@ -558,6 +568,14 @@ def fetch_stock_data_with_dhan(symbol, period="5y", interval="1d"):
         if missing_columns:
             logging.error(f"Missing required columns for {symbol}: {missing_columns}")
             return pd.DataFrame()
+
+        # Ensure the latest data is for the expected trading day
+        if not is_market_open_flag and not df.empty:
+            latest_date = df.index.max().date()
+            expected_date = latest_trading_day.date()
+            if latest_date < expected_date:
+                logging.warning(f"Data for {symbol} is outdated (latest: {latest_date}, expected: {expected_date})")
+                st.warning(f"⚠️ Data for {symbol} is from {latest_date}, not {expected_date}. Using older data.")
 
         logging.info(f"Successfully fetched data for {symbol}: {len(df)} rows")
         return df[required_columns]
@@ -1676,11 +1694,14 @@ def insert_top_picks_supabase(results_df, pick_type="daily"):
         except Exception as e:
             logging.error(f"Supabase insert exception: {e}")
             st.error(f"Supabase insert exception: {e}")
-
+            
 
 @RateLimiter(calls=1, period=1)
 def fetch_latest_price(symbol):
-    data = fetch_stock_data_with_dhan(symbol, period="1mo", interval="1d")
+    if is_market_open():
+        data = fetch_stock_data_with_dhan(symbol, period="1d", interval="1m")
+    else:
+        data = fetch_stock_data_with_dhan(symbol, period="1mo", interval="1d")
     if not data.empty:
         return float(data['Close'].iloc[-1])
     return None
