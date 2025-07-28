@@ -1716,6 +1716,24 @@ def update_with_latest_prices(df):
         except Exception as e:
             st.warning(f"Could not fetch latest price for {symbol}: {e}")
     return df
+
+def get_latest_close(symbol):
+    # Always fetch last 5 daily candles
+    data = fetch_stock_data_with_dhan(symbol, period="5d", interval="1d")
+    if data.empty:
+        return None, None
+    # Get the row with the latest date
+    last_row = data.iloc[-1]
+    last_close = last_row['Close']
+    last_date = last_row.name  # Index is Date
+    return last_close, last_date
+
+# Usage in your Streamlit app
+last_close, last_date = get_latest_close(symbol)
+if last_close is not None:
+    st.write(f"Last close: ₹{last_close:.2f} (as of {last_date.strftime('%A, %d %b %Y')})")
+else:
+    st.warning("No data available for this stock.")
         
 def display_dashboard(symbol=None, data=None, recommendations=None):
     # Initialize session state
