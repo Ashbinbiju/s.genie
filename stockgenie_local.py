@@ -1571,7 +1571,7 @@ def analyze_all_stocks(stock_list, batch_size=10, progress_callback=None, status
         processed += len(batch)
         if progress_callback:
             progress_callback(processed / total_stocks)
-        sleep(10) 
+        sleep(5) 
     results_df = pd.DataFrame(results)
     if results_df.empty:
         st.warning("⚠️ No valid stock data retrieved.")
@@ -1598,7 +1598,7 @@ def analyze_intraday_stocks(stock_list, batch_size=10, progress_callback=None, s
         processed += len(batch)
         if progress_callback:
             progress_callback(processed / total_stocks)
-        sleep(10) 
+        sleep(5) 
     results_df = pd.DataFrame(results)
     if results_df.empty:
         return pd.DataFrame()
