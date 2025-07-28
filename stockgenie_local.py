@@ -1571,7 +1571,7 @@ def analyze_all_stocks(stock_list, batch_size=10, progress_callback=None, status
         processed += len(batch)
         if progress_callback:
             progress_callback(processed / total_stocks)
-        sleep(4)  # Reduced from 2 to 1.5 seconds
+        sleep(30) 
     results_df = pd.DataFrame(results)
     if results_df.empty:
         st.warning("⚠️ No valid stock data retrieved.")
@@ -1598,7 +1598,7 @@ def analyze_intraday_stocks(stock_list, batch_size=10, progress_callback=None, s
         processed += len(batch)
         if progress_callback:
             progress_callback(processed / total_stocks)
-        sleep(30)  # Reduced from 30 to 1.5 seconds
+        sleep(30) 
     results_df = pd.DataFrame(results)
     if results_df.empty:
         return pd.DataFrame()
@@ -1760,7 +1760,7 @@ def display_dashboard(symbol=None, data=None, recommendations=None):
         
         results_df = analyze_all_stocks(
             selected_stocks,
-            batch_size=10,
+            batch_size=5,
             progress_callback=lambda x: update_progress_with_status(progress_bar, loading_text, status_text, x),
             status_callback=lambda status: status_text.text(status)
         )
@@ -1818,7 +1818,7 @@ def display_dashboard(symbol=None, data=None, recommendations=None):
         
         intraday_results = analyze_intraday_stocks(
             selected_stocks,
-            batch_size=10,
+            batch_size=5,
             progress_callback=lambda x: update_progress(progress_bar, loading_text, x, loading_messages),
             status_callback=lambda status: status_text.text(status)
         )
