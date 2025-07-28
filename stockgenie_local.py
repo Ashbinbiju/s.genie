@@ -475,168 +475,7 @@ def parse_period_to_days(period):
     except ValueError as e:
         logging.error(f"Invalid period format: {period}, error: {e}. Defaulting to 30 days.")
         return 30
-        
-@RateLimiter(calls=5, period=1)
-def fetch_stock_data_with_dhan(symbol, period="5y", interval="1d"):
-    global data_api_calls
-    with data_api_lock:
-        if data_api_calls >= 90000:
-            st.warning(f"⚠️ Approaching Data API daily limit: {data_api_calls}/100000")
-        if data_api_calls >= 100000:
-            st.error("⚠️ Reached daily Data API limit of 100,000 requests.")
-            return pd.DataFrame()
-        data_api_calls += 1
 
-    security_id = get_dhan_security_id(symbol)
-    if not security_id:
-        logging.error(f"No security ID found for {symbol}")
-        return pd.DataFrame()
-
-    now = pd.Timestamp.now(tz='Asia/Kolkata')
-    is_market_open_flag = is_market_open()
-    
-    # Determine the current trading day
-    if now.weekday() < 5:  # Monday to Friday
-        if now.hour < 9 or (now.hour == 9 and now.minute < 15):
-            # Before market opens - use previous trading day
-            current_trading_day = now - pd.Timedelta(days=1 if now.weekday() > 0 else 3)
-        else:
-            # After 9:15 AM - use today
-            current_trading_day = now
-    else:  # Weekend
-        # Use Friday
-        days_since_friday = now.weekday() - 4
-        current_trading_day = now - pd.Timedelta(days=days_since_friday)
-
-    # For daily interval requests after market hours, we need today's data
-    if interval == "1d" and not is_market_open_flag and now.weekday() < 5 and now.hour >= 15:
-        # Try to get today's complete data using intraday endpoint
-        logging.info(f"Fetching today's complete data for {symbol} after market hours")
-        
-        # First, get historical data up to yesterday
-        days = parse_period_to_days(period)
-        yesterday = current_trading_day - pd.Timedelta(days=1)
-        from_date = (yesterday - pd.Timedelta(days=days)).strftime("%Y-%m-%d")
-        to_date = yesterday.strftime("%Y-%m-%d")
-        
-        url = "https://api.dhan.co/v2/charts/historical"
-        headers = dhan_headers()
-        payload = {
-            "securityId": str(security_id),
-            "exchangeSegment": "NSE_EQ",
-            "instrument": "EQUITY",
-            "interval": interval,
-            "fromDate": from_date,
-            "toDate": to_date
-        }
-        
-        historical_df = pd.DataFrame()
-        try:
-            response = requests.post(url, headers=headers, data=json.dumps(payload), timeout=10)
-            response.raise_for_status()
-            data = response.json()
-            
-            # Process historical data
-            api_data = data.get("data", data)
-            if isinstance(api_data, dict) and all(isinstance(v, list) for v in api_data.values()):
-                n = len(next(iter(api_data.values())))
-                row_data = [{k: api_data[k][i] for k in api_data} for i in range(n)]
-                historical_df = pd.DataFrame(row_data)
-            elif isinstance(api_data, list):
-                historical_df = pd.DataFrame(api_data)
-                
-            if not historical_df.empty:
-                historical_df = historical_df.rename(columns={
-                    "open": "Open", "high": "High", "low": "Low", 
-                    "close": "Close", "volume": "Volume", "timestamp": "Date"
-                })
-                historical_df["Date"] = pd.to_datetime(historical_df["Date"])
-                historical_df.set_index("Date", inplace=True)
-        except Exception as e:
-            logging.error(f"Error fetching historical data: {e}")
-        
-        # Now get today's data from intraday endpoint
-        today_start = current_trading_day.replace(hour=9, minute=15, second=0)
-        today_end = current_trading_day.replace(hour=15, minute=30, second=0)
-        
-        url = "https://api.dhan.co/v2/charts/intraday"
-        payload = {
-            "securityId": str(security_id),
-            "exchangeSegment": "NSE_EQ",
-            "instrument": "EQUITY",
-            "interval": "5m",  # Use 5-minute intervals for better aggregation
-            "fromDate": today_start.strftime("%Y-%m-%d %H:%M:%S"),
-            "toDate": today_end.strftime("%Y-%m-%d %H:%M:%S")
-        }
-        
-        try:
-            response = requests.post(url, headers=headers, data=json.dumps(payload), timeout=10)
-            response.raise_for_status()
-            data = response.json()
-            
-            api_data = data.get("data", data)
-            if isinstance(api_data, dict) and all(isinstance(v, list) for v in api_data.values()):
-                if len(api_data.get("open", [])) > 0:
-                    # Aggregate today's intraday data to daily
-                    today_open = api_data["open"][0]
-                    today_high = max(api_data["high"])
-                    today_low = min(api_data["low"])
-                    today_close = api_data["close"][-1]
-                    today_volume = sum(api_data["volume"])
-                    
-                    # Create today's daily candle
-                    today_df = pd.DataFrame([{
-                        "Date": current_trading_day.replace(hour=15, minute=30, second=0),
-                        "Open": today_open,
-                        "High": today_high,
-                        "Low": today_low,
-                        "Close": today_close,
-                        "Volume": today_volume
-                    }])
-                    today_df.set_index("Date", inplace=True)
-                    
-                    # Combine historical and today's data
-                    if not historical_df.empty:
-                        combined_df = pd.concat([historical_df, today_df])
-                        combined_df = combined_df[~combined_df.index.duplicated(keep='last')]
-                        logging.info(f"Successfully fetched today's data for {symbol}. Close: {today_close}")
-                        return combined_df[["Open", "High", "Low", "Close", "Volume"]]
-                    else:
-                        return today_df[["Open", "High", "Low", "Close", "Volume"]]
-        except Exception as e:
-            logging.warning(f"Failed to fetch today's intraday data: {e}")
-            # Fall back to historical data only
-            if not historical_df.empty:
-                return historical_df[["Open", "High", "Low", "Close", "Volume"]]
-    
-    # For all other cases, use your existing logic
-    if is_market_open_flag and interval in ["1m", "5m", "15m", "30m", "60m"]:
-        url = "https://api.dhan.co/v2/charts/intraday"
-        from_date = (now - pd.Timedelta(days=5)).strftime("%Y-%m-%d 09:15:00")
-        to_date = now.strftime("%Y-%m-%d %H:%M:%S")
-    else:
-        url = "https://api.dhan.co/v2/charts/historical"
-        days = parse_period_to_days(period)
-        from_date = (current_trading_day - pd.Timedelta(days=days)).strftime("%Y-%m-%d")
-        to_date = current_trading_day.strftime("%Y-%m-%d")
-
-    headers = dhan_headers()
-    payload = {
-        "securityId": str(security_id),
-        "exchangeSegment": "NSE_EQ",
-        "instrument": "EQUITY",
-        "interval": interval,
-        "fromDate": from_date,
-        "toDate": to_date
-    }
-
-    try:
-        logging.info(f"Requesting data for {symbol} with payload: {payload}")
-        response = requests.post(url, headers=headers, data=json.dumps(payload), timeout=10)
-        response.raise_for_status()
-        data = response.json()
-
-        api_data = data.get("data", data)
 @RateLimiter(calls=5, period=1)
 def fetch_stock_data_with_dhan(symbol, period="5y", interval="1d"):
     global data_api_calls
@@ -877,6 +716,12 @@ def fetch_stock_data_with_dhan(symbol, period="5y", interval="1d"):
     except Exception as e:
         logging.error(f"Error fetching data for {symbol}: {e}")
         return pd.DataFrame()
+        
+          
+
+
+        
+            
        
 @lru_cache(maxsize=1000)
 def fetch_stock_data_cached(symbol, period="5y", interval="1d"):
