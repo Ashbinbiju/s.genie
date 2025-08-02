@@ -449,7 +449,7 @@ def parse_period_to_days(period):
         logging.error(f"Invalid period format: {period}, error: {e}. Defaulting to 30 days.")
         return 30
         
-@RateLimiter(calls=1, period=2.0) # Adjusted period from 1.5 to 2.0 seconds for higher robustness
+@RateLimiter(calls=1, period=3.0) # Adjusted period from 1.5 to 2.0 seconds for higher robustness
 @lru_cache(maxsize=1000) # Caches results in memory for speed
 def fetch_stock_data_cached(symbol, period="5y", interval="1d"):
     """
