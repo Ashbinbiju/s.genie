@@ -490,7 +490,7 @@ def parse_period_to_days(period):
         logging.error(f"Invalid period format: {period}, error: {e}. Defaulting to 30 days.")
         return 30
         
-@RateLimiter(calls=5, period=1)
+@RateLimiter(calls=10, period=1)
 def fetch_stock_data_with_dhan(symbol, period="5y", interval="1d"):
     global data_api_calls
     with data_api_lock:
@@ -1265,6 +1265,7 @@ def generate_recommendations(data, symbol=None):
     except Exception as e:
         logging.error(f"Error generating recommendations for {symbol}: {str(e)}")
         return recommendations
+        
 @st.cache_data(ttl=3600)
 def get_top_sectors_cached(rate_limit_delay=0.2, stocks_per_sector=5):
     sector_scores = {}
@@ -1448,6 +1449,7 @@ def analyze_stock_parallel(symbol):
         if data.empty or len(data) < 50:
             logging.warning(f"No sufficient data for {symbol}: {len(data)} rows")
             return None
+            time.sleep(0.12)
         data = analyze_stock(data)
         recommendation_mode = st.session_state.get('recommendation_mode', 'Standard')
         if recommendation_mode == "Adaptive":
@@ -1635,7 +1637,7 @@ def insert_top_picks_supabase(results_df, pick_type="daily"):
             st.error(f"Supabase insert exception: {e}")
 
 
-@RateLimiter(calls=1, period=1)
+@RateLimiter(calls=10, period=1)
 def fetch_latest_price(symbol):
     data = fetch_stock_data_with_dhan(symbol, period="1mo", interval="1d")
     if not data.empty:
