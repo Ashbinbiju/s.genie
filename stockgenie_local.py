@@ -3,7 +3,7 @@ import ta
 import logging
 import numpy as np
 import streamlit as st
-from datetime import datetime, timedelta, date # Import date object
+from datetime import datetime, timedelta, date 
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from functools import lru_cache
 import plotly.express as px
@@ -56,7 +56,7 @@ def retry(max_retries=5, delay=5, backoff_factor=2, jitter=1):
                         st.warning(f"Rate limit hit. Retrying {func.__name__} after {sleep_time:.2f} seconds...")
                         time.sleep(sleep_time)
                     else:
-                        raise e # Re-raise if not a 429
+                        raise e 
                 except (requests.exceptions.RequestException, ConnectionError) as e:
                     retries += 1
                     if retries == max_retries:
@@ -82,7 +82,7 @@ def load_dhan_instrument_master():
         return df
     except Exception as e:
         logging.error(f"Failed to load Dhan instrument master: {e}")
-        return pd.DataFrame() # Return empty DataFrame on failure
+        return pd.DataFrame() 
 
 
 def get_dhan_security_id(symbol):
@@ -779,17 +779,6 @@ def analyze_stock(data):
         if can_compute_indicator(data, 'Ultimate_Osc'):
             data['Ultimate_Osc'] = ta.momentum.UltimateOscillator(high=data['High'], low=data['Low'], close=data['Close']).ultimate_oscillator()
         
-        # CMO removed due to persistent AttributeError in logs
-        # if can_compute_indicator(data, 'CMO'):
-        #     try:
-        #         data['CMO'] = ta.momentum.ChandeMomentumOscillator(close=data['Close'], window=14).chande_momentum_oscillator()
-        #     except AttributeError:
-        #         logging.error("CMO calculation failed: ChandeMomentumOscillator not found in ta.momentum. Skipping CMO.")
-        #         data['CMO'] = np.nan # Ensure column exists but is NaN
-        #     except Exception as e:
-        #         logging.error(f"Error computing CMO: {e}. Skipping CMO.")
-        #         data['CMO'] = np.nan
-
         if can_compute_indicator(data, 'VPT'):
             data['VPT'] = ta.volume.VolumePriceTrendIndicator(data['Close'], data['Volume']).volume_price_trend()
 
@@ -1380,7 +1369,7 @@ def backtest_stock(data, symbol, strategy="Swing", _data_hash=None):
     position = None
     entry_price = 0
     # Store dates as Python datetime.date objects to avoid Pandas Timestamp pickling issues
-    entry_date = None 
+    entry_date_str = None # Will store string format YYYY-MM-DD
     trades = []
     returns = []
     
@@ -1430,7 +1419,7 @@ def backtest_stock(data, symbol, strategy="Swing", _data_hash=None):
         trade_high_price = current_day_data['High']
         trade_low_price = current_day_data['Low']
         trade_close_price = current_day_data['Close']
-        trade_date = current_day_data.name.date() # Convert Pandas Timestamp to datetime.date
+        trade_date_str = current_day_data.name.strftime('%Y-%m-%d') # Convert to string here
         
         # Add small random slippage
         slippage_pct = random.uniform(0.001, 0.005) # 0.1% to 0.5%
@@ -1447,8 +1436,8 @@ def backtest_stock(data, symbol, strategy="Swing", _data_hash=None):
 
             position = "Long"
             entry_price = entry_price_with_slippage
-            entry_date = trade_date # Store as datetime.date
-            results["buy_signals"].append((entry_date, entry_price)) 
+            entry_date_str = trade_date_str # Store as string
+            results["buy_signals"].append((trade_date_str, entry_price)) # Store as string
         
         elif position == "Long":
             explicit_sell = "Sell" in signal
@@ -1479,16 +1468,16 @@ def backtest_stock(data, symbol, strategy="Swing", _data_hash=None):
                     returns.append(profit / entry_price)
                     
                 trades.append({
-                    "entry_date": entry_date, # This is a datetime.date
+                    "entry_date": entry_date_str, # Already a string
                     "entry_price": entry_price,
-                    "exit_date": trade_date, # This is a datetime.date
+                    "exit_date": trade_date_str, # A string
                     "exit_price": exit_price,
                     "profit": profit,
                     "reason": exit_reason
                 })
-                results["sell_signals"].append((trade_date, exit_price)) 
+                results["sell_signals"].append((trade_date_str, exit_price)) # A string
                 entry_price = 0
-                entry_date = None
+                entry_date_str = None
     
     # If a position is still open at the very end of the data, close it at the last available close price
     if position == "Long":
@@ -1499,14 +1488,14 @@ def backtest_stock(data, symbol, strategy="Swing", _data_hash=None):
         if entry_price != 0:
             returns.append(profit / entry_price)
         trades.append({
-            "entry_date": entry_date,
+            "entry_date": entry_date_str,
             "entry_price": entry_price,
-            "exit_date": full_analyzed_data.index[-1].date(), # Convert to datetime.date
+            "exit_date": full_analyzed_data.index[-1].strftime('%Y-%m-%d'), # Convert to string
             "exit_price": exit_price,
             "profit": profit,
             "reason": "Closed at end of period"
         })
-        results["sell_signals"].append((full_analyzed_data.index[-1].date(), exit_price)) # Convert to datetime.date
+        results["sell_signals"].append((full_analyzed_data.index[-1].strftime('%Y-%m-%d'), exit_price)) # Convert to string
 
 
     if trades:
@@ -2223,20 +2212,21 @@ def display_dashboard(symbol=None, data=None, recommendations=None):
                 with st.expander("Trade Details"):
                     for trade in backtest_results["trade_details"]:
                         profit = trade.get("profit", 0)
-                        # The .strftime should now correctly apply to datetime.date objects
-                        entry_date_str = trade['entry_date'].strftime('%Y-%m-%d')
-                        exit_date_str = trade['exit_date'].strftime('%Y-%m-%d')
-                        st.write(f"Entry: {entry_date_str} @ ₹{trade['entry_price']:.2f}, "
-                                 f"Exit: {exit_date_str} @ ₹{trade['exit_price']:.2f}, "
+                        # Dates are now already strings in YYYY-MM-DD format
+                        st.write(f"Entry: {trade['entry_date']} @ ₹{trade['entry_price']:.2f}, "
+                                 f"Exit: {trade['exit_date']} @ ₹{trade['exit_price']:.2f}, "
                                  f"Profit: ₹{profit:.2f} ({trade['reason']})")
 
                 fig = px.line(data, x=data.index, y='Close', title=f"{normalize_symbol_dhan(symbol)} Price with Signals")
+                # When adding scatter points, if the buy_signals/sell_signals dates are strings, convert them back to datetime objects for plotly
                 if backtest_results["buy_signals"]:
-                    buy_dates, buy_prices = zip(*backtest_results["buy_signals"])
+                    buy_dates_str, buy_prices = zip(*backtest_results["buy_signals"])
+                    buy_dates = pd.to_datetime(list(buy_dates_str))
                     fig.add_scatter(x=list(buy_dates), y=list(buy_prices), mode='markers', name='Buy Signals',
                                    marker=dict(color='green', symbol='triangle-up', size=10))
                 if backtest_results["sell_signals"]:
-                    sell_dates, sell_prices = zip(*backtest_results["sell_signals"])
+                    sell_dates_str, sell_prices = zip(*backtest_results["sell_signals"])
+                    sell_dates = pd.to_datetime(list(sell_dates_str))
                     fig.add_scatter(x=list(sell_dates), y=list(sell_prices), mode='markers', name='Sell Signals',
                                    marker=dict(color='red', symbol='triangle-down', size=10))
                 st.plotly_chart(fig, use_container_width=True)
