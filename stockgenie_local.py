@@ -175,13 +175,13 @@ USER_AGENTS = [
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
     "Mozilla/5.0 (Macintosh; Intel Mac OS X 14_4_1) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:124.0) Gecko/20100101 Firefox/124.0",
-    "Mozilla/5.0 (Macintosh; Intel Mac OS X 14_4_2) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.4 Safari/605.1.15",
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 14_4_2) AppleWebKit/605.1.15 (KHTML, like Gecko) Version=17.4 Safari=605.1.15",
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Edge/124.0.2478.80 Safari/537.36",
     "Mozilla/5.0 (Linux; Android 14; SM-S928B) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Mobile Safari/537.36",
     "Mozilla/5.0 (iPhone; CPU iPhone OS 17_4_1 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.4 Mobile/15E148 Safari/604.1",
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36 OPR/110.0.0.0",
     "Mozilla/5.0 (Linux; Android 14; SM-S928B) AppleWebKit/537.36 (KHTML, like Gecko) SamsungBrowser/23.0 Chrome/115.0.0.0 Mobile Safari/537.36",
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36 Brave/124.0.0.0"
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Brave/124.0.0.0 Safari/537.36"
 ]
 
 cache = Cache("stock_data_cache")
@@ -461,7 +461,7 @@ def parse_period_to_days(period):
         logging.error(f"Invalid period format: {period}, error: {e}. Defaulting to 30 days.")
         return 30
         
-@RateLimiter(calls=5, period=1)
+@RateLimiter(calls=1, period=1.5) # ADJUSTED: 1 call per 1.5 seconds per thread
 def fetch_stock_data_with_dhan(symbol, period="5y", interval="1d"):
     global data_api_calls
     with data_api_lock:
@@ -1391,7 +1391,7 @@ def get_top_sectors_cached(rate_limit_delay=0.2, stocks_per_sector=5):
         sector_scores[sector] = avg_score
     return sorted(sector_scores.items(), key=lambda x: x[1], reverse=True)[:3]
 
-@st.cache_data(ttl=3600) # This should be the only cache decorator
+@st.cache_data(ttl=3600) # This is the corrected line 1449
 def backtest_stock(data, symbol, strategy="Swing", _data_hash=None):
     results = {
         "total_return": 0,
@@ -1548,7 +1548,8 @@ def init_database():
 def analyze_batch(stock_batch, progress_callback=None, status_callback=None):
     results = []
     errors = []
-    with ThreadPoolExecutor(max_workers=5) as executor:
+    # ADJUSTED: Reduced max_workers for ThreadPoolExecutor
+    with ThreadPoolExecutor(max_workers=3) as executor: # Reduced from 5 to 3
         futures = {executor.submit(analyze_stock_parallel, symbol): symbol for symbol in stock_batch}
         for future in as_completed(futures):
             symbol = futures[future]
@@ -1654,7 +1655,8 @@ def analyze_all_stocks(stock_list, batch_size=10, progress_callback=None, status
         processed += len(batch)
         if progress_callback:
             progress_callback(processed / total_stocks)
-        time.sleep(max(2, batch_size / 5))
+        # ADJUSTED: Increased sleep between batches
+        time.sleep(max(5, batch_size / 2)) # Example: 5 seconds min, or 0.5s per stock
         
     results_df = pd.DataFrame(results)
     if results_df.empty:
@@ -1695,7 +1697,8 @@ def analyze_intraday_stocks(stock_list, batch_size=3, progress_callback=None, st
         if progress_callback:
             progress_callback(processed / total_stocks)
         
-        time.sleep(30)
+        # ADJUSTED: Increased sleep between batches
+        time.sleep(max(5, batch_size / 2)) # Consistent sleep with analyze_all_stocks
     
     results_df = pd.DataFrame(results)
     if results_df.empty:
