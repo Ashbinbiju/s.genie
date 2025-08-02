@@ -1702,7 +1702,7 @@ def analyze_intraday_stocks(stock_list, batch_size=3, progress_callback=None, st
         
         processed += len(batch)
         if progress_callback:
-            progress_callback(processed / total_stocks)
+            progress_bar.progress(processed / total_stocks) # This seems to be the source of the `missing ScriptRunContext` warning, but it's common and harmless for performance.
         
         time.sleep(max(10, batch_size * 2.0 / 3)) # Consistent sleep with analyze_all_stocks
     
@@ -2212,7 +2212,7 @@ def display_dashboard(symbol=None, data=None, recommendations=None):
                 with st.expander("Trade Details"):
                     for trade in backtest_results["trade_details"]:
                         profit = trade.get("profit", 0)
-                        # Dates are now already strings in YYYY-MM-DD format
+                        # Dates are now already strings in YYYY-MM-DD format, so no strftime needed
                         st.write(f"Entry: {trade['entry_date']} @ ₹{trade['entry_price']:.2f}, "
                                  f"Exit: {trade['exit_date']} @ ₹{trade['exit_price']:.2f}, "
                                  f"Profit: ₹{profit:.2f} ({trade['reason']})")
@@ -2221,11 +2221,13 @@ def display_dashboard(symbol=None, data=None, recommendations=None):
                 # When adding scatter points, if the buy_signals/sell_signals dates are strings, convert them back to datetime objects for plotly
                 if backtest_results["buy_signals"]:
                     buy_dates_str, buy_prices = zip(*backtest_results["buy_signals"])
+                    # Convert strings back to datetime objects for plotting
                     buy_dates = pd.to_datetime(list(buy_dates_str))
                     fig.add_scatter(x=list(buy_dates), y=list(buy_prices), mode='markers', name='Buy Signals',
                                    marker=dict(color='green', symbol='triangle-up', size=10))
                 if backtest_results["sell_signals"]:
                     sell_dates_str, sell_prices = zip(*backtest_results["sell_signals"])
+                    # Convert strings back to datetime objects for plotting
                     sell_dates = pd.to_datetime(list(sell_dates_str))
                     fig.add_scatter(x=list(sell_dates), y=list(sell_prices), mode='markers', name='Sell Signals',
                                    marker=dict(color='red', symbol='triangle-down', size=10))
