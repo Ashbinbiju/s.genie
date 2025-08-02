@@ -442,7 +442,7 @@ def parse_period_to_days(period):
         logging.error(f"Invalid period format: {period}, error: {e}. Defaulting to 30 days.")
         return 30
         
-@RateLimiter(calls=1, period=3.5) # 1 call per 1.5 seconds per thread
+@RateLimiter(calls=1, period=2.0) # Adjusted period from 1.5 to 2.0 for higher robustness
 @lru_cache(maxsize=1000) # Caches results in memory for speed
 def fetch_stock_data_cached(symbol, period="5y", interval="1d"):
     """
@@ -481,8 +481,6 @@ def fetch_stock_data_cached(symbol, period="5y", interval="1d"):
         response = requests.post(url, headers=headers, data=json.dumps(payload), timeout=10)
         response.raise_for_status()
         data = response.json()
-
-        # logging.debug(f"API response for {symbol}: {data}") # Too verbose for production logs
 
         api_data = data.get("data", data)
 
@@ -759,10 +757,6 @@ def analyze_stock(data):
         # --- FIX for ChandeMomentumOscillator Error ---
         # The error "module 'ta.momentum' has no attribute 'ChandeMomentumOscillator'" suggests an older/incompatible `ta` version.
         # If your 'ta' library is updated to >= 0.11.0, this should work. If not, you might need to manually install or skip this indicator.
-        # For now, I'll keep the call, assuming a compatible version is used.
-        # If the error persists, you might need to:
-        # 1. Upgrade `python-ta`: `pip install --upgrade ta`
-        # 2. If it still fails, manually implement CMO or remove it.
         if can_compute_indicator(data, 'CMO'):
             try:
                 data['CMO'] = ta.momentum.ChandeMomentumOscillator(close=data['Close'], window=14).chande_momentum_oscillator()
@@ -1322,7 +1316,7 @@ def get_top_sectors_cached(rate_limit_delay=0.2, stocks_per_sector=5):
         total_score = 0
         count = 0
         for symbol in stocks[:stocks_per_sector]:
-            data = fetch_stock_data_cached(symbol) # Uses cached data
+            data = fetch_stock_data_cached(symbol) # Uses cached data, which is rate-limited
             if data.empty:
                 continue
             data = analyze_stock(data)
@@ -1331,7 +1325,7 @@ def get_top_sectors_cached(rate_limit_delay=0.2, stocks_per_sector=5):
                 total_score += score
                 count += 1
             # A short sleep to spread out load if not fully rate-limited
-            # time.sleep(rate_limit_delay) # Removed here as fetch_stock_data_cached already rate-limits
+            # time.sleep(rate_limit_delay) # Removed here as fetch_stock_data_cached already rate-limits internally
         avg_score = total_score / count if count else 0
         sector_scores[sector] = avg_score
     return sorted(sector_scores.items(), key=lambda x: x[1], reverse=True)[:3]
@@ -1644,10 +1638,10 @@ def analyze_all_stocks(stock_list, batch_size=10, progress_callback=None, status
         processed += len(batch)
         if progress_callback:
             progress_callback(processed / total_stocks)
-        # Increased sleep between batches to respect overall API rate limits
-        # (1 call/1.5s * 3 workers = 2 calls/sec). So, for a batch of 10, need at least 5 seconds.
-        # Adjusted sleep to ensure enough time for concurrent requests to complete and clear rate limit.
-        time.sleep(max(10, batch_size * 3.5 / 3)) # Ensure enough time passes for all calls in batch across workers
+        # Sleep to ensure enough time passes for all calls in batch across workers
+        # (1 call/2.0s * 3 workers = 1.5 calls/sec). So, for a batch of 10, need at least 10/1.5 = 6.67 seconds.
+        # min(10, ...) ensures a minimum 10 second delay which is very safe.
+        time.sleep(max(10, batch_size * 2.0 / 3))
         
     results_df = pd.DataFrame(results)
     if results_df.empty:
@@ -1695,7 +1689,7 @@ def analyze_intraday_stocks(stock_list, batch_size=3, progress_callback=None, st
         if progress_callback:
             progress_callback(processed / total_stocks)
         
-        time.sleep(max(10, batch_size * 3.5 / 3)) # Consistent sleep with analyze_all_stocks
+        time.sleep(max(10, batch_size * 2.0 / 3)) # Consistent sleep with analyze_all_stocks
     
     results_df = pd.DataFrame(results)
     if results_df.empty:
@@ -1806,7 +1800,6 @@ def insert_top_picks_supabase(results_df, pick_type="daily"):
         logging.info(f"Attempting to upsert {len(clean_records)} records to Supabase table 'daily_picks'.")
         # Ensure your Supabase table 'daily_picks' has all these columns with appropriate types.
         # e.g., 'symbol' TEXT, 'score' REAL, 'current_price' REAL, 'recommendation' TEXT etc.
-        # The error about 'position_size_shares' missing indicates these columns are needed.
         res = supabase.table("daily_picks").upsert(clean_records).execute()
         if hasattr(res, "data") and res.data:
             logging.info(f"Supabase upsert successful for {len(res.data)} records.")
