@@ -538,7 +538,7 @@ def fetch_stock_data_cached(symbol, period="5y", interval="1d"):
         # Check if the 'Date' column is numeric, convert to int for pd.to_datetime
         if pd.api.types.is_numeric_dtype(df['Date']):
             # Assuming 'ns' (nanoseconds) based on your observation
-            # Common epoch units are 's' (seconds), 'ms' (milliseconds), 'us' (microseconds), 'ns' (nanoseconds)
+            # pd.to_datetime needs integer or float. If it's a mix, errors='coerce' is good.
             df["Date"] = pd.to_datetime(df["Date"], unit='ns', errors='coerce')
         else:
             # If it's not numeric, assume it's already a string date and convert normally
@@ -1378,8 +1378,7 @@ def backtest_stock(data, symbol, strategy="Swing", _data_hash=None):
     
     position = None
     entry_price = 0
-    # Store dates as string format YYYY-MM-DD to avoid Timestamp pickling issues
-    entry_date_str = None 
+    entry_date_str = None # Will store string format YYYY-MM-DD
     trades = []
     returns = []
     
