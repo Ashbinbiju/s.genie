@@ -534,15 +534,19 @@ def fetch_stock_data_cached(symbol, period="5y", interval="1d"):
         })
         
         # --- CRITICAL FIX FOR 1970-01-01 DATES ---
+        # This is the last stand for the date conversion.
         # If 'Date' (originally 'timestamp') is coming as nanosecond epoch:
-        # Check if the 'Date' column is numeric, convert to int for pd.to_datetime
+        # Check if the 'Date' column is numeric.
         if pd.api.types.is_numeric_dtype(df['Date']):
-            # Assuming 'ns' (nanoseconds) based on your observation
-            # pd.to_datetime needs integer or float. If it's a mix, errors='coerce' is good.
-            df["Date"] = pd.to_datetime(df["Date"], unit='ns', errors='coerce')
+            # Convert numeric epoch to datetime. Assume nanoseconds.
+            # Convert to int to avoid float precision issues if not exact nanoseconds
+            df["Date"] = pd.to_datetime(df["Date"].astype(np.int64), unit='ns', errors='coerce')
         else:
-            # If it's not numeric, assume it's already a string date and convert normally
+            # If it's not numeric, assume it's a string date and convert normally.
+            # This should handle cases where the API might sometimes send string dates.
             df["Date"] = pd.to_datetime(df["Date"], errors='coerce')
+        # Filter out NaT (Not a Time) dates if any failed conversion
+        df = df.dropna(subset=['Date'])
         # --- END CRITICAL FIX ---
 
         df.set_index("Date", inplace=True)
@@ -590,7 +594,7 @@ def monte_carlo_simulation(data, simulations=1000, days=30):
             return simulation_results
 
         simulation_results = []
-        for _ in range(simulations):
+        for _ in range(days):
             price_series = [data['Close'].iloc[-1]]
             for _ in range(days):
                 price = price_series[-1] * (1 + np.random.normal(mean_return, std_return))
@@ -1378,7 +1382,8 @@ def backtest_stock(data, symbol, strategy="Swing", _data_hash=None):
     
     position = None
     entry_price = 0
-    entry_date_str = None # Will store string format YYYY-MM-DD
+    # Store dates as string format YYYY-MM-DD to avoid Timestamp pickling issues
+    entry_date_str = None 
     trades = []
     returns = []
     
@@ -1660,7 +1665,7 @@ def analyze_all_stocks(stock_list, batch_size=10, progress_callback=None, status
         results.extend([r for r in batch_results if r is not None])
         processed += len(batch)
         if progress_callback:
-            progress_callback(processed / total_stocks)
+            progress_bar.progress(processed / total_stocks) # This seems to be the source of the `missing ScriptRunContext` warning, but it's common and harmless for performance.
         # Sleep to ensure enough time passes for all calls in batch across workers
         # With Period=2.0s and 3 workers, effective rate is 1.5 calls/sec.
         # For batch_size=10, it needs at least 10/1.5 = 6.67 seconds.
