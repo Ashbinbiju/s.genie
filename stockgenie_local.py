@@ -1469,7 +1469,7 @@ def get_top_sectors_cached(rate_limit_delay=0.2, stocks_per_sector=5):
         sector_scores[sector] = avg_score
     return sorted(sector_scores.items(), key=lambda x: x[1], reverse=True)[:3]
 
-@st.cache_data
+
 @st.cache_data(ttl=3600)
 def backtest_stock(data, symbol, strategy="Swing", _data_hash=None):
     results = {
