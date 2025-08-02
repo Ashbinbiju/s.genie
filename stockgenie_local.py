@@ -267,9 +267,7 @@ SECTORS = {
     "AUBANK.NS", "POONAWALLA.NS", "SUNDARMFIN.NS", "IIFL.NS", "ABCAPITAL.NS",
     "L&TFH.NS", "CREDITACC.NS", "MANAPPURAM.NS", "DHANI.NS", "JMFINANCIL.NS",
     "EDELWEISS.NS", "INDIASHLTR.NS", "MOTILALOFS.NS", "CDSL.NS", "BSE.NS",
-    "MCX.NS", "ANGELONE.NS", "KARURVYSYA.NS", "RBLBANK.NS", "PNB.NS",
-    "CANBK.NS", "UNIONBANK.NS", "IOB.NS", "YESBANK.NS", "UCOBANK.NS",
-    "BANKINDIA.NS", "CENTRALBK.NS", "IDBI.NS", "J&KBANK.NS", "DCBBANK.NS",
+    "MCX.NS", "ANGELONE.NS", "KARURVYSYA.NS", "CUB.NS", "J&KBANK.NS", "DCBBANK.NS",
     "FEDERALBNK.NS", "SOUTHBANK.NS", "CSBBANK.NS", "TMB.NS", "KTKBANK.NS",
     "EQUITASBNK.NS", "UJJIVANSFB.NS", "BANDHANBNK.NS", "SURYODAY.NS", "FSL.NS",
     "PSB.NS", "PFS.NS", "HDFCAMC.NS", "NAM-INDIA.NS", "UTIAMC.NS", "ABSLAMC.NS",
@@ -534,7 +532,19 @@ def fetch_stock_data_cached(symbol, period="5y", interval="1d"):
             "volume": "Volume",
             "timestamp": "Date"
         })
-        df["Date"] = pd.to_datetime(df["Date"])
+        
+        # --- CRITICAL FIX FOR 1970-01-01 DATES ---
+        # If 'Date' (originally 'timestamp') is coming as nanosecond epoch:
+        # Check if the 'Date' column is numeric, convert to int for pd.to_datetime
+        if pd.api.types.is_numeric_dtype(df['Date']):
+            # Assuming 'ns' (nanoseconds) based on your observation
+            # Common epoch units are 's' (seconds), 'ms' (milliseconds), 'us' (microseconds), 'ns' (nanoseconds)
+            df["Date"] = pd.to_datetime(df["Date"], unit='ns', errors='coerce')
+        else:
+            # If it's not numeric, assume it's already a string date and convert normally
+            df["Date"] = pd.to_datetime(df["Date"], errors='coerce')
+        # --- END CRITICAL FIX ---
+
         df.set_index("Date", inplace=True)
 
         required_columns = ["Open", "High", "Low", "Close", "Volume"]
@@ -1368,8 +1378,8 @@ def backtest_stock(data, symbol, strategy="Swing", _data_hash=None):
     
     position = None
     entry_price = 0
-    # Store dates as Python datetime.date objects to avoid Pandas Timestamp pickling issues
-    entry_date_str = None # Will store string format YYYY-MM-DD
+    # Store dates as string format YYYY-MM-DD to avoid Timestamp pickling issues
+    entry_date_str = None 
     trades = []
     returns = []
     
