@@ -40,16 +40,58 @@ def dhan_headers():
         "Content-Type": "application/json"
     }
 
+def retry(max_retries=5, delay=5, backoff_factor=2, jitter=1):
+    def decorator(func):
+        def wrapper(*args, **kwargs):
+            retries = 0
+            while retries < max_retries:
+                try:
+                    return func(*args, **kwargs)
+                except requests.exceptions.HTTPError as e:
+                    if e.response.status_code == 429:
+                        retries += 1
+                        if retries == max_retries:
+                            raise e
+                        sleep_time = (delay * (backoff_factor ** retries)) + random.uniform(0, jitter)
+                        st.warning(f"Rate limit hit. Retrying after {sleep_time:.2f} seconds...")
+                        time.sleep(sleep_time)
+                    else:
+                        raise e # Re-raise if not a 429
+                except (requests.exceptions.RequestException, ConnectionError) as e:
+                    retries += 1
+                    if retries == max_retries:
+                        raise e
+                    sleep_time = (delay * (backoff_factor ** retries)) + random.uniform(0, jitter)
+                    time.sleep(sleep_time)
+            # If function returns nothing in loop, return None
+            return None # Should ideally be unreachable if func always returns on success or raises permanently
+        return wrapper
+    return decorator
+
 @st.cache_data(ttl=86400)
+@retry(max_retries=3, delay=5) # Add retry for master file download
 def load_dhan_instrument_master():
     url = "https://images.dhan.co/api-data/api-scrip-master.csv"
-    df = pd.read_csv(url, low_memory=False)
-    df = df[(df['SEM_EXM_EXCH_ID'] == 'NSE') & (df['SEM_SEGMENT'] == 'E')]
-    return df
+    try:
+        session = requests.Session()
+        session.headers.update({"User-Agent": random.choice(USER_AGENTS)})
+        response = session.get(url, timeout=10)
+        response.raise_for_status()
+        df = pd.read_csv(io.StringIO(response.text), low_memory=False)
+        df = df[(df['SEM_EXM_EXCH_ID'] == 'NSE') & (df['SEM_SEGMENT'] == 'E')]
+        return df
+    except Exception as e:
+        logging.error(f"Failed to load Dhan instrument master: {e}")
+        return pd.DataFrame() # Return empty DataFrame on failure
+
 
 def get_dhan_security_id(symbol):
     """Get Dhan security ID for a given symbol"""
     df = load_dhan_instrument_master()
+    if df.empty:
+        logging.error(f"Instrument master data is empty, cannot find security ID for {symbol}")
+        return None
+
     symbol_clean = normalize_symbol_dhan(symbol).upper()
 
     for column in ['SEM_SMST_SECURITY_ID', 'SM_SYMBOL_NAME', 'SEM_TRADING_SYMBOL', 'SEM_CUSTOM_SYMBOL']:
@@ -73,8 +115,15 @@ def test_dhan_connection():
         "client-id": DHAN_CLIENT_ID
     }
     
+    # Use a highly liquid stock for testing like Reliance, which always has intraday data
+    # Security ID for RELIANCE is often 2885 for NSE_EQ. Check your instrument master.
+    test_security_id = get_dhan_security_id("RELIANCE.NS") 
+    if not test_security_id:
+        logging.error("Could not find security ID for RELIANCE.NS, cannot test Dhan connection.")
+        return False
+
     payload = {
-        "securityId": "1333", # Example security ID for testing
+        "securityId": str(test_security_id), 
         "exchangeSegment": "NSE_EQ",
         "instrument": "EQUITY",
         "fromDate": (pd.Timestamp.now() - pd.Timedelta(days=1)).strftime("%Y-%m-%d"),
@@ -114,7 +163,7 @@ def color_code_action(val):
 
 def color_code_change(val):
     try:
-        v = float(val.replace('₹', '').replace('%', '')) # Remove currency and percentage symbols for parsing
+        v = float(str(val).replace('₹', '').replace('%', '')) # Convert to string then remove currency/percentage
         if v > 0:
             return "color: green"
         elif v < 0:
@@ -182,7 +231,7 @@ TOOLTIPS = {
     "CMF": "Chaikin Money Flow - Buying/selling pressure",
     "TRIX": "Triple Exponential Average - Momentum oscillator with triple smoothing",
     "Ultimate_Osc": "Ultimate Oscillator - Combines short, medium, and long-term momentum",
-    "CMO": "Chande Momentum Oscillator - Measures raw momentum (-100 to 100)",
+    # "CMO": "Chande Momentum Oscillator - Measures raw momentum (-100 to 100)", # Removed due to consistent errors
     "VPT": "Volume Price Trend - Tracks trend strength with price and volume",
     "Score": "Measured by RSI, MACD, Ichimoku Cloud, and ATR volatility. Low score = weak signal, high score = strong signal.",
     "OBV": "On-Balance Volume - Measures buying and selling pressure by adding/subtracting volume based on price changes."
@@ -381,32 +430,6 @@ SECTORS = {
 def tooltip(label, explanation):
     return f"{label} 📌 ({explanation})"
 
-def retry(max_retries=5, delay=5, backoff_factor=2, jitter=1):
-    def decorator(func):
-        def wrapper(*args, **kwargs):
-            retries = 0
-            while retries < max_retries:
-                try:
-                    return func(*args, **kwargs)
-                except requests.exceptions.HTTPError as e:
-                    if e.response.status_code == 429:
-                        retries += 1
-                        if retries == max_retries:
-                            raise e
-                        sleep_time = (delay * (backoff_factor ** retries)) + random.uniform(0, jitter)
-                        st.warning(f"Rate limit hit. Retrying after {sleep_time:.2f} seconds...")
-                        time.sleep(sleep_time)
-                    else:
-                        raise e
-                except (requests.exceptions.RequestException, ConnectionError) as e:
-                    retries += 1
-                    if retries == max_retries:
-                        raise e
-                    sleep_time = (delay * (backoff_factor ** retries)) + random.uniform(0, jitter)
-                    time.sleep(sleep_time)
-        return wrapper
-    return decorator
-
 @retry(max_retries=5, delay=5)
 def fetch_nse_stock_list():
     url = "https://archives.nseindia.com/content/equities/EQUITY_L.csv"
@@ -442,7 +465,7 @@ def parse_period_to_days(period):
         logging.error(f"Invalid period format: {period}, error: {e}. Defaulting to 30 days.")
         return 30
         
-@RateLimiter(calls=1, period=2.0) # Adjusted period from 1.5 to 2.0 for higher robustness
+@RateLimiter(calls=1, period=2.0) # Adjusted period from 1.5 to 2.0 seconds for higher robustness
 @lru_cache(maxsize=1000) # Caches results in memory for speed
 def fetch_stock_data_cached(symbol, period="5y", interval="1d"):
     """
@@ -526,6 +549,10 @@ def fetch_stock_data_cached(symbol, period="5y", interval="1d"):
         df = df.dropna(subset=required_columns)
 
         logging.info(f"Successfully fetched data for {symbol}: {len(df)} rows")
+        
+        # Add a small random sleep AFTER successful fetch to reduce burst impact on server-side limits
+        time.sleep(random.uniform(0.1, 0.5))
+        
         return df[required_columns]
 
     except requests.exceptions.HTTPError as e:
@@ -624,7 +651,7 @@ INDICATOR_MIN_LENGTHS = {
     'CMF': 20,
     'TRIX': 15, # EMA of EMA of EMA(15) -> 3*15 + ~ some offset for start
     'Ultimate_Osc': 28, # Longest period for oscillator (7, 14, 28)
-    'CMO': 14,
+    # 'CMO': 14, # Removed due to consistent errors
     'VPT': 1, # Requires 1 data point conceptually
     'Volume_Spike': 20 # Requires Avg_Volume (20-period moving average)
 }
@@ -670,7 +697,7 @@ def analyze_stock(data):
         'Upper_Band', 'Middle_Band', 'Lower_Band', 'SlowK', 'SlowD', 'ATR', 'ADX', 'OBV',
         'Avg_Volume', 'Volume_Spike', 'Ichimoku_Tenkan', 'Ichimoku_Kijun',
         'Ichimoku_Span_A', 'Ichimoku_Span_B', 'Ichimoku_Chikou', 'CMF',
-        'TRIX', 'Ultimate_Osc', 'CMO', 'VPT', 'ATR_pct', 'DMP', 'DMN', 'ADX_Slope'
+        'TRIX', 'Ultimate_Osc', 'VPT', 'ATR_pct', 'DMP', 'DMN', 'ADX_Slope' # CMO removed
     ]
 
     # Initialize all columns to NaN to ensure they exist before computation
@@ -754,18 +781,16 @@ def analyze_stock(data):
         if can_compute_indicator(data, 'Ultimate_Osc'):
             data['Ultimate_Osc'] = ta.momentum.UltimateOscillator(high=data['High'], low=data['Low'], close=data['Close']).ultimate_oscillator()
         
-        # --- FIX for ChandeMomentumOscillator Error ---
-        # The error "module 'ta.momentum' has no attribute 'ChandeMomentumOscillator'" suggests an older/incompatible `ta` version.
-        # If your 'ta' library is updated to >= 0.11.0, this should work. If not, you might need to manually install or skip this indicator.
-        if can_compute_indicator(data, 'CMO'):
-            try:
-                data['CMO'] = ta.momentum.ChandeMomentumOscillator(close=data['Close'], window=14).chande_momentum_oscillator()
-            except AttributeError:
-                logging.error("CMO calculation failed: ChandeMomentumOscillator not found in ta.momentum. Skipping CMO.")
-                data['CMO'] = np.nan # Ensure column exists but is NaN
-            except Exception as e:
-                logging.error(f"Error computing CMO: {e}. Skipping CMO.")
-                data['CMO'] = np.nan
+        # CMO removed due to persistent AttributeError in logs
+        # if can_compute_indicator(data, 'CMO'):
+        #     try:
+        #         data['CMO'] = ta.momentum.ChandeMomentumOscillator(close=data['Close'], window=14).chande_momentum_oscillator()
+        #     except AttributeError:
+        #         logging.error("CMO calculation failed: ChandeMomentumOscillator not found in ta.momentum. Skipping CMO.")
+        #         data['CMO'] = np.nan # Ensure column exists but is NaN
+        #     except Exception as e:
+        #         logging.error(f"Error computing CMO: {e}. Skipping CMO.")
+        #         data['CMO'] = np.nan
 
         if can_compute_indicator(data, 'VPT'):
             data['VPT'] = ta.volume.VolumePriceTrendIndicator(data['Close'], data['Volume']).volume_price_trend()
@@ -1324,8 +1349,6 @@ def get_top_sectors_cached(rate_limit_delay=0.2, stocks_per_sector=5):
             if score is not None:
                 total_score += score
                 count += 1
-            # A short sleep to spread out load if not fully rate-limited
-            # time.sleep(rate_limit_delay) # Removed here as fetch_stock_data_cached already rate-limits internally
         avg_score = total_score / count if count else 0
         sector_scores[sector] = avg_score
     return sorted(sector_scores.items(), key=lambda x: x[1], reverse=True)[:3]
@@ -1639,8 +1662,9 @@ def analyze_all_stocks(stock_list, batch_size=10, progress_callback=None, status
         if progress_callback:
             progress_callback(processed / total_stocks)
         # Sleep to ensure enough time passes for all calls in batch across workers
-        # (1 call/2.0s * 3 workers = 1.5 calls/sec). So, for a batch of 10, need at least 10/1.5 = 6.67 seconds.
-        # min(10, ...) ensures a minimum 10 second delay which is very safe.
+        # With Period=2.0s and 3 workers, effective rate is 1.5 calls/sec.
+        # For batch_size=10, it needs at least 10/1.5 = 6.67 seconds.
+        # `max(10, ...)` ensures a minimum 10 second delay, which is very safe.
         time.sleep(max(10, batch_size * 2.0 / 3))
         
     results_df = pd.DataFrame(results)
@@ -1814,7 +1838,7 @@ def insert_top_picks_supabase(results_df, pick_type="daily"):
         st.error(f"Supabase upsert exception: {e}")
 
 
-@RateLimiter(calls=1, period=1)
+@RateLimiter(calls=1, period=1) # Rate limit this call to prevent burst for latest prices
 def fetch_latest_price(symbol):
     # Fetch 2 days of 1-day interval data to ensure we get today's close if available
     data = fetch_stock_data_cached(symbol, period="2d", interval="1d") # Use cached fetcher
@@ -2235,7 +2259,7 @@ def display_dashboard(symbol=None, data=None, recommendations=None):
             ("Ichimoku Span B", 'Ichimoku_Span_B', TOOLTIPS['Ichimoku']),
             ("CMF", 'CMF', TOOLTIPS['CMF']),
             ("OBV", 'OBV', TOOLTIPS['OBV']),
-            ("CMO", 'CMO', TOOLTIPS['CMO']),
+            # ("CMO", 'CMO', TOOLTIPS['CMO']), # Removed due to error
             ("TRIX", 'TRIX', TOOLTIPS['TRIX']),
             ("Ultimate Oscillator", 'Ultimate_Osc', TOOLTIPS['Ultimate_Osc']),
             ("VPT", 'VPT', TOOLTIPS['VPT'])
@@ -2320,7 +2344,7 @@ def main():
             if test_dhan_connection():
                 st.success("✅ Dhan API is working!")
             else:
-                st.error("❌ Dhan API connection failed. Check your credentials and network.")
+                st.error("❌ Dhan API connection failed. Check your credentials and network. See logs for details.")
                 
     st.sidebar.title("🔍 Stock Selection")
     stock_list = fetch_nse_stock_list()
