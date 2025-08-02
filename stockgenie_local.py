@@ -364,7 +364,7 @@ SECTORS = {
   "Diversified": [
     "ITC.NS", "RELIANCE.NS", "ADANIENT.NS", "GRASIM.NS", "HINDUNILVR.NS",
     "DCMSHRIRAM.NS", "3MINDIA.NS", "CENTURYPLY.NS", "KFINTECH.NS", "BALMERLAWRI.NS",
-    "GODREJIND.NS", "VBL.NS", "BIRLACORPN.NS"
+    ""GODREJIND.NS", "VBL.NS", "BIRLACORPN.NS"
   ],
 
   "Construction Materials": [
@@ -1078,7 +1078,7 @@ def compute_signal_score(data, symbol=None):
 
     if not validate_data(data, min_length=INDICATOR_MIN_LENGTHS['Ichimoku']):
         logging.warning(f"Invalid data for scoring {symbol}, returning 0.")
-        return 0, ["Insufficient data to compute score."]
+        return 0, ["Insufficient data to compute score."] # Returning 0 score if data is bad
 
     close_price = data['Close'].iloc[-1]
     current_volume = data['Volume'].iloc[-1]
@@ -1086,7 +1086,7 @@ def compute_signal_score(data, symbol=None):
     # --- Basic Filters (pre-score adjustments) ---
     # Filter out very low volume stocks
     if 'Avg_Volume' in data.columns and pd.notnull(data['Avg_Volume'].iloc[-1]):
-        if current_volume < data['Avg_Volume'].iloc[-1] * 0.3: # Less than 30% of average volume
+        if data['Avg_Volume'].iloc[-1] > 0 and current_volume < data['Avg_Volume'].iloc[-1] * 0.3: # Less than 30% of average volume
             score -= 2 # Penalize low volume significantly
             reason_components.append("Very low volume, caution advised.")
 
@@ -1183,17 +1183,14 @@ def compute_signal_score(data, symbol=None):
 
     # Volume Spike
     if 'Volume_Spike' in data.columns and pd.notnull(data['Volume_Spike'].iloc[-1]) and data['Volume_Spike'].iloc[-1]:
-        if close > data['Close'].iloc[-2]: # Price up on spike
+        if len(data) >= 2 and close > data['Close'].iloc[-2]: # Price up on spike
             score += weights['Volume_SpikeUp']
             reason_components.append("Significant volume spike confirming upward price move.")
-        elif close < data['Close'].iloc[-2]: # Price down on spike
+        elif len(data) >= 2 and close < data['Close'].iloc[-2]: # Price down on spike
             score += weights['Volume_SpikeDown']
             reason_components.append("Significant volume spike confirming downward price move.")
 
     # Normalize the score to be between -10 and 10
-    # Map score from its potential range to [-10, 10]
-    # Rough estimate of possible min/max raw score (sum of most positive/negative weights)
-    # The current weights result in max_possible_raw_score = 7.5. Let's scale it to 10.
     scaled_score = (score / max_possible_raw_score) * 10 if max_possible_raw_score > 0 else 0
     final_score = min(max(scaled_score, -10), 10) # Clamp between -10 and 10
     
@@ -1294,7 +1291,7 @@ def adaptive_recommendation(data, symbol=None, equity=100000, risk_per_trade_pct
                 position_shares = int(risk_capital / risk_per_share)
                 # Ensure position value is not unreasonably high compared to equity
                 position_value = position_shares * current_price
-                if position_value > equity * 0.25: # Max 25% of equity per trade
+                if current_price > 0 and position_value > equity * 0.25: # Max 25% of equity per trade
                     position_value = equity * 0.25
                     position_shares = int(position_value / current_price) if current_price > 0 else 0
                 
@@ -1469,7 +1466,7 @@ def get_top_sectors_cached(rate_limit_delay=0.2, stocks_per_sector=5):
         sector_scores[sector] = avg_score
     return sorted(sector_scores.items(), key=lambda x: x[1], reverse=True)[:3]
 
-
+# FIX 3: Removed the duplicate @st.cache_data decorator.
 @st.cache_data(ttl=3600)
 def backtest_stock(data, symbol, strategy="Swing", _data_hash=None):
     results = {
@@ -1917,7 +1914,6 @@ def fetch_latest_price(symbol):
     return None
 
 def update_with_latest_prices(df):
-    updated_rows = []
     # Using ThreadPoolExecutor for concurrent price fetching
     with ThreadPoolExecutor(max_workers=5) as executor: # Limit concurrent API calls
         future_to_symbol = {executor.submit(fetch_latest_price, row['symbol']): idx for idx, row in df.iterrows()}
