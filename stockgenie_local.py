@@ -20,21 +20,21 @@ import warnings
 import sqlite3
 from diskcache import Cache
 import os
-from dotenv import load_dotenv
+# from dotenv import load_dotenv # Not needed if using st.secrets directly
 from streamlit import cache_data
 from supabase import create_client, Client
 import json
 from ta.momentum import RSIIndicator, StochasticOscillator
 from ta.trend import MACD, ADXIndicator, IchimokuIndicator
 from ta.volatility import AverageTrueRange, BollingerBands
-from ta.volume import OnBalanceVolumeIndicator, ChaikinMoneyFlowIndicator
+from ta.volume import OnBalanceVolumeIndicator, ChaikinMoneyFlowIndicator # Ensure ChaikinMoneyFlowIndicator is used
 from ratelimit import RateLimitDecorator as RateLimiter
 from threading import Lock
 
 data_api_calls = 0
 data_api_lock = Lock()
 
-# Configure logging
+# Configure logging (Moved to top for consistent configuration)
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
 # Load Streamlit secrets for Dhan API
@@ -75,7 +75,6 @@ def get_dhan_security_id(symbol):
     # Log all possible matches for debugging
     possible_matches = df[df['SM_SYMBOL_NAME'].astype(str).str.contains(symbol_clean, case=False, na=False)]
     logging.warning(f"No security_id found for {symbol} ({symbol_clean}). Possible matches: {possible_matches[['SM_SYMBOL_NAME', 'SEM_TRADING_SYMBOL']].to_dict('records')}")
-    # st.warning(f"NOT FOUND: {symbol} ({symbol_clean})") # Avoid direct UI warning in helper function called in parallel
     return None
 
 def test_dhan_connection():
@@ -175,8 +174,6 @@ def normalize_symbol(symbol):
     else:
         return symbol + '-EQ'
         
-# No need for load_dotenv() if using st.secrets
-
 warnings.filterwarnings("ignore", category=FutureWarning)
 warnings.filterwarnings("ignore", category=UserWarning)
 
@@ -196,6 +193,7 @@ USER_AGENTS = [
 
 cache = Cache("stock_data_cache")
 
+# FIX 1: Added "OBV" to TOOLTIPS dictionary.
 TOOLTIPS = {
     "RSI": "Relative Strength Index (30=Oversold, 70=Overbought)",
     "ATR": "Average True Range - Measures market volatility",
@@ -214,7 +212,8 @@ TOOLTIPS = {
     "Ultimate_Osc": "Ultimate Oscillator - Combines short, medium, and long-term momentum",
     "CMO": "Chande Momentum Oscillator - Measures raw momentum (-100 to 100)",
     "VPT": "Volume Price Trend - Tracks trend strength with price and volume",
-    "Score": "Measured by RSI, MACD, Ichimoku Cloud, and ATR volatility. Low score = weak signal, high score = strong signal."
+    "Score": "Measured by RSI, MACD, Ichimoku Cloud, and ATR volatility. Low score = weak signal, high score = strong signal.",
+    "OBV": "On-Balance Volume - Measures buying and selling pressure by adding/subtracting volume based on price changes." # Added missing OBV tooltip
 }
 
 SECTORS = {
@@ -447,6 +446,7 @@ def fetch_nse_stock_list():
         stock_list = [f"{symbol}.NS" for symbol in nse_data['SYMBOL']]
         return stock_list
     except Exception:
+        # Fallback to predefined list if NSE data cannot be fetched
         return list(set([stock for sector in SECTORS.values() for stock in sector]))
 
 # Helper function to parse period strings to days
@@ -507,14 +507,13 @@ def fetch_stock_data_with_dhan(symbol, period="5y", interval="1d"):
         response.raise_for_status()
         data = response.json()
 
-        # Log the full response for debugging
         logging.debug(f"API response for {symbol}: {data}")
 
         api_data = data.get("data", data) # Some responses wrap data under a "data" key
 
         if isinstance(api_data, dict) and all(isinstance(v, list) for v in api_data.values()):
             # If api_data is a dict with lists (columnar), convert to list of dicts (row format)
-            if not api_data or not next(iter(api_data.values())): # Check if any list is empty
+            if not api_data or not next(iter(api_data.values()), []): # Check if any list is empty
                 logging.warning(f"Empty data received for {symbol} in columnar format: {api_data}")
                 return pd.DataFrame()
             n = len(next(iter(api_data.values())))
@@ -645,19 +644,16 @@ def monte_carlo_simulation(data, simulations=1000, days=30):
 
 
 def extract_entities(text):
-    # This function requires spacy model 'en_core_web_sm' to be downloaded
-    # python -m spacy download en_core_web_sm
     try:
         nlp = spacy.load("en_core_web_sm")
         doc = nlp(text)
         entities = [ent.text for ent in doc.ents if ent.label_ == "ORG"]
         return entities
     except Exception as e:
-        logging.error(f"Error in spaCy entity extraction: {e}. Is 'en_core_web_sm' downloaded?")
+        logging.error(f"Error in spaCy entity extraction: {e}. Is 'en_core_web_sm' downloaded? (python -m spacy download en_core_web_sm)")
         return []
 
 def get_trending_stocks():
-    # This function requires pytrends library
     try:
         pytrends = TrendReq(hl='en-US', tz=360)
         trending = pytrends.trending_searches(pn='india')
@@ -665,24 +661,6 @@ def get_trending_stocks():
     except Exception as e:
         logging.error(f"Error fetching trending searches with pytrends: {e}")
         return pd.DataFrame()
-
-
-# Old calculate_confidence_score is deprecated, use compute_signal_score
-# def calculate_confidence_score(data):
-#     score = 0
-#     if 'RSI' in data.columns and data['RSI'].iloc[-1] is not None and data['RSI'].iloc[-1] < 30:
-#         score += 1
-#     if 'MACD' in data.columns and 'MACD_signal' in data.columns and data['MACD'].iloc[-1] is not None and data['MACD'].iloc[-1] > data['MACD_signal'].iloc[-1]:
-#         score += 1
-#     if 'Ichimoku_Span_A' in data.columns and data['Close'].iloc[-1] is not None and data['Close'].iloc[-1] > data['Ichimoku_Span_A'].iloc[-1]:
-#         score += 1
-#     if 'ATR' in data.columns and data['ATR'].iloc[-1] is not None and data['Close'].iloc[-1] is not None:
-#         atr_volatility = data['ATR'].iloc[-1] / data['Close'].iloc[-1]
-#         if atr_volatility < 0.02:
-#             score += 0.5
-#         elif atr_volatility > 0.05:
-#             score -= 0.5
-#     return min(max(score / 3.5, 0), 1)
 
 def assess_risk(data):
     if 'ATR' in data.columns and pd.notnull(data['ATR'].iloc[-1]) and 'Close' in data.columns and pd.notnull(data['Close'].iloc[-1]):
@@ -710,31 +688,32 @@ def optimize_rsi_window(data, windows=range(5, 15)):
     return best_window
 
 def detect_divergence(data):
-    # This requires more sophisticated peak/trough detection
-    # This is a simplified placeholder
     if 'RSI' not in data.columns or len(data) < 5:
         return "Not enough data"
     rsi = data['RSI']
     price = data['Close']
     
-    # Check last 5 periods for a very basic divergence
     # Simplistic check for bullish divergence (price lower low, RSI higher low)
-    if price.iloc[-1] < price.iloc[-3] and rsi.iloc[-1] > rsi.iloc[-3]:
+    if price.iloc[-1] < price.iloc[-3] and rsi.iloc[-1] > rsi.iloc[-3] and \
+       pd.notnull(price.iloc[-1]) and pd.notnull(price.iloc[-3]) and \
+       pd.notnull(rsi.iloc[-1]) and pd.notnull(rsi.iloc[-3]):
         return "Potential Bullish Divergence"
     # Simplistic check for bearish divergence (price higher high, RSI lower high)
-    elif price.iloc[-1] > price.iloc[-3] and rsi.iloc[-1] < rsi.iloc[-3]:
+    elif price.iloc[-1] > price.iloc[-3] and rsi.iloc[-1] < rsi.iloc[-3] and \
+         pd.notnull(price.iloc[-1]) and pd.notnull(price.iloc[-3]) and \
+         pd.notnull(rsi.iloc[-1]) and pd.notnull(rsi.iloc[-3]):
         return "Potential Bearish Divergence"
     
     return "No Clear Divergence"
 
+# Ensure ta.momentum.ChandeMomentumOscillator is imported if used
+# It is imported at the top of the file.
 def calculate_cmo(close, window=14):
     try:
-        # Re-implementing CMO from ta.momentum for consistency if needed
-        # Or if custom logic is preferred
         cmo_indicator = ta.momentum.ChandeMomentumOscillator(close=close, window=window)
         return cmo_indicator.chande_momentum_oscillator()
     except Exception as e:
-        logging.warning(f"⚠️ Failed to compute CMO: {str(e)}")
+        logging.warning(f"⚠️ Failed to compute CMO via ta.momentum.ChandeMomentumOscillator: {str(e)}. Check your 'ta' library version.")
         return None
 
 INDICATOR_MIN_LENGTHS = {
@@ -747,27 +726,24 @@ INDICATOR_MIN_LENGTHS = {
     'Bollinger': 20,
     'Stochastic': 14,
     'ATR': 14,
-    'ADX': 14, # ADX requires 14 for first value, DI+ and DI- also need it
+    'ADX': 14,
     'OBV': 1,
-    'VWAP': 1, # VWAP is typically intraday and cumulative, tricky for daily.
+    'VWAP': 1,
     'Volume_Spike': 10,
-    'Parabolic_SAR': 2, # Requires at least 2 points to start
+    'Parabolic_SAR': 2,
     'Fibonacci': 1,
-    'Divergence': 5, # Needs a few points to detect
-    'Ichimoku': 52, # Lagging span needs 26 periods back, Kijun/Senkou Span B need 52 periods
+    'Divergence': 5,
+    'Ichimoku': 52,
     'CMF': 20,
     'Donchian': 20,
     'Keltner': 20,
-    'TRIX': 15, # TRIX is 3 EMA, so 3 * window + initial data
-    'Ultimate_Osc': 28, # Shortest period 7, then 14, 28
+    'TRIX': 15,
+    'Ultimate_Osc': 28,
     'CMO': 14,
     'VPT': 1
 }
 
-# Consolidate logging config to avoid multiple basicConfig calls
-# logging.basicConfig(level=logging.WARNING, format="%(levelname)s: %(message)s") # Moved to top
-
-def validate_data(data, min_length=52): # Changed minimum length to support Ichimoku by default
+def validate_data(data, min_length=52):
     """
     Validates that the DataFrame has required columns, sufficient rows, and numeric data.
     """
@@ -781,7 +757,7 @@ def validate_data(data, min_length=52): # Changed minimum length to support Ichi
     if len(data) < min_length:
         logging.debug(f"Insufficient data rows: {len(data)} < {min_length}")
         return False
-    # Check for NaN values in required columns for the last `min_length` rows only, as older NaNs might be OK if filled
+    # Check for NaN values in required columns for the last `min_length` rows only
     if data[required_columns].tail(min_length).isna().any().any():
         logging.debug("Data contains NaN values in required columns (last min_length rows)")
         return False
@@ -794,7 +770,7 @@ def can_compute_indicator(data, indicator_name):
     """
     Checks if data is sufficient to compute the specified indicator.
     """
-    required_length = INDICATOR_MIN_LENGTHS.get(indicator_name, 52) # Default to Ichimoku's requirement
+    required_length = INDICATOR_MIN_LENGTHS.get(indicator_name, 52)
     return validate_data(data, min_length=required_length)
 
 def analyze_stock(data):
@@ -802,7 +778,6 @@ def analyze_stock(data):
     Computes technical indicators for stock data after validation.
     Returns data with indicators or an empty DataFrame on failure.
     """
-    # Define columns list at function scope to avoid UnboundLocalError
     columns = [
         'RSI', 'MACD', 'MACD_signal', 'MACD_hist', 'SMA_50', 'SMA_200', 'EMA_20', 'EMA_50',
         'Upper_Band', 'Middle_Band', 'Lower_Band', 'SlowK', 'SlowD', 'ATR', 'ADX', 'OBV',
@@ -810,35 +785,27 @@ def analyze_stock(data):
         'Fib_50.0', 'Fib_61.8', 'Divergence', 'Ichimoku_Tenkan', 'Ichimoku_Kijun',
         'Ichimoku_Span_A', 'Ichimoku_Span_B', 'Ichimoku_Chikou', 'CMF', 'Donchian_Upper',
         'Donchian_Lower', 'Donchian_Middle', 'Keltner_Upper', 'Keltner_Middle', 'Keltner_Lower',
-        'TRIX', 'Ultimate_Osc', 'CMO', 'VPT', 'ATR_pct' # Add ATR_pct for regime detection
+        'TRIX', 'Ultimate_Osc', 'CMO', 'VPT', 'ATR_pct', 'DMP', 'DMN', 'ADX_Slope' # Added ADX components for regime
     ]
 
-    # Initialize all indicator columns to None before computation
+    # Initialize all indicator columns to NaN before computation
     for col in columns:
-        if col not in data.columns: # Avoid overwriting if data already has them from a previous run
+        if col not in data.columns:
             data[col] = np.nan # Use np.nan for numeric columns
-
-    if not validate_data(data, min_length=INDICATOR_MIN_LENGTHS['Ichimoku']): # Use Ichimoku's min length
-        logging.warning(f"Data validation failed in analyze_stock. Data length: {len(data)}")
-        return data # Return data with NaNs for indicators
-
-    # Ensure data types are numeric
+    
+    # Ensure data types are numeric before any operations
     for col in ['Open', 'High', 'Low', 'Close', 'Volume']:
         data[col] = pd.to_numeric(data[col], errors='coerce')
+    data = data.dropna(subset=['Open', 'High', 'Low', 'Close', 'Volume']) # Drop rows with NaNs in core data
 
-    # Drop rows with any NaN values in required columns up to the longest indicator period
-    # This can be tricky; let's rely on validate_data and compute only on available data
-    # data = data.dropna(subset=['Open', 'High', 'Low', 'Close', 'Volume'])
-    # if len(data) < INDICATOR_MIN_LENGTHS['Ichimoku']:
-    #     logging.warning(f"Insufficient data after cleaning: {len(data)} rows")
-    #     return data
-
+    if not validate_data(data, min_length=INDICATOR_MIN_LENGTHS['Ichimoku']):
+        logging.warning(f"Data validation failed in analyze_stock. Data length: {len(data)}. Returning initial data with NaNs.")
+        return data # Return data with NaNs for indicators if validation fails
 
     try:
         # RSI
         if can_compute_indicator(data, 'RSI'):
             data['RSI'] = RSIIndicator(data['Close'], window=14).rsi()
-            # logging.info(f"RSI computed: {data['RSI'].iloc[-1]}")
 
         # MACD
         if can_compute_indicator(data, 'MACD'):
@@ -846,21 +813,18 @@ def analyze_stock(data):
             data['MACD'] = macd.macd()
             data['MACD_signal'] = macd.macd_signal()
             data['MACD_hist'] = macd.macd_diff()
-            # logging.info(f"MACD computed: {data['MACD'].iloc[-1]}")
 
         # SMA
-        if can_compute_indicator(data, 'SMA_50'): # Check for largest window
+        if can_compute_indicator(data, 'SMA_50'):
             data['SMA_50'] = data['Close'].rolling(window=50).mean()
         if can_compute_indicator(data, 'SMA_200'):
             data['SMA_200'] = data['Close'].rolling(window=200).mean()
-            # logging.info(f"SMA computed: SMA_50={data['SMA_50'].iloc[-1]}, SMA_200={data['SMA_200'].iloc[-1]}")
 
         # EMA
         if can_compute_indicator(data, 'EMA_20'):
             data['EMA_20'] = data['Close'].ewm(span=20, adjust=False).mean()
         if can_compute_indicator(data, 'EMA_50'):
             data['EMA_50'] = data['Close'].ewm(span=50, adjust=False).mean()
-            # logging.info(f"EMA computed: EMA_20={data['EMA_20'].iloc[-1]}")
 
         # Bollinger Bands
         if can_compute_indicator(data, 'Bollinger'):
@@ -868,20 +832,17 @@ def analyze_stock(data):
             data['Upper_Band'] = bb.bollinger_hband()
             data['Middle_Band'] = bb.bollinger_mavg()
             data['Lower_Band'] = bb.bollinger_lband()
-            # logging.info(f"Bollinger Bands computed: Upper={data['Upper_Band'].iloc[-1]}")
 
         # Stochastic Oscillator
         if can_compute_indicator(data, 'Stochastic'):
             stoch = StochasticOscillator(data['High'], data['Low'], data['Close'], window=14, smooth_window=3)
             data['SlowK'] = stoch.stoch()
             data['SlowD'] = stoch.stoch_signal()
-            # logging.info(f"Stochastic computed: SlowK={data['SlowK'].iloc[-1]}")
 
         # ATR
         if can_compute_indicator(data, 'ATR'):
             data['ATR'] = AverageTrueRange(data['High'], data['Low'], data['Close'], window=14).average_true_range()
             data['ATR_pct'] = data['ATR'] / data['Close'] # Add ATR percentage for regime detection
-            # logging.info(f"ATR computed: {data['ATR'].iloc[-1]}")
 
         # ADX
         if can_compute_indicator(data, 'ADX'):
@@ -889,14 +850,11 @@ def analyze_stock(data):
             data['ADX'] = adx_ind.adx()
             data['DMP'] = adx_ind.adx_pos() # Positive Directional Movement
             data['DMN'] = adx_ind.adx_neg() # Negative Directional Movement
-            # For ADX slope: Calculate simple 5-period slope
-            data['ADX_Slope'] = data['ADX'].diff(periods=5)
-            # logging.info(f"ADX computed: {data['ADX'].iloc[-1]}")
+            data['ADX_Slope'] = data['ADX'].diff(periods=5) # 5-period slope of ADX
 
         # OBV
         if can_compute_indicator(data, 'OBV'):
             data['OBV'] = OnBalanceVolumeIndicator(data['Close'], data['Volume']).on_balance_volume()
-            # logging.info(f"OBV computed: {data['OBV'].iloc[-1]}")
 
         # Ichimoku Cloud
         if can_compute_indicator(data, 'Ichimoku'):
@@ -905,14 +863,11 @@ def analyze_stock(data):
             data['Ichimoku_Kijun'] = ichimoku.ichimoku_base_line()
             data['Ichimoku_Span_A'] = ichimoku.ichimoku_a()
             data['Ichimoku_Span_B'] = ichimoku.ichimoku_b()
-            # Compute Chikou Span manually (shift Close price backward by 26 periods)
-            data['Ichimoku_Chikou'] = data['Close'].shift(-26)
-            # logging.info(f"Ichimoku computed: Span_A={data['Ichimoku_Span_A'].iloc[-1]}, Chikou={data['Ichimoku_Chikou'].iloc[-1] if pd.notnull(data['Ichimoku_Chikou'].iloc[-1]) else 'None'}")
+            data['Ichimoku_Chikou'] = data['Close'].shift(-26) # Chikou Span manually
 
         # CMF
         if can_compute_indicator(data, 'CMF'):
             data['CMF'] = ChaikinMoneyFlowIndicator(data['High'], data['Low'], data['Close'], data['Volume'], window=20).chaikin_money_flow()
-            # logging.info(f"CMF computed: {data['CMF'].iloc[-1]}")
         
         # New: TRIX
         if can_compute_indicator(data, 'TRIX'):
@@ -924,6 +879,9 @@ def analyze_stock(data):
         
         # New: CMO (using ta's implementation)
         if can_compute_indicator(data, 'CMO'):
+            # FIX 2: Ensure the ta.momentum.ChandeMomentumOscillator is accessible.
+            # If this line causes an error, it points to a 'ta' library issue.
+            # Running `pip install --upgrade --force-reinstall ta` might fix it.
             data['CMO'] = ta.momentum.ChandeMomentumOscillator(data['Close'], window=14).chande_momentum_oscillator()
 
         # New: VPT (Volume Price Trend)
@@ -932,27 +890,21 @@ def analyze_stock(data):
 
         # Volume Spike and Avg Volume
         data['Avg_Volume'] = data['Volume'].rolling(window=20).mean()
-        # Ensure Avg_Volume is computed before comparison
         if not data['Avg_Volume'].empty and pd.notnull(data['Avg_Volume'].iloc[-1]):
              data['Volume_Spike'] = data['Volume'] > data['Avg_Volume'] * 2
         else:
             data['Volume_Spike'] = False # Default to no spike if avg volume not computable
-
-        # Remaining columns (VWAP, Parabolic_SAR, Fibonacci, Donchian, Keltner) are not implemented here
-        # and remain NaN. Their headers are left in the columns list for consistency.
-        # VWAP is tricky for daily data; usually intraday.
-        # Parabolic_SAR could be implemented using ta.trend.PSARIndicator
-        # Donchian and Keltner could be custom or using community libraries
 
         return data
 
     except Exception as e:
         logging.error(f"Error in analyze_stock: {str(e)}")
         # If an error occurs, ensure all indicator columns are present but likely NaN
+        # This loop is crucial if an error halts computation before columns are fully populated.
         for col in columns:
             if col not in data.columns:
                 data[col] = np.nan
-        return data # Return data frame, but with potentially many NaNs
+        return data
 
 def calculate_buy_at(data):
     """
@@ -964,7 +916,6 @@ def calculate_buy_at(data):
         close = data['Close'].iloc[-1]
         atr = data['ATR'].iloc[-1] if 'ATR' in data.columns and pd.notnull(data['ATR'].iloc[-1]) else 0
         
-        # Example logic: Buy slightly below current price if RSI is low, or at current price otherwise
         rsi = data['RSI'].iloc[-1] if 'RSI' in data.columns and pd.notnull(data['RSI'].iloc[-1]) else 50
         
         if rsi < 35 and atr > 0: # If oversold, aim for a small dip or current price
@@ -1049,69 +1000,37 @@ def calculate_target(data, risk_reward_ratio=2.0): # Default R:R of 2
         logging.error(f"Error calculating target: {str(e)}")
         return None
 
-def calculate_trailing_stop(current_price, atr, buy_price=None, atr_multiplier=2.5):
+def calculate_trailing_stop(current_price, atr, atr_multiplier=2.5):
     """
     Calculates a simple ATR-based trailing stop.
-    If buy_price is provided, it can be used as a reference.
     This is a static calculation based on current price, not a dynamic trailing stop for an open position.
     For an open position, the trailing stop would only move up.
     """
     if pd.isna(current_price) or pd.isna(atr) or atr <= 0:
         return None
     
-    # Initial stop based on current price (if no position) or a recent low
     trailing_stop = current_price - atr_multiplier * atr
     
-    if buy_price and buy_price > 0 and trailing_stop < buy_price * 0.95: # Ensure it's not too far below buy price initially
-        trailing_stop = max(trailing_stop, buy_price * 0.95) # Keep it within 5% of buy price initially
-        
-    # Ensure it's not higher than current price
+    # Ensure it's not higher than current price and at least 1% below
+    trailing_stop = max(current_price * 0.99, trailing_stop) # Ensure a minimum buffer
+    
     return round(max(0, trailing_stop), 2)
 
 
-# The calculate_buy_at_row, calculate_stop_loss_row, calculate_target_row
-# seem to be remnants of a previous approach. The above functions are used by adaptive_recommendation.
-# Keeping for reference but they are not used in the main flow.
-def calculate_buy_at_row(row):
-    if pd.notnull(row['RSI']) and row['RSI'] < 30:
-        return round(row['Close'] * 0.99, 2)
-    return round(row['Close'], 2)
-
-def calculate_stop_loss_row(row, atr_multiplier=2.5):
-    if pd.notnull(row['ATR']):
-        atr_multiplier = 3.0 if pd.notnull(row['ADX']) and row['ADX'] > 25 else 1.5
-        stop_loss = row['Close'] - (atr_multiplier * row['ATR'])
-        if stop_loss < row['Close'] * 0.9:
-            stop_loss = row['Close'] * 0.9
-        return round(stop_loss, 2)
-    return None
-
-def calculate_target_row(row, risk_reward_ratio=3):
-    stop_loss = calculate_stop_loss_row(row)
-    if stop_loss is not None:
-        risk = row['Close'] - stop_loss
-        adjusted_ratio = min(risk_reward_ratio, 5) if pd.notnull(row['ADX']) and row['ADX'] > 25 else min(risk_reward_ratio, 3)
-        target = row['Close'] + (risk * adjusted_ratio)
-        if target > row['Close'] * 1.2:
-            target = row['Close'] * 1.2
-        return round(target, 2)
-    return None
-
-# Improved strategy logic using adaptive regime detection, signal scoring, and volatility-aware filters
-
 def classify_market_regime(data):
     """Classifies regime based on volatility, trend strength (ADX), and trend direction (SMA)."""
-    if not validate_data(data, min_length=200): # Need sufficient data for SMAs and ADX
+    if not validate_data(data, min_length=INDICATOR_MIN_LENGTHS['SMA_200']): # Need sufficient data for SMAs and ADX
         return 'Insufficient Data'
 
     close = data['Close'].iloc[-1]
     sma_50 = data['SMA_50'].iloc[-1]
     sma_200 = data['SMA_200'].iloc[-1]
-    atr_pct = data['ATR_pct'].iloc[-1] # From analyze_stock
-    adx = data['ADX'].iloc[-1] # From analyze_stock
-    adx_slope = data['ADX_Slope'].iloc[-1] # From analyze_stock
+    atr_pct = data['ATR_pct'].iloc[-1]
+    adx = data['ADX'].iloc[-1]
+    adx_slope = data['ADX_Slope'].iloc[-1] # Assuming ADX_Slope is already calculated in analyze_stock
 
-    if pd.isna(close) or pd.isna(sma_50) or pd.isna(sma_200) or pd.isna(atr_pct) or pd.isna(adx) or pd.isna(adx_slope):
+    if pd.isna(close) or pd.isna(sma_50) or pd.isna(sma_200) or \
+       pd.isna(atr_pct) or pd.isna(adx) or pd.isna(adx_slope):
         return 'Incomplete Indicator Data'
 
     # Volatility Check
@@ -1139,40 +1058,37 @@ def classify_market_regime(data):
 
 def compute_signal_score(data, symbol=None):
     """
-    Computes a weighted score based on normalized technical and fundamental indicators.
-    Returns a score between -10 and 10, with negative scores indicating no trade.
+    Computes a weighted score based on normalized technical indicators and market conditions.
+    Returns a score between -10 and 10, with negative scores indicating a bearish bias.
     """
     score = 0.0
     reason_components = []
 
-    # Weights for different indicators - adjusted to sum up to max_score roughly
     weights = {
-        'RSI': 2.0, # Strong weight for mean-reversion
-        'MACD': 1.5, # Good for trend following
-        'Ichimoku': 2.0, # Comprehensive trend indicator
-        'CMF': 0.5, # Volume/pressure
-        'ADX': 1.0, # Trend strength
-        'Bollinger_Breakout': 1.0, # Volatility/Breakout
-        'Volume_Spike': 0.5 # Confirmational
+        'RSI_Oversold': 2.0, 'RSI_Overbought': -2.0,
+        'MACD_Bullish': 1.5, 'MACD_Bearish': -1.5,
+        'Ichimoku_Bullish': 2.0, 'Ichimoku_Bearish': -2.0,
+        'CMF_Buying': 0.5, 'CMF_Selling': -0.5,
+        'ADX_StrongBull': 1.0, 'ADX_StrongBear': -1.0,
+        'Bollinger_BreakoutUp': 1.0, 'Bollinger_BreakoutDown': -1.0,
+        'Volume_SpikeUp': 0.5, 'Volume_SpikeDown': -0.5
     }
     
-    max_score = sum(weights.values()) # roughly 7.5
+    max_possible_raw_score = sum([w for k,w in weights.items() if w > 0]) # Sum of positive weights
 
     if not validate_data(data, min_length=INDICATOR_MIN_LENGTHS['Ichimoku']):
         logging.warning(f"Invalid data for scoring {symbol}, returning 0.")
-        return 0, ["Insufficient data to compute score."] # Returning 0 score if data is bad
+        return 0, ["Insufficient data to compute score."]
 
     close_price = data['Close'].iloc[-1]
     current_volume = data['Volume'].iloc[-1]
 
-    # --- Basic Filters (pre-score) ---
+    # --- Basic Filters (pre-score adjustments) ---
     # Filter out very low volume stocks
     if 'Avg_Volume' in data.columns and pd.notnull(data['Avg_Volume'].iloc[-1]):
         if current_volume < data['Avg_Volume'].iloc[-1] * 0.3: # Less than 30% of average volume
-            logging.info(f"Low volume for {symbol}, scoring reduced.")
-            # return -10, ["Very low volume."] # Could be -10 to discourage trade
-            # Instead of returning -10, let the score reflect it.
-            score -= 2 # Penalize low volume
+            score -= 2 # Penalize low volume significantly
+            reason_components.append("Very low volume, caution advised.")
 
     # --- Indicator Contributions ---
 
@@ -1180,29 +1096,24 @@ def compute_signal_score(data, symbol=None):
     if 'RSI' in data.columns and pd.notnull(data['RSI'].iloc[-1]):
         rsi = data['RSI'].iloc[-1]
         if rsi < 30: # Oversold
-            score += weights['RSI'] * (1 - (rsi / 30)) # Closer to 0 RSI = higher score
-            reason_components.append(f"RSI({int(rsi)}) is oversold.")
+            score += weights['RSI_Oversold'] * (1 - (rsi / 30)) # Score increases as RSI gets lower (closer to 0)
+            reason_components.append(f"RSI({int(rsi)}) is oversold (potential bounce).")
         elif rsi > 70: # Overbought
-            score -= weights['RSI'] * ((rsi - 70) / 30) # Closer to 100 RSI = lower score
-            reason_components.append(f"RSI({int(rsi)}) is overbought.")
+            score += weights['RSI_Overbought'] * ((rsi - 70) / 30) # Score decreases as RSI gets higher (closer to 100)
+            reason_components.append(f"RSI({int(rsi)}) is overbought (potential pullback).")
 
     # MACD
     if 'MACD' in data.columns and 'MACD_signal' in data.columns and pd.notnull(data['MACD'].iloc[-1]) and pd.notnull(data['MACD_signal'].iloc[-1]):
         macd = data['MACD'].iloc[-1]
         macd_signal = data['MACD_signal'].iloc[-1]
+        macd_hist = data['MACD_hist'].iloc[-1]
         
-        if macd > macd_signal and macd > 0: # Bullish crossover above zero line
-            score += weights['MACD']
-            reason_components.append("MACD is bullish (above signal line and zero).")
-        elif macd > macd_signal: # Bullish crossover
-            score += weights['MACD'] * 0.5
-            reason_components.append("MACD shows bullish crossover.")
-        elif macd < macd_signal and macd < 0: # Bearish crossover below zero line
-            score -= weights['MACD']
-            reason_components.append("MACD is bearish (below signal line and zero).")
-        elif macd < macd_signal: # Bearish crossover
-            score -= weights['MACD'] * 0.5
-            reason_components.append("MACD shows bearish crossover.")
+        if macd > macd_signal and macd_hist > 0: # Bullish crossover and histogram expanding above zero
+            score += weights['MACD_Bullish']
+            reason_components.append("MACD is bullish (crossover and positive momentum).")
+        elif macd < macd_signal and macd_hist < 0: # Bearish crossover and histogram expanding below zero
+            score += weights['MACD_Bearish']
+            reason_components.append("MACD is bearish (crossover and negative momentum).")
         
     # Ichimoku Cloud
     if all(col in data.columns and pd.notnull(data[col].iloc[-1]) for col in ['Ichimoku_Span_A', 'Ichimoku_Span_B', 'Close']):
@@ -1210,95 +1121,82 @@ def compute_signal_score(data, symbol=None):
         span_a = data['Ichimoku_Span_A'].iloc[-1]
         span_b = data['Ichimoku_Span_B'].iloc[-1]
         
-        # Price above cloud
-        if close > max(span_a, span_b):
-            score += weights['Ichimoku']
-            reason_components.append("Price is above Ichimoku Cloud (bullish).")
-        # Price below cloud
-        elif close < min(span_a, span_b):
-            score -= weights['Ichimoku']
-            reason_components.append("Price is below Ichimoku Cloud (bearish).")
-        # Price in cloud (neutral/sideways) - no score change for this condition
+        if close > max(span_a, span_b): # Price above cloud
+            score += weights['Ichimoku_Bullish']
+            reason_components.append("Price is above Ichimoku Cloud (strong bullish trend).")
+        elif close < min(span_a, span_b): # Price below cloud
+            score += weights['Ichimoku_Bearish']
+            reason_components.append("Price is below Ichimoku Cloud (strong bearish trend).")
 
     # CMF
     if 'CMF' in data.columns and pd.notnull(data['CMF'].iloc[-1]):
         cmf = data['CMF'].iloc[-1]
         if cmf > 0.15: # Strong buying pressure
-            score += weights['CMF']
+            score += weights['CMF_Buying']
             reason_components.append(f"CMF({cmf:.2f}) indicates strong buying pressure.")
-        elif cmf > 0: # Moderate buying pressure
-            score += weights['CMF'] * 0.5
-            reason_components.append(f"CMF({cmf:.2f}) indicates buying pressure.")
         elif cmf < -0.15: # Strong selling pressure
-            score -= weights['CMF']
+            score += weights['CMF_Selling']
             reason_components.append(f"CMF({cmf:.2f}) indicates strong selling pressure.")
-        elif cmf < 0: # Moderate selling pressure
-            score -= weights['CMF'] * 0.5
-            reason_components.append(f"CMF({cmf:.2f}) indicates selling pressure.")
 
     # ADX
-    if 'ADX' in data.columns and pd.notnull(data['ADX'].iloc[-1]):
+    if all(col in data.columns and pd.notnull(data[col].iloc[-1]) for col in ['ADX', 'DMP', 'DMN']):
         adx = data['ADX'].iloc[-1]
-        dmp = data['DMP'].iloc[-1] if pd.notnull(data['DMP'].iloc[-1]) else 0
-        dmn = data['DMN'].iloc[-1] if pd.notnull(data['DMN'].iloc[-1]) else 0
+        dmp = data['DMP'].iloc[-1]
+        dmn = data['DMN'].iloc[-1]
 
         if adx > 25 and dmp > dmn: # Strong bullish trend
-            score += weights['ADX']
+            score += weights['ADX_StrongBull']
             reason_components.append(f"ADX({int(adx)}) shows strong bullish trend (DI+ > DI-).")
         elif adx > 25 and dmn > dmp: # Strong bearish trend
-            score -= weights['ADX']
+            score += weights['ADX_StrongBear']
             reason_components.append(f"ADX({int(adx)}) shows strong bearish trend (DI- > DI+).")
-        elif adx > 20 and dmp > dmn: # Developing bullish trend
-            score += weights['ADX'] * 0.5
-            reason_components.append(f"ADX({int(adx)}) shows developing bullish trend.")
-        elif adx > 20 and dmn > dmp: # Developing bearish trend
-            score -= weights['ADX'] * 0.5
-            reason_components.append(f"ADX({int(adx)}) shows developing bearish trend.")
-        elif adx < 20:
-            reason_components.append(f"ADX({int(adx)}) indicates a weak or no trend.")
-
+        # ADX trend strengthening/weakening for more nuanced signals
+        if 'ADX_Slope' in data.columns and pd.notnull(data['ADX_Slope'].iloc[-1]):
+            adx_slope = data['ADX_Slope'].iloc[-1]
+            if adx_slope > 0 and adx < 40: # ADX rising, trend strengthening
+                reason_components.append(f"ADX slope positive (trend strengthening).")
+            elif adx_slope < 0 and adx > 20: # ADX falling, trend weakening
+                reason_components.append(f"ADX slope negative (trend weakening).")
 
     # Bollinger Bands Breakout / Squeeze
-    if all(col in data.columns and pd.notnull(data[col].iloc[-1]) for col in ['Upper_Band', 'Lower_Band', 'Close']):
+    if all(col in data.columns and pd.notnull(data[col].iloc[-1]) for col in ['Upper_Band', 'Lower_Band', 'Middle_Band', 'Close']):
         close = data['Close'].iloc[-1]
         upper_band = data['Upper_Band'].iloc[-1]
         lower_band = data['Lower_Band'].iloc[-1]
+        middle_band = data['Middle_Band'].iloc[-1]
         
         if close > upper_band: # Price breaking out above upper band
-            score += weights['Bollinger_Breakout']
-            reason_components.append("Price breaking out above Bollinger Upper Band.")
+            score += weights['Bollinger_BreakoutUp']
+            reason_components.append("Price breaking out above Bollinger Upper Band (bullish breakout).")
         elif close < lower_band: # Price breaking out below lower band
-            score -= weights['Bollinger_Breakout']
-            reason_components.append("Price breaking out below Bollinger Lower Band.")
+            score += weights['Bollinger_BreakoutDown']
+            reason_components.append("Price breaking out below Bollinger Lower Band (bearish breakout).")
         
         # Bollinger Band Width (volatility squeeze) - implies potential future breakout
-        bb_width = (upper_band - lower_band) / data['Middle_Band'].iloc[-1] if data['Middle_Band'].iloc[-1] != 0 else 0
-        
-        # Check if width is historically low (e.g., lower than 20-period average)
-        if len(data['Middle_Band']) >= 20: # Ensure enough data for rolling mean
-            avg_bb_width = ((data['Upper_Band'] - data['Lower_Band']) / data['Middle_Band']).rolling(window=20).mean().iloc[-1]
-            if pd.notnull(avg_bb_width) and bb_width < avg_bb_width * 0.7: # Current width is 30% less than avg
-                score += weights['Bollinger_Breakout'] * 0.5 # A small positive signal for potential move
-                reason_components.append("Bollinger Bands are squeezing (low volatility, potential breakout).")
+        if middle_band != 0:
+            bb_width = (upper_band - lower_band) / middle_band
+            if len(data['Middle_Band']) >= 20:
+                avg_bb_width = ((data['Upper_Band'] - data['Lower_Band']) / data['Middle_Band']).rolling(window=20).mean().iloc[-1]
+                if pd.notnull(avg_bb_width) and bb_width < avg_bb_width * 0.7: # Current width is 30% less than avg
+                    score += 0.25 # Small positive for potential volatility expansion
+                    reason_components.append("Bollinger Bands are squeezing (low volatility, potential breakout soon).")
 
     # Volume Spike
     if 'Volume_Spike' in data.columns and pd.notnull(data['Volume_Spike'].iloc[-1]) and data['Volume_Spike'].iloc[-1]:
-        # Positive if price is going up on spike, negative if going down
-        if close > data['Close'].iloc[-2]:
-            score += weights['Volume_Spike']
-            reason_components.append("Volume spike confirming upward price move.")
-        elif close < data['Close'].iloc[-2]:
-            score -= weights['Volume_Spike']
-            reason_components.append("Volume spike confirming downward price move.")
-        else:
-            reason_components.append("Volume spike occurred.")
+        if close > data['Close'].iloc[-2]: # Price up on spike
+            score += weights['Volume_SpikeUp']
+            reason_components.append("Significant volume spike confirming upward price move.")
+        elif close < data['Close'].iloc[-2]: # Price down on spike
+            score += weights['Volume_SpikeDown']
+            reason_components.append("Significant volume spike confirming downward price move.")
 
     # Normalize the score to be between -10 and 10
-    # Current max positive score is ~7.5, so normalize to 10
-    normalized_score = (score / max_score) * 10 if max_score > 0 else 0
-    final_score = min(max(normalized_score, -10), 10)
+    # Map score from its potential range to [-10, 10]
+    # Rough estimate of possible min/max raw score (sum of most positive/negative weights)
+    # The current weights result in max_possible_raw_score = 7.5. Let's scale it to 10.
+    scaled_score = (score / max_possible_raw_score) * 10 if max_possible_raw_score > 0 else 0
+    final_score = min(max(scaled_score, -10), 10) # Clamp between -10 and 10
     
-    # Compile reason
     final_reason = " | ".join(reason_components) if reason_components else "No strong indicator signals."
     
     logging.info(f"Signal score for {symbol}: {final_score:.2f}, Reason: {final_reason}")
@@ -1323,9 +1221,8 @@ def adaptive_recommendation(data, symbol=None, equity=100000, risk_per_trade_pct
         "Reason": "N/A"
     }
 
-    # Ensure sufficient data for most indicators and regime classification
-    if not validate_data(data, min_length=INDICATOR_MIN_LENGTHS['Ichimoku']):
-        recommendations["Reason"] = "Insufficient historical data for comprehensive analysis."
+    if not validate_data(data, min_length=INDICATOR_MIN_LENGTHS['SMA_200']): # Needs more data for regime
+        recommendations["Reason"] = "Insufficient historical data for comprehensive adaptive analysis."
         logging.warning(f"Insufficient data for {symbol} in adaptive_recommendation.")
         return recommendations
 
@@ -1334,7 +1231,7 @@ def adaptive_recommendation(data, symbol=None, equity=100000, risk_per_trade_pct
         recommendations["Current Price"] = current_price
         
         if pd.isna(current_price):
-            recommendations["Reason"] = "Current price not available."
+            recommendations["Reason"] = "Current price not available for adaptive analysis."
             return recommendations
 
         # 1. Classify Market Regime
@@ -1344,40 +1241,37 @@ def adaptive_recommendation(data, symbol=None, equity=100000, risk_per_trade_pct
 
         # 2. Compute Signal Score and Reasons
         score, reason_text = compute_signal_score(data, symbol)
-        recommendations["Score"] = score
+        recommendations["Score"] = round(score, 2) # Round score for display
         recommendations["Reason"] = reason_text
         
-        buy_score = 0
-        sell_score = 0
-        
-        # Assign primary buy/sell sentiment based on score
-        if score > 2: # Positive score indicates buy bias
-            buy_score = score
-        elif score < -2: # Negative score indicates sell bias
-            sell_score = abs(score)
-
         # --- Adaptive Recommendation Logic ---
-        final_recommendation = "Hold" # Default
+        final_recommendation = "Hold" 
 
-        if buy_score >= 4.0: # Strong buy signal
-            if "Highly Volatile" in market_regime and recommendations["RSI"] < 25: # Oversold in high volatility
-                final_recommendation = "Strong Buy (Mean Reversion)"
-            elif "Bullish Trending" in market_regime: # Trending market, strong buy on continuation
-                final_recommendation = "Strong Buy (Trend Following)"
-            else:
-                final_recommendation = "Buy"
-        elif sell_score >= 4.0: # Strong sell signal
-            if "Highly Volatile" in market_regime and recommendations["RSI"] > 75: # Overbought in high volatility
-                final_recommendation = "Strong Sell (Mean Reversion)"
-            elif "Bearish Trending" in market_regime:
-                final_recommendation = "Strong Sell (Trend Following)"
-            else:
-                final_recommendation = "Sell"
-        elif buy_score > 0: # Weak buy signal
-             final_recommendation = "Consider Buy"
-        elif sell_score > 0: # Weak sell signal
-             final_recommendation = "Consider Sell"
-        
+        # Strong buy/sell thresholds for different regimes
+        if "Bullish Trending" in market_regime:
+            if score >= 6: final_recommendation = "Strong Buy (Trend Continuation)"
+            elif score >= 3: final_recommendation = "Buy (Trend Following)"
+        elif "Bearish Trending" in market_regime:
+            if score <= -6: final_recommendation = "Strong Sell (Trend Continuation)"
+            elif score <= -3: final_recommendation = "Sell (Trend Following)"
+        elif "Highly Volatile" in market_regime:
+            # In volatile markets, mean reversion strategies might be better
+            rsi = data['RSI'].iloc[-1] if 'RSI' in data.columns and pd.notnull(data['RSI'].iloc[-1]) else 50
+            if rsi < 25 and score > 2: final_recommendation = "Strong Buy (Volatile Mean Reversion)"
+            elif rsi > 75 and score < -2: final_recommendation = "Strong Sell (Volatile Mean Reversion)"
+            elif score >= 4: final_recommendation = "Buy (Volatile Opportunity)"
+            elif score <= -4: final_recommendation = "Sell (Volatile Risk)"
+        elif "Sideways/Consolidating" in market_regime:
+            if score >= 5: final_recommendation = "Buy (Consolidation Breakout Potential)"
+            elif score <= -5: final_recommendation = "Sell (Consolidation Breakout Risk)"
+            elif score >= 2: final_recommendation = "Buy (Range Low)"
+            elif score <= -2: final_recommendation = "Sell (Range High)"
+        else: # Neutral or Developing Trend
+            if score >= 5: final_recommendation = "Buy (Developing Bullish)"
+            elif score <= -5: final_recommendation = "Sell (Developing Bearish)"
+            elif score >= 2: final_recommendation = "Consider Buy"
+            elif score <= -2: final_recommendation = "Consider Sell"
+            
         recommendations["Recommendation"] = final_recommendation
 
         # --- Calculate Actionable Levels (Buy At, Stop Loss, Target) ---
@@ -1390,12 +1284,20 @@ def adaptive_recommendation(data, symbol=None, equity=100000, risk_per_trade_pct
         recommendations["Target"] = target
 
         # --- Position Sizing ---
+        # Calculate risk amount based on equity and risk percentage
+        risk_capital = equity * (risk_per_trade_pct / 100)
+
+        # Calculate position size based on Buy At and Stop Loss
         if buy_at is not None and stop_loss is not None and buy_at > stop_loss:
             risk_per_share = buy_at - stop_loss
             if risk_per_share > 0:
-                risk_capital = equity * (risk_per_trade_pct / 100)
                 position_shares = int(risk_capital / risk_per_share)
+                # Ensure position value is not unreasonably high compared to equity
                 position_value = position_shares * current_price
+                if position_value > equity * 0.25: # Max 25% of equity per trade
+                    position_value = equity * 0.25
+                    position_shares = int(position_value / current_price) if current_price > 0 else 0
+                
                 recommendations["Position Size"] = {"shares": position_shares, "value": round(position_value, 2)}
             else:
                 recommendations["Position Size"] = {"shares": 0, "value": 0}
@@ -1403,11 +1305,8 @@ def adaptive_recommendation(data, symbol=None, equity=100000, risk_per_trade_pct
              recommendations["Position Size"] = {"shares": 0, "value": 0}
 
         # --- Trailing Stop Calculation ---
-        # A simple trailing stop for the current moment, assuming you are about to enter a trade.
-        # For actual dynamic trailing stop management in a live position, you'd update this value
-        # each day (or intra-day) only allowing it to move in the favorable direction.
-        if recommendations["Stop Loss"] is not None:
-             recommendations["Trailing Stop"] = calculate_trailing_stop(current_price, data['ATR'].iloc[-1])
+        if recommendations["Recommendation"].lower().startswith("buy"): # Only calculate for buy recommendations
+             recommendations["Trailing Stop"] = calculate_trailing_stop(current_price, data['ATR'].iloc[-1] if 'ATR' in data.columns else None)
         else:
              recommendations["Trailing Stop"] = None
 
@@ -1447,14 +1346,13 @@ def generate_recommendations(data, symbol=None):
         
         # Calculate score and reason for Standard mode as well, using compute_signal_score
         score, reason_text = compute_signal_score(data, symbol)
-        recommendations["Score"] = score
-        # Note: 'Reason' isn't explicitly shown in the standard mode display, but can be added.
+        recommendations["Score"] = round(score, 2)
 
         buy_score = 0
         sell_score = 0
 
         # RSI
-        if 'RSI' in data.columns and pd.notnull(data['RSI'].iloc[-1]) and isinstance(data['RSI'].iloc[-1], (int, float)):
+        if 'RSI' in data.columns and pd.notnull(data['RSI'].iloc[-1]):
             rsi = data['RSI'].iloc[-1]
             if rsi <= 20:
                 buy_score += 4
@@ -1468,7 +1366,6 @@ def generate_recommendations(data, symbol=None):
             elif rsi > 80:
                 sell_score += 4
                 recommendations["Mean_Reversion"] = "Strong Sell"
-            # logging.info(f"RSI score for {symbol}: buy={buy_score}, sell={sell_score}")
 
         # MACD
         if 'MACD' in data.columns and 'MACD_signal' in data.columns and pd.notnull(data['MACD'].iloc[-1]) and pd.notnull(data['MACD_signal'].iloc[-1]):
@@ -1485,7 +1382,6 @@ def generate_recommendations(data, symbol=None):
             elif macd_diff < 0: # Bearish cross
                 sell_score += 2
                 recommendations["Swing"] = "Sell"
-            # logging.info(f"MACD score for {symbol}: buy={buy_score}, sell={sell_score}")
 
         # Ichimoku
         if all(col in data.columns and pd.notnull(data[col].iloc[-1]) for col in ['Ichimoku_Span_A', 'Ichimoku_Span_B', 'Close']):
@@ -1499,7 +1395,6 @@ def generate_recommendations(data, symbol=None):
             elif close < span_a and close < span_b: # Price below cloud
                 sell_score += 3
                 recommendations["Ichimoku_Trend"] = "Sell"
-            # logging.info(f"Ichimoku score for {symbol}: buy={buy_score}, sell={sell_score}")
 
         # Bollinger Bands Breakout
         if 'Upper_Band' in data.columns and 'Lower_Band' in data.columns and pd.notnull(data['Upper_Band'].iloc[-1]):
@@ -1510,7 +1405,6 @@ def generate_recommendations(data, symbol=None):
             elif close < data['Lower_Band'].iloc[-1]:
                 sell_score += 2
                 recommendations["Breakout"] = "Sell"
-            # logging.info(f"Breakout score for {symbol}: buy={buy_score}, sell={sell_score}")
 
         # CMF
         if 'CMF' in data.columns and pd.notnull(data['CMF'].iloc[-1]):
@@ -1519,7 +1413,6 @@ def generate_recommendations(data, symbol=None):
                 buy_score += 1
             elif cmf < -0.2:
                 sell_score += 1
-            # logging.info(f"CMF score for {symbol}: buy={buy_score}, sell={sell_score}")
             
         # Overall recommendation based on net score
         net_score = buy_score - sell_score
@@ -1544,19 +1437,16 @@ def generate_recommendations(data, symbol=None):
             recommendations["Swing"] = "Sell"
             recommendations["Short-Term"] = "Sell"
             recommendations["Long-Term"] = "Sell"
-        else: # Net score between -2 and 2, implies hold or weak signals
+        else:
             pass # Keep default "Hold"
 
         recommendations["Buy At"] = calculate_buy_at(data)
         recommendations["Stop Loss"] = calculate_stop_loss(data)
         recommendations["Target"] = calculate_target(data)
-        recommendations["Score"] = min(max(net_score, -7), 7) # Cap score for display
+        # Using the scaled score from compute_signal_score
+        recommendations["Score"] = round(score, 2) # Score is already scaled to -10 to 10 by compute_signal_score
 
         logging.info(f"Standard recommendations for {symbol}: {recommendations}")
-        return recommendations
-
-    except Exception as e:
-        logging.error(f"Error generating standard recommendations for {symbol}: {str(e)}")
         return recommendations
 
 @st.cache_data(ttl=3600)
@@ -1570,8 +1460,7 @@ def get_top_sectors_cached(rate_limit_delay=0.2, stocks_per_sector=5):
             if data.empty:
                 continue
             data = analyze_stock(data)
-            # Use compute_signal_score directly for sector ranking
-            score, _ = compute_signal_score(data, symbol)
+            score, _ = compute_signal_score(data, symbol) # Use the unified score
             if score is not None:
                 total_score += score
                 count += 1
@@ -1747,10 +1636,6 @@ def init_database():
     ''')
     conn.close()
 
-def insert_top_picks(results_df, pick_type="daily"):
-    # This function is not used anymore as we are directly inserting to Supabase.
-    # Keeping it as a reference if SQLite is preferred later.
-    pass
 
 def analyze_batch(stock_batch, progress_callback=None, status_callback=None):
     results = []
@@ -1777,13 +1662,10 @@ def analyze_batch(stock_batch, progress_callback=None, status_callback=None):
         st.error(f"Encountered {len(errors)} errors during batch processing:\n" + "\n".join(errors))
     return results
 
-# Logging configuration is already at the top.
-# logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 def analyze_stock_parallel(symbol):
     try:
         data = fetch_stock_data_with_dhan(symbol)
         
-        # Ensure sufficient data after fetch. analyze_stock will handle internal NaNs.
         if data.empty or len(data) < INDICATOR_MIN_LENGTHS['Ichimoku']:
             logging.warning(f"No sufficient data for {symbol} after fetch: {len(data)} rows")
             return None # Return None to indicate failure/insufficient data
@@ -1791,7 +1673,6 @@ def analyze_stock_parallel(symbol):
         data = analyze_stock(data) # Analyze the data to add indicators
         
         # Re-check data validity AFTER analysis, as some indicators might result in NaNs
-        # only keep rows where close price and ATR are available
         if data.empty or pd.isna(data['Close'].iloc[-1]) or ('ATR' in data.columns and pd.isna(data['ATR'].iloc[-1])):
              logging.warning(f"Final analyzed data for {symbol} is incomplete (missing Close/ATR).")
              return None
@@ -1826,7 +1707,7 @@ def analyze_stock_parallel(symbol):
             }
         else:
             rec = generate_recommendations(data, symbol)
-            if not rec or not rec.get('Intraday'):
+            if not rec or not rec.get('Intraday'): # Using Intraday as a proxy for valid standard recommendations
                 logging.error(f"Invalid generate_recommendations output for {symbol}: {rec}")
                 return None
             return {
@@ -1957,7 +1838,6 @@ def update_progress(progress_bar, loading_text, progress_value, loading_messages
     dots = "." * int((progress_value * 10) % 4)
     loading_text.text(f"{loading_message}{dots}")
     
-# Add the new function for stock status updates
 def update_progress_with_status(progress_bar, loading_text, status_text, progress_value, stock_status=None):
     progress_bar.progress(progress_value)
     
@@ -2015,8 +1895,6 @@ def insert_top_picks_supabase(results_df, pick_type="daily"):
         logging.info(f"Inserting to Supabase: {data}")
         try:
             res = supabase.table("daily_picks").upsert(data).execute()
-            # Supabase upsert doesn't always return 'error' directly on success, but it will on failure.
-            # Check for specific error object in the response
             if hasattr(res, "data") and res.data:
                 logging.info(f"Supabase insert successful for {row.get('Symbol')}")
             elif hasattr(res, "error") and res.error:
@@ -2040,17 +1918,20 @@ def fetch_latest_price(symbol):
 
 def update_with_latest_prices(df):
     updated_rows = []
-    for idx, row in df.iterrows():
-        symbol = row['symbol']
-        try:
-            latest_close = fetch_latest_price(symbol)
-            if latest_close is not None:
-                row['current_price'] = latest_close
-            updated_rows.append(row)
-        except Exception as e:
-            st.warning(f"Could not fetch latest price for {symbol}: {e}")
-            updated_rows.append(row) # Append original row if update fails
-    return pd.DataFrame(updated_rows) # Return new DataFrame after updates
+    # Using ThreadPoolExecutor for concurrent price fetching
+    with ThreadPoolExecutor(max_workers=5) as executor: # Limit concurrent API calls
+        future_to_symbol = {executor.submit(fetch_latest_price, row['symbol']): idx for idx, row in df.iterrows()}
+        for future in as_completed(future_to_symbol):
+            idx = future_to_symbol[future]
+            symbol = df.loc[idx, 'symbol']
+            try:
+                latest_close = future.result()
+                if latest_close is not None:
+                    df.loc[idx, 'current_price'] = latest_close
+            except Exception as e:
+                st.warning(f"Could not fetch latest price for {symbol}: {e}")
+    return df # Return modified original DataFrame
+
         
 def display_dashboard(symbol=None, data=None, recommendations=None):
     # Initialize session state
@@ -2242,9 +2123,7 @@ def display_dashboard(symbol=None, data=None, recommendations=None):
         st.markdown("### 📜 Historical Picks")
         if st.button("Close Historical Picks"):
             st.session_state.show_history = False
-            # st.experimental_rerun() # Removed aggressive rerun for smoother UX
-            st.rerun() # Use st.rerun if not on 1.34+ and experimental_rerun
-            # Or simply let Streamlit re-render naturally if state changes
+            st.rerun() # Use st.rerun
 
         try:
             # Fetch all distinct dates first
@@ -2288,10 +2167,11 @@ def display_dashboard(symbol=None, data=None, recommendations=None):
                     display_cols_present = [col for col in display_cols if col in df.columns]
 
                     # Filter for adaptive mode specific columns if adaptive was used for that date
-                    if df['recommendation'].notna().any() and df['recommendation'].iloc[0] != 'Hold': # Simple heuristic for adaptive picks
+                    # Heuristic: if 'recommendation' column has non-null values, assume adaptive was used.
+                    if df['recommendation'].notna().any() and df['recommendation'].isin(['Strong Buy (Trend Continuation)', 'Buy (Trend Following)', 'Strong Buy (Volatile Mean Reversion)', 'Buy (Volatile Opportunity)', 'Buy (Consolidation Breakout Potential)', 'Buy (Range Low)', 'Buy (Developing Bullish)', 'Consider Buy', 'Strong Sell (Trend Continuation)', 'Sell (Trend Following)', 'Strong Sell (Volatile Mean Reversion)', 'Sell (Volatile Risk)', 'Sell (Consolidation Breakout Risk)', 'Sell (Range High)', 'Sell (Developing Bearish)', 'Consider Sell']).any():
                         final_display_df = df[display_cols_present]
                     else: # Standard picks, hide adaptive columns
-                        standard_cols = ["symbol", "buy_at", "current_price", "% Change", "What to do now?", "intraday", "swing", "short_term", "long_term", "target", "stop_loss", "pick_type"]
+                        standard_cols = ["symbol", "buy_at", "current_price", "% Change", "What to do now?", "intraday", "swing", "short_term", "long_term", "mean_reversion", "breakout", "ichimoku_trend", "target", "stop_loss", "pick_type"]
                         final_display_df = df[[col for col in standard_cols if col in df.columns]]
                         
                     styled_df = style_picks_df(final_display_df)
@@ -2303,8 +2183,6 @@ def display_dashboard(symbol=None, data=None, recommendations=None):
         except Exception as e:
             st.error(f"Error fetching historical picks: {e}")
             logging.error(f"Error fetching historical picks: {e}")
-    # else:
-    #     st.warning("No historical data available. Click 'View Historical Picks' to load.") # This warning might be annoying, consider removing.
         
     # Display stock analysis if symbol is available
     if st.session_state.symbol and st.session_state.data is not None and st.session_state.recommendations is not None:
@@ -2360,7 +2238,7 @@ def display_dashboard(symbol=None, data=None, recommendations=None):
                 st.write(f"**Mean Reversion**: {colored_recommendation(recommendations.get('Mean_Reversion', 'N/A'))}")
                 st.write(f"**Breakout**: {colored_recommendation(recommendations.get('Breakout', 'N/A'))}")
                 st.write(f"**Ichimoku Trend**: {colored_recommendation(recommendations.get('Ichimoku_Trend', 'N/A'))}")
-            st.write(f"**{tooltip('Score', TOOLTIPS['Score'])}**: {recommendations.get('Score', 'N/A')}/7") # Score is out of 7 for standard
+            st.write(f"**{tooltip('Score', TOOLTIPS['Score'])}**: {recommendations.get('Score', 'N/A')}/10") # Score is now out of 10
             st.write(f"**Volatility**: {assess_risk(data)}")
 
         # Backtest form
@@ -2375,8 +2253,7 @@ def display_dashboard(symbol=None, data=None, recommendations=None):
                 strategy = "Swing" if swing_button else "Intraday"
                 with st.spinner(f"Running {strategy} Strategy backtest... (This may take a while for large data sets)"):
                     # Pass a hash of the data to cache_data to invalidate if data changes
-                    # Ensure data is sliced to the analysis period to avoid re-hashing huge dataframes
-                    data_for_hash = data.tail(300) # Only hash a recent portion for cache
+                    data_for_hash = data.tail(300) # Only hash a recent portion for cache invalidation
                     data_hash = hash(data_for_hash.to_string())
                     backtest_results = backtest_stock(data, symbol, strategy=strategy, _data_hash=data_hash)
                     if strategy == "Swing":
@@ -2417,7 +2294,7 @@ def display_dashboard(symbol=None, data=None, recommendations=None):
 
 
         # Technical Indicators
-        st.subheader("📊 Technical Indicators (Latest Values)")
+        st.subheader(f"📊 Technical Indicators (Latest Values for {normalize_symbol_dhan(symbol)})")
         indicators_to_display = [
             ("RSI", 'RSI', TOOLTIPS['RSI']),
             ("MACD", 'MACD', TOOLTIPS['MACD']),
@@ -2425,9 +2302,9 @@ def display_dashboard(symbol=None, data=None, recommendations=None):
             ("MACD Hist", 'MACD_hist', TOOLTIPS['MACD']),
             ("ATR", 'ATR', TOOLTIPS['ATR']),
             ("ADX", 'ADX', TOOLTIPS['ADX']),
-            ("DMI+ (DMP)", 'DMP', "Positive Directional Movement Index"),
-            ("DMI- (DMN)", 'DMN', "Negative Directional Movement Index"),
-            ("ADX Slope (5-period)", 'ADX_Slope', "Slope of ADX over last 5 periods (positive means trend strengthening)"),
+            ("DMI+ (DMP)", 'DMP', "Positive Directional Movement Index - indicates upward pressure"),
+            ("DMI- (DMN)", 'DMN', "Negative Directional Movement Index - indicates downward pressure"),
+            ("ADX Slope (5-period)", 'ADX_Slope', "Slope of ADX over last 5 periods (positive means trend strengthening, negative means weakening)"),
             ("Bollinger Upper", 'Upper_Band', TOOLTIPS['Bollinger']),
             ("Bollinger Middle", 'Middle_Band', TOOLTIPS['Bollinger']),
             ("Bollinger Lower", 'Lower_Band', TOOLTIPS['Bollinger']),
