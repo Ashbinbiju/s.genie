@@ -53,7 +53,7 @@ def retry(max_retries=5, delay=5, backoff_factor=2, jitter=1):
                         if retries == max_retries:
                             raise e
                         sleep_time = (delay * (backoff_factor ** retries)) + random.uniform(0, jitter)
-                        st.warning(f"Rate limit hit. Retrying after {sleep_time:.2f} seconds...")
+                        st.warning(f"Rate limit hit. Retrying {func.__name__} after {sleep_time:.2f} seconds...")
                         time.sleep(sleep_time)
                     else:
                         raise e # Re-raise if not a 429
@@ -62,9 +62,10 @@ def retry(max_retries=5, delay=5, backoff_factor=2, jitter=1):
                     if retries == max_retries:
                         raise e
                     sleep_time = (delay * (backoff_factor ** retries)) + random.uniform(0, jitter)
+                    st.warning(f"Connection error for {func.__name__}: {e}. Retrying after {sleep_time:.2f} seconds...")
                     time.sleep(sleep_time)
             # If function returns nothing in loop, return None
-            return None # Should ideally be unreachable if func always returns on success or raises permanently
+            return None 
         return wrapper
     return decorator
 
@@ -116,7 +117,7 @@ def test_dhan_connection():
     }
     
     # Use a highly liquid stock for testing like Reliance, which always has intraday data
-    # Security ID for RELIANCE is often 2885 for NSE_EQ. Check your instrument master.
+    # Security ID for RELIANCE is often 2885 for NSE_EQ.
     test_security_id = get_dhan_security_id("RELIANCE.NS") 
     if not test_security_id:
         logging.error("Could not find security ID for RELIANCE.NS, cannot test Dhan connection.")
@@ -231,7 +232,6 @@ TOOLTIPS = {
     "CMF": "Chaikin Money Flow - Buying/selling pressure",
     "TRIX": "Triple Exponential Average - Momentum oscillator with triple smoothing",
     "Ultimate_Osc": "Ultimate Oscillator - Combines short, medium, and long-term momentum",
-    # "CMO": "Chande Momentum Oscillator - Measures raw momentum (-100 to 100)", # Removed due to consistent errors
     "VPT": "Volume Price Trend - Tracks trend strength with price and volume",
     "Score": "Measured by RSI, MACD, Ichimoku Cloud, and ATR volatility. Low score = weak signal, high score = strong signal.",
     "OBV": "On-Balance Volume - Measures buying and selling pressure by adding/subtracting volume based on price changes."
@@ -651,7 +651,6 @@ INDICATOR_MIN_LENGTHS = {
     'CMF': 20,
     'TRIX': 15, # EMA of EMA of EMA(15) -> 3*15 + ~ some offset for start
     'Ultimate_Osc': 28, # Longest period for oscillator (7, 14, 28)
-    # 'CMO': 14, # Removed due to consistent errors
     'VPT': 1, # Requires 1 data point conceptually
     'Volume_Spike': 20 # Requires Avg_Volume (20-period moving average)
 }
@@ -1091,7 +1090,14 @@ def compute_signal_score(data, symbol=None):
     final_score = min(max(scaled_score, -10), 10) # Clamp score between -10 and 10
     
     final_reason = " | ".join(reason_components) if reason_components else "No strong indicator signals."
-    
+
+    # Added logic for more descriptive neutral score reason
+    if abs(final_score) < 0.5: # If score is near zero
+        if reason_components: # If there were reasons, they cancelled out
+            final_reason += " (conflicting signals led to neutral score)"
+        else: # No strong signals either way
+            final_reason = "Neutral market conditions observed."
+            
     logging.info(f"Signal score for {symbol}: {final_score:.2f}, Reason: {final_reason}")
     return final_score, final_reason
 
@@ -1446,7 +1452,7 @@ def backtest_stock(data, symbol, strategy="Swing", _data_hash=None):
             position = "Long"
             entry_price = entry_price_with_slippage
             entry_date = trade_date
-            results["buy_signals"].append((entry_date, entry_price))
+            results["buy_signals"].append((pd.Timestamp(entry_date), entry_price)) # Explicitly ensure Timestamp
         
         elif position == "Long":
             explicit_sell = "Sell" in signal
@@ -1477,14 +1483,14 @@ def backtest_stock(data, symbol, strategy="Swing", _data_hash=None):
                     returns.append(profit / entry_price)
                     
                 trades.append({
-                    "entry_date": entry_date,
+                    "entry_date": pd.Timestamp(entry_date), # Explicitly ensure Timestamp
                     "entry_price": entry_price,
-                    "exit_date": trade_date,
+                    "exit_date": pd.Timestamp(trade_date), # Explicitly ensure Timestamp
                     "exit_price": exit_price,
                     "profit": profit,
                     "reason": exit_reason
                 })
-                results["sell_signals"].append((trade_date, exit_price))
+                results["sell_signals"].append((pd.Timestamp(trade_date), exit_price)) # Explicitly ensure Timestamp
                 entry_price = 0
                 entry_date = None
     
@@ -1497,14 +1503,14 @@ def backtest_stock(data, symbol, strategy="Swing", _data_hash=None):
         if entry_price != 0:
             returns.append(profit / entry_price)
         trades.append({
-            "entry_date": entry_date,
+            "entry_date": pd.Timestamp(entry_date), # Explicitly ensure Timestamp
             "entry_price": entry_price,
-            "exit_date": full_analyzed_data.index[-1],
+            "exit_date": pd.Timestamp(full_analyzed_data.index[-1]), # Explicitly ensure Timestamp
             "exit_price": exit_price,
             "profit": profit,
             "reason": "Closed at end of period"
         })
-        results["sell_signals"].append((full_analyzed_data.index[-1], exit_price))
+        results["sell_signals"].append((pd.Timestamp(full_analyzed_data.index[-1]), exit_price)) # Explicitly ensure Timestamp
 
 
     if trades:
@@ -2221,8 +2227,11 @@ def display_dashboard(symbol=None, data=None, recommendations=None):
                 with st.expander("Trade Details"):
                     for trade in backtest_results["trade_details"]:
                         profit = trade.get("profit", 0)
-                        st.write(f"Entry: {trade['entry_date'].strftime('%Y-%m-%d')} @ ₹{trade['entry_price']:.2f}, "
-                                 f"Exit: {trade['exit_date'].strftime('%Y-%m-%d')} @ ₹{trade['exit_price']:.2f}, "
+                        # Ensure trade dates are formatted correctly
+                        entry_date_str = trade['entry_date'].strftime('%Y-%m-%d') if pd.api.types.is_datetime64_any_dtype(trade['entry_date']) else str(trade['entry_date'])
+                        exit_date_str = trade['exit_date'].strftime('%Y-%m-%d') if pd.api.types.is_datetime64_any_dtype(trade['exit_date']) else str(trade['exit_date'])
+                        st.write(f"Entry: {entry_date_str} @ ₹{trade['entry_price']:.2f}, "
+                                 f"Exit: {exit_date_str} @ ₹{trade['exit_price']:.2f}, "
                                  f"Profit: ₹{profit:.2f} ({trade['reason']})")
 
                 fig = px.line(data, x=data.index, y='Close', title=f"{normalize_symbol_dhan(symbol)} Price with Signals")
@@ -2259,7 +2268,6 @@ def display_dashboard(symbol=None, data=None, recommendations=None):
             ("Ichimoku Span B", 'Ichimoku_Span_B', TOOLTIPS['Ichimoku']),
             ("CMF", 'CMF', TOOLTIPS['CMF']),
             ("OBV", 'OBV', TOOLTIPS['OBV']),
-            # ("CMO", 'CMO', TOOLTIPS['CMO']), # Removed due to error
             ("TRIX", 'TRIX', TOOLTIPS['TRIX']),
             ("Ultimate Oscillator", 'Ultimate_Osc', TOOLTIPS['Ultimate_Osc']),
             ("VPT", 'VPT', TOOLTIPS['VPT'])
