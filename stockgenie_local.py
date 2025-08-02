@@ -442,7 +442,7 @@ def parse_period_to_days(period):
         logging.error(f"Invalid period format: {period}, error: {e}. Defaulting to 30 days.")
         return 30
         
-@RateLimiter(calls=1, period=1.5) # 1 call per 1.5 seconds per thread
+@RateLimiter(calls=1, period=3.5) # 1 call per 1.5 seconds per thread
 @lru_cache(maxsize=1000) # Caches results in memory for speed
 def fetch_stock_data_cached(symbol, period="5y", interval="1d"):
     """
@@ -1647,7 +1647,7 @@ def analyze_all_stocks(stock_list, batch_size=10, progress_callback=None, status
         # Increased sleep between batches to respect overall API rate limits
         # (1 call/1.5s * 3 workers = 2 calls/sec). So, for a batch of 10, need at least 5 seconds.
         # Adjusted sleep to ensure enough time for concurrent requests to complete and clear rate limit.
-        time.sleep(max(10, batch_size * 1.5 / 3)) # Ensure enough time passes for all calls in batch across workers
+        time.sleep(max(10, batch_size * 3.5 / 3)) # Ensure enough time passes for all calls in batch across workers
         
     results_df = pd.DataFrame(results)
     if results_df.empty:
@@ -1695,7 +1695,7 @@ def analyze_intraday_stocks(stock_list, batch_size=3, progress_callback=None, st
         if progress_callback:
             progress_callback(processed / total_stocks)
         
-        time.sleep(max(10, batch_size * 1.5 / 3)) # Consistent sleep with analyze_all_stocks
+        time.sleep(max(10, batch_size * 3.5 / 3)) # Consistent sleep with analyze_all_stocks
     
     results_df = pd.DataFrame(results)
     if results_df.empty:
