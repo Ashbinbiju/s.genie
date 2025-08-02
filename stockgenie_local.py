@@ -29,8 +29,14 @@ data_api_lock = Lock()
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
 # Load Streamlit secrets for Dhan API
-DHAN_CLIENT_ID = st.secrets["DHAN_CLIENT_ID"]
-DHAN_ACCESS_TOKEN = st.secrets["DHAN_ACCESS_TOKEN"]
+# Ensure DHAN_CLIENT_ID and DHAN_ACCESS_TOKEN are correctly set in Streamlit secrets
+try:
+    DHAN_CLIENT_ID = st.secrets["DHAN_CLIENT_ID"]
+    DHAN_ACCESS_TOKEN = st.secrets["DHAN_ACCESS_TOKEN"]
+except KeyError:
+    st.error("Dhan API credentials not found in Streamlit secrets. Please set DHAN_CLIENT_ID and DHAN_ACCESS_TOKEN.")
+    st.stop()
+
 
 def dhan_headers():
     return {
@@ -366,25 +372,6 @@ SECTORS = {
     "HFCL.NS", "TEJASNET.NS", "STLTECH.NS", "ITI.NS", "ASTEC.NS"
   ],
 
-  "Infrastructure": [
-    "LT.NS", "GMRINFRA.NS", "IRB.NS", "NBCC.NS", "RVNL.NS", "KEC.NS",
-    "PNCINFRA.NS", "KNRCON.NS", "GRINFRA.NS", "NCC.NS", "HGINFRA.NS",
-    "ASHOKA.NS", "SADBHAV.NS", "JWL.NS", "PATELENG.NS", "KALPATPOWR.NS",
-    "IRCON.NS", "ENGINERSIN.NS", "AHLUWALIA.NS", "PSPPROJECTS.NS", "CAPACITE.NS",
-    "WELSPUNIND.NS", "TITAGARH.NS", "HCC.NS", "MANINFRA.NS", "RIIL.NS",
-    "DBREALTY.NS", "JWL.NS"
-  ],
-
-  "Insurance": [
-    "SBILIFE.NS", "HDFCLIFE.NS", "ICICIGI.NS", "ICICIPRULI.NS", "LICI.NS",
-    "GICRE.NS", "NIACL.NS", "STARHEALTH.NS", "BAJAJFINSV.NS", "MAXFIN.NS"
-  ],
-
-  "Diversified": [
-    "ITC.NS", "RELIANCE.NS", "ADANIENT.NS", "GRASIM.NS", "HINDUNILVR.NS",
-    "DCMSHRIRAM.NS", "3MINDIA.NS", "CENTURYPLY.NS", "KFINTECH.NS", "BALMERLAWRI.NS",
-    "GODREJIND.NS", "VBL.NS", "BIRLACORPN.NS"
-  ],
 
   "Construction Materials": [
     "ULTRACEMCO.NS", "SHREECEM.NS", "AMBUJACEM.NS", "ACC.NS", "JKCEMENT.NS",
@@ -560,6 +547,19 @@ def fetch_stock_data_cached(symbol, period="5y", interval="1d"):
         for col in required_columns:
             df[col] = pd.to_numeric(df[col], errors='coerce')
         df = df.dropna(subset=required_columns)
+
+        # --- NEW ADDITION: Filter out 1970-01-01 dates from the index ---
+        # These are usually valid epoch dates (timestamp=0) but not relevant for stock data.
+        if not df.empty and isinstance(df.index, pd.DatetimeIndex):
+            # Define a cutoff date just after epoch start to filter problematic dates
+            epoch_start_threshold = pd.Timestamp('1970-01-02', tz='UTC') # Use UTC for safety or no tz if dates are naive
+
+            original_len = len(df)
+            # Remove dates before the threshold
+            df = df[df.index >= epoch_start_threshold]
+            if len(df) < original_len:
+                logging.warning(f"Filtered out {original_len - len(df)} epoch (1970-01-01) dates for {symbol}.")
+        # --- END NEW ADDITION ---
 
         logging.info(f"Successfully fetched data for {symbol}: {len(df)} rows")
         
@@ -1567,13 +1567,15 @@ def analyze_batch(stock_batch, progress_callback=None, status_callback=None):
                         errors.append(result["Error"])
                     else:
                         results.append(result)
-                if status_callback:
-                    status_callback(f"✅ Completed: {symbol}")
+                # Removed direct status_callback here to prevent multi-threading UI updates
+                # if status_callback:
+                #    status_callback(f"✅ Completed: {symbol}") 
             except Exception as e:
                 error_msg = f"Error processing {symbol}: {str(e)}"
                 errors.append(error_msg)
-                if status_callback:
-                    status_callback(f"❌ Failed: {symbol}")
+                # Removed direct status_callback here
+                # if status_callback:
+                #    status_callback(f"❌ Failed: {symbol}")
     if errors:
         st.error(f"Encountered {len(errors)} errors during batch processing:\n" + "\n".join(errors))
     return results
@@ -1649,27 +1651,32 @@ def analyze_stock_parallel(symbol):
         logging.error(f"Error in analyze_stock_parallel for {symbol}: {str(e)}")
         return None
 
-def analyze_all_stocks(stock_list, batch_size=10, progress_callback=None, status_callback=None):
+# Modified analyze_all_stocks to accept Streamlit UI objects directly
+def analyze_all_stocks(stock_list, batch_size=10, progress_bar_obj=None, loading_text_obj=None, status_text_obj=None):
     results = []
     total_stocks = len(stock_list)
     processed = 0
     for i in range(0, len(stock_list), batch_size):
         batch = stock_list[i:i + batch_size]
-        if status_callback:
+        if status_text_obj:
             batch_names = ", ".join(batch[:3])
             if len(batch) > 3:
                 batch_names += f" and {len(batch)-3} more"
             status_text_message = f"🔄 Analyzing: {batch_names}"
-            status_callback(status_text_message) # Pass message to status_callback
-        batch_results = analyze_batch(batch, progress_callback=progress_callback, status_callback=status_callback)
+            status_text_obj.text(status_text_message) # Update directly on the passed object
+
+        # Call analyze_batch WITHOUT the progress_callback and status_callback
+        batch_results = analyze_batch(batch) 
         results.extend([r for r in batch_results if r is not None])
         processed += len(batch)
-        if progress_callback:
-            progress_bar.progress(processed / total_stocks) # This seems to be the source of the `missing ScriptRunContext` warning, but it's common and harmless for performance.
-        # Sleep to ensure enough time passes for all calls in batch across workers
-        # With Period=2.0s and 3 workers, effective rate is 1.5 calls/sec.
-        # For batch_size=10, it needs at least 10/1.5 = 6.67 seconds.
-        # `max(10, ...)` ensures a minimum 10 second delay, which is very safe.
+        
+        # Update progress bar and loading text directly
+        if progress_bar_obj and loading_text_obj:
+            progress_value = processed / total_stocks
+            progress_bar_obj.progress(progress_value)
+            percentage = int(progress_value * 100)
+            loading_text_obj.text(f"Progress: {percentage}%")
+        
         time.sleep(max(10, batch_size * 2.0 / 3))
         
     results_df = pd.DataFrame(results)
@@ -1690,13 +1697,8 @@ def analyze_all_stocks(stock_list, batch_size=10, progress_callback=None, status
 
     return results_df.sort_values(by="Score", ascending=False)
 
-    
-def analyze_intraday_stocks(stock_list, batch_size=3, progress_callback=None, status_callback=None):
-    # Note: This function still uses 1d interval data. If true intraday data (e.g., 1m or 5m candles)
-    # is desired for "Intraday Picks", the `fetch_stock_data_cached` call within `analyze_stock_parallel`
-    # would need its `interval` parameter changed (e.g., `interval="1m"` and `period="7d"`).
-    # This change would drastically increase API calls and processing time.
-    
+# Modified analyze_intraday_stocks to accept Streamlit UI objects directly
+def analyze_intraday_stocks(stock_list, batch_size=3, progress_bar_obj=None, loading_text_obj=None, status_text_obj=None):
     results = []
     total_stocks = len(stock_list)
     processed = 0
@@ -1704,21 +1706,25 @@ def analyze_intraday_stocks(stock_list, batch_size=3, progress_callback=None, st
     for i in range(0, len(stock_list), batch_size):
         batch = stock_list[i:i + batch_size]
         
-        if status_callback:
+        if status_text_obj:
             batch_names = ", ".join(batch[:3])
             if len(batch) > 3:
                 batch_names += f" and {len(batch)-3} more"
             status_text_message = f"🔄 Analyzing: {batch_names}"
-            status_callback(status_text_message)
+            status_text_obj.text(status_text_message)
         
-        batch_results = analyze_batch(batch, progress_callback=progress_callback, status_callback=status_callback)
+        # Call analyze_batch WITHOUT the progress_callback and status_callback
+        batch_results = analyze_batch(batch) 
         results.extend([r for r in batch_results if r is not None])
         
         processed += len(batch)
-        if progress_callback:
-            progress_bar.progress(processed / total_stocks) # This seems to be the source of the `missing ScriptRunContext` warning, but it's common and harmless for performance.
+        if progress_bar_obj and loading_text_obj:
+            progress_value = processed / total_stocks
+            progress_bar_obj.progress(progress_value)
+            percentage = int(progress_value * 100)
+            loading_text_obj.text(f"Progress: {percentage}%")
         
-        time.sleep(max(10, batch_size * 2.0 / 3)) # Consistent sleep with analyze_all_stocks
+        time.sleep(max(10, batch_size * 2.0 / 3))
     
     results_df = pd.DataFrame(results)
     if results_df.empty:
@@ -1758,15 +1764,16 @@ def colored_recommendation(recommendation):
     else:
         return f"⚪ {recommendation}"
             
-def update_progress_with_status(progress_bar, loading_text, status_text, progress_value, stock_status=None):
-    progress_bar.progress(progress_value)
-    
-    percentage = int(progress_value * 100)
-    
-    loading_text.text(f"Progress: {percentage}%")
-    
-    if stock_status:
-        status_text.text(stock_status)
+# This function is no longer needed as updates happen directly
+# def update_progress_with_status(progress_bar, loading_text, status_text, progress_value, stock_status=None):
+#     progress_bar.progress(progress_value)
+#     
+#     percentage = int(progress_value * 100)
+#     
+#     loading_text.text(f"Progress: {percentage}%")
+#     
+#     if stock_status:
+#         status_text.text(stock_status)
 
 def insert_top_picks_supabase(results_df, pick_type="daily"):
     recommendation_mode = st.session_state.get('recommendation_mode', 'Standard')
@@ -1934,25 +1941,31 @@ def display_dashboard(symbol=None, data=None, recommendations=None):
             else:
                 st.info("No sector data available or able to be processed.")
 
+    # Initialize Streamlit UI placeholders outside the button blocks
+    # This ensures they always exist in the app's rerun cycle.
+    overall_progress_bar = st.progress(0)
+    overall_loading_text = st.empty()
+    overall_status_text = st.empty()
+
 
     if st.button("🚀 Generate Daily Top Picks"):
-        progress_bar = st.progress(0)
-        loading_text = st.empty()
-        status_text = st.empty() 
-        
-        status_text.text(f"📊 Analyzing {len(selected_stocks)} stocks...")
+        # Reset progress bar/text to initial state for this action
+        overall_progress_bar.progress(0)
+        overall_loading_text.text("Progress: 0%")
+        overall_status_text.text(f"📊 Analyzing {len(selected_stocks)} stocks...")
         
         results_df = analyze_all_stocks(
             selected_stocks,
             batch_size=10,
-            progress_callback=lambda x: update_progress_with_status(progress_bar, loading_text, status_text, x),
-            status_callback=lambda status: status_text.text(status) 
+            progress_bar_obj=overall_progress_bar, # Pass the Streamlit objects directly
+            loading_text_obj=overall_loading_text,
+            status_text_obj=overall_status_text
         )
         
-        insert_top_picks_supabase(results_df, pick_type="daily")
-        progress_bar.empty()
-        loading_text.empty()
-        status_text.empty()
+        # Clear the placeholders after the analysis is complete
+        overall_progress_bar.empty()
+        overall_loading_text.empty()
+        overall_status_text.empty()
         
         display_results_df = pd.DataFrame()
         recommendation_mode = st.session_state.get('recommendation_mode', 'Standard')
@@ -2008,23 +2021,23 @@ def display_dashboard(symbol=None, data=None, recommendations=None):
             st.warning("⚠️ No top picks available (or no 'Buy' recommendations) due to data issues or current market conditions.")
 
     if st.button("⚡ Generate Intraday Top 5 Picks"):
-        progress_bar = st.progress(0)
-        loading_text = st.empty()
-        status_text = st.empty()
-        
-        status_text.text(f"📊 Analyzing {len(selected_stocks)} stocks for intraday...")
+        # Reset progress bar/text to initial state for this action
+        overall_progress_bar.progress(0)
+        overall_loading_text.text("Progress: 0%")
+        overall_status_text.text(f"📊 Analyzing {len(selected_stocks)} stocks for intraday...")
         
         intraday_results = analyze_intraday_stocks(
             selected_stocks,
             batch_size=10, 
-            progress_callback=lambda x: update_progress_with_status(progress_bar, loading_text, status_text, x),
-            status_callback=lambda status: status_text.text(status)
+            progress_bar_obj=overall_progress_bar, # Pass the Streamlit objects directly
+            loading_text_obj=overall_loading_text,
+            status_text_obj=overall_status_text
         )
         
-        insert_top_picks_supabase(intraday_results, pick_type="intraday")
-        progress_bar.empty()
-        loading_text.empty()
-        status_text.empty()
+        # Clear the placeholders after the analysis is complete
+        overall_progress_bar.empty()
+        overall_loading_text.empty()
+        overall_status_text.empty()
         
         if not intraday_results.empty:
             st.subheader("🏆 Top 5 Intraday Stocks")
@@ -2232,19 +2245,40 @@ def display_dashboard(symbol=None, data=None, recommendations=None):
                                  f"Profit: ₹{profit:.2f} ({trade['reason']})")
 
                 fig = px.line(data, x=data.index, y='Close', title=f"{normalize_symbol_dhan(symbol)} Price with Signals")
-                # When adding scatter points, if the buy_signals/sell_signals dates are strings, convert them back to datetime objects for plotly
+                
+                # --- MODIFIED PLOTTING LOGIC FOR BUY/SELL SIGNALS ---
+                # Define a threshold date to filter out problematic epoch dates for plotting
+                epoch_plot_threshold = pd.Timestamp('1970-01-02', tz='UTC') 
+
                 if backtest_results["buy_signals"]:
                     buy_dates_str, buy_prices = zip(*backtest_results["buy_signals"])
-                    # Convert strings back to datetime objects for plotting
-                    buy_dates = pd.to_datetime(list(buy_dates_str))
-                    fig.add_scatter(x=list(buy_dates), y=list(buy_prices), mode='markers', name='Buy Signals',
-                                   marker=dict(color='green', symbol='triangle-up', size=10))
+                    # Convert strings to datetime objects, coercing errors to NaT
+                    buy_dates_dt = pd.to_datetime(list(buy_dates_str), errors='coerce')
+                    
+                    # Filter out NaT and dates earlier than the epoch threshold
+                    valid_buy_signals_for_plot = [(d, p) for d, p in zip(buy_dates_dt, buy_prices) 
+                                                  if pd.notna(d) and d >= epoch_plot_threshold]
+                    
+                    if valid_buy_signals_for_plot:
+                        buy_dates_filtered, buy_prices_filtered = zip(*valid_buy_signals_for_plot)
+                        fig.add_scatter(x=list(buy_dates_filtered), y=list(buy_prices_filtered), mode='markers', name='Buy Signals',
+                                       marker=dict(color='green', symbol='triangle-up', size=10))
+
                 if backtest_results["sell_signals"]:
                     sell_dates_str, sell_prices = zip(*backtest_results["sell_signals"])
-                    # Convert strings back to datetime objects for plotting
-                    sell_dates = pd.to_datetime(list(sell_dates_str))
-                    fig.add_scatter(x=list(sell_dates), y=list(sell_prices), mode='markers', name='Sell Signals',
-                                   marker=dict(color='red', symbol='triangle-down', size=10))
+                    # Convert strings to datetime objects, coercing errors to NaT
+                    sell_dates_dt = pd.to_datetime(list(sell_dates_str), errors='coerce')
+                    
+                    # Filter out NaT and dates earlier than the epoch threshold
+                    valid_sell_signals_for_plot = [(d, p) for d, p in zip(sell_dates_dt, sell_prices) 
+                                                   if pd.notna(d) and d >= epoch_plot_threshold]
+                    
+                    if valid_sell_signals_for_plot:
+                        sell_dates_filtered, sell_prices_filtered = zip(*valid_sell_signals_for_plot)
+                        fig.add_scatter(x=list(sell_dates_filtered), y=list(sell_prices_filtered), mode='markers', name='Sell Signals',
+                                       marker=dict(color='red', symbol='triangle-down', size=10))
+                # --- END MODIFIED PLOTTING LOGIC ---
+
                 st.plotly_chart(fig, use_container_width=True)
             elif backtest_results:
                 st.info(f"No valid trades generated for {strategy_name} strategy on {normalize_symbol_dhan(symbol)} with available data.")
