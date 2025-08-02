@@ -6,16 +6,20 @@ import streamlit as st
 from datetime import datetime, timedelta
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from functools import lru_cache
+from tqdm import tqdm
 import plotly.express as px
 import time
 import requests
 import io
 import random
+import spacy
+from pytrends.request import TrendReq
 import itertools
 from arch import arch_model
 import warnings
 import sqlite3
 from diskcache import Cache
+import os
 from dotenv import load_dotenv
 from streamlit import cache_data
 from supabase import create_client, Client
@@ -26,30 +30,6 @@ from ta.volatility import AverageTrueRange, BollingerBands
 from ta.volume import OnBalanceVolumeIndicator, ChaikinMoneyFlowIndicator
 from ratelimit import RateLimitDecorator as RateLimiter
 from threading import Lock
-
-# ──────────────────────────────────────────────
-# Factor-ranking engine  (new helper)
-# ──────────────────────────────────────────────
-def _zscore(series):
-    return (series - series.mean()) / (series.std(ddof=0) + 1e-9)
-
-FACTORS = {
-    #  key        weight   function that returns a Series
-    "rsi"     : {"w":  1.2, "f": lambda d: -_zscore(d["RSI"])},
-    "macd"    : {"w":  1.0, "f": lambda d:  _zscore(d["MACD"] - d["MACD_signal"])},
-    "cmf"     : {"w":  0.6, "f": lambda d:  _zscore(d["CMF"])},
-    "atr_vol" : {"w": -0.8, "f": lambda d:  _zscore(d["ATR"] / d["Close"])},
-}
-
-def compute_factor_score(df):
-    """
-    Returns a tuple (score, raw_dict).  Score ≈ weighted sum of factor z-scores.
-    """
-    raw = {k: v["f"](df).iloc[-1] for k, v in FACTORS.items() if k in FACTORS and k in FACTORS}
-    score = sum(raw[k] * FACTORS[k]["w"] for k in raw if pd.notnull(raw[k]))
-    return score, raw
-
-
 data_api_calls = 0
 data_api_lock = Lock()
 # Configure logging
@@ -490,7 +470,7 @@ def parse_period_to_days(period):
         logging.error(f"Invalid period format: {period}, error: {e}. Defaulting to 30 days.")
         return 30
         
-@RateLimiter(calls=10, period=1)
+@RateLimiter(calls=5, period=1)
 def fetch_stock_data_with_dhan(symbol, period="5y", interval="1d"):
     global data_api_calls
     with data_api_lock:
@@ -1211,53 +1191,107 @@ def adaptive_recommendation(data, market_regime="normal"):
         
 def generate_recommendations(data, symbol=None):
     """
-    Generates trading recommendations using the new factor-ranking engine.
+    Generates trading recommendations based on technical indicators.
     """
-    # initialise default payload
     recommendations = {
         "Intraday": "Hold",
         "Swing": "Hold",
         "Short-Term": "Hold",
         "Long-Term": "Hold",
+        "Mean_Reversion": "Hold",
+        "Breakout": "Hold",
+        "Ichimoku_Trend": "Hold",
         "Current Price": None,
         "Buy At": None,
         "Stop Loss": None,
         "Target": None,
-        "Score": 0,
-        "Factors": {}
+        "Score": 0
     }
 
-    # basic data sanity
     if not validate_data(data, min_length=27):
         logging.warning(f"Invalid data for recommendations: {symbol}")
         return recommendations
 
     try:
-        # ─────────────────────────────────────────────
-        # 1)  Compute factor score
-        # ─────────────────────────────────────────────
-        score, raw = compute_factor_score(data)
-        recommendations["Score"] = round(score, 2)
-        recommendations["Factors"] = raw      # optional, for debugging/UI
+        recommendations["Current Price"] = round(float(data['Close'].iloc[-1]), 2)
+        buy_score = 0
+        sell_score = 0
 
-        # verdict
-        if score > 1.5:
-            verdict = "Buy"
-        elif score < -1.5:
-            verdict = "Sell"
-        else:
-            verdict = "Hold"
+        # RSI
+        if 'RSI' in data.columns and pd.notnull(data['RSI'].iloc[-1]) and isinstance(data['RSI'].iloc[-1], (int, float)):
+            rsi = data['RSI'].iloc[-1]
+            if rsi <= 20:
+                buy_score += 4
+                recommendations["Mean_Reversion"] = "Buy"
+            elif rsi < 30:
+                buy_score += 2
+                recommendations["Mean_Reversion"] = "Buy"
+            elif rsi > 70:
+                sell_score += 2
+                recommendations["Mean_Reversion"] = "Sell"
+            logging.info(f"RSI score for {symbol}: buy={buy_score}, sell={sell_score}")
 
-        for tf in ["Intraday", "Swing", "Short-Term", "Long-Term"]:
-            recommendations[tf] = verdict
+        # MACD
+        if 'MACD' in data.columns and 'MACD_signal' in data.columns and pd.notnull(data['MACD'].iloc[-1]) and pd.notnull(data['MACD_signal'].iloc[-1]):
+            macd_diff = data['MACD'].iloc[-1] - data['MACD_signal'].iloc[-1]
+            if macd_diff > 0:
+                buy_score += 2
+                recommendations["Swing"] = "Buy"
+            elif macd_diff < 0:
+                sell_score += 2
+                recommendations["Swing"] = "Sell"
+            logging.info(f"MACD score for {symbol}: buy={buy_score}, sell={sell_score}")
 
-        # ─────────────────────────────────────────────
-        # 2)  Price levels
-        # ─────────────────────────────────────────────
-        recommendations["Current Price"] = round(float(data["Close"].iloc[-1]), 2)
-        recommendations["Buy At"]        = calculate_buy_at(data)
-        recommendations["Stop Loss"]     = calculate_stop_loss(data)
-        recommendations["Target"]        = calculate_target(data)
+        # Ichimoku
+        if all(col in data.columns and pd.notnull(data[col].iloc[-1]) for col in ['Ichimoku_Span_A', 'Ichimoku_Span_B', 'Close']):
+            close = data['Close'].iloc[-1]
+            span_a = data['Ichimoku_Span_A'].iloc[-1]
+            span_b = data['Ichimoku_Span_B'].iloc[-1]
+            if close > span_a and close > span_b:
+                buy_score += 3
+                recommendations["Ichimoku_Trend"] = "Buy"
+            elif close < span_a and close < span_b:
+                sell_score += 3
+                recommendations["Ichimoku_Trend"] = "Sell"
+            logging.info(f"Ichimoku score for {symbol}: buy={buy_score}, sell={sell_score}")
+
+        # Bollinger Bands Breakout
+        if 'Upper_Band' in data.columns and 'Lower_Band' in data.columns and pd.notnull(data['Upper_Band'].iloc[-1]):
+            close = data['Close'].iloc[-1]
+            if close > data['Upper_Band'].iloc[-1]:
+                buy_score += 2
+                recommendations["Breakout"] = "Buy"
+            elif close < data['Lower_Band'].iloc[-1]:
+                sell_score += 2
+                recommendations["Breakout"] = "Sell"
+            logging.info(f"Breakout score for {symbol}: buy={buy_score}, sell={sell_score}")
+
+        # CMF
+        if 'CMF' in data.columns and pd.notnull(data['CMF'].iloc[-1]):
+            cmf = data['CMF'].iloc[-1]
+            if cmf > 0.2:
+                buy_score += 1
+            elif cmf < -0.2:
+                sell_score += 1
+            logging.info(f"CMF score for {symbol}: buy={buy_score}, sell={sell_score}")
+
+        # Generate recommendations based on scores
+        net_score = buy_score - sell_score
+        if buy_score > sell_score and buy_score >= 4:
+            recommendations["Intraday"] = "Strong Buy"
+            recommendations["Swing"] = "Buy" if buy_score >= 3 else "Hold"
+            recommendations["Short-Term"] = "Buy" if buy_score >= 2 else "Hold"
+            recommendations["Long-Term"] = "Buy" if buy_score >= 1 else "Hold"
+        elif sell_score > buy_score and sell_score >= 4:
+            recommendations["Intraday"] = "Strong Sell"
+            recommendations["Swing"] = "Sell" if sell_score >= 3 else "Hold"
+            recommendations["Short-Term"] = "Sell" if sell_score >= 2 else "Hold"
+            recommendations["Long-Term"] = "Sell" if sell_score >= 1 else "Hold"
+
+        recommendations["Buy At"] = calculate_buy_at(data)
+        recommendations["Stop Loss"] = calculate_stop_loss(data)
+        recommendations["Target"] = calculate_target(data)
+        recommendations["Score"] = min(max(net_score, -7), 7)
 
         logging.info(f"Recommendations for {symbol}: {recommendations}")
         return recommendations
@@ -1265,7 +1299,7 @@ def generate_recommendations(data, symbol=None):
     except Exception as e:
         logging.error(f"Error generating recommendations for {symbol}: {str(e)}")
         return recommendations
-        
+
 @st.cache_data(ttl=3600)
 def get_top_sectors_cached(rate_limit_delay=0.2, stocks_per_sector=5):
     sector_scores = {}
@@ -1449,7 +1483,6 @@ def analyze_stock_parallel(symbol):
         if data.empty or len(data) < 50:
             logging.warning(f"No sufficient data for {symbol}: {len(data)} rows")
             return None
-            time.sleep(0.12)
         data = analyze_stock(data)
         recommendation_mode = st.session_state.get('recommendation_mode', 'Standard')
         if recommendation_mode == "Adaptive":
@@ -1637,7 +1670,7 @@ def insert_top_picks_supabase(results_df, pick_type="daily"):
             st.error(f"Supabase insert exception: {e}")
 
 
-@RateLimiter(calls=10, period=1)
+@RateLimiter(calls=1, period=1)
 def fetch_latest_price(symbol):
     data = fetch_stock_data_with_dhan(symbol, period="1mo", interval="1d")
     if not data.empty:
