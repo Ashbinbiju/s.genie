@@ -740,14 +740,14 @@ def calculate_buy_at(data):
     try:
         close = data['Close'].iloc[-1]
         atr = data['ATR'].iloc[-1] if 'ATR' in data.columns and pd.notnull(data['ATR'].iloc[-1]) else 0
-        sma_20 = data['EMA_20'].iloc[-1] if 'EMA_20' in data.columns and pd.notnull(data['EMA_20'].iloc[-1]) else close
+        ema_20 = data['EMA_20'].iloc[-1] if 'EMA_20' in data.columns and pd.notnull(data['EMA_20'].iloc[-1]) else close
 
         # For a trend-following strategy, we often buy on a minor pullback to a short-term moving average
         # or simply at current price if the trend is very strong.
         # Let's target slightly below current close, but above EMA 20, if EMA 20 is below close.
-        if close > sma_20 and atr > 0:
+        if close > ema_20 and atr > 0:
             # Buy slightly below current price, but no lower than EMA20
-            buy_at = max(close * (1 - 0.2 * (atr / close)), sma_20 * 1.005) # Small buffer above EMA
+            buy_at = max(close * (1 - 0.2 * (atr / close)), ema_20 * 1.005) # Small buffer above EMA
             buy_at = min(buy_at, close * 0.995) # Don't go too low from close
         elif atr > 0:
             buy_at = close * (1 - 0.2 * (atr / close)) # Fallback to a simple ATR-based discount
@@ -759,7 +759,7 @@ def calculate_buy_at(data):
         logging.error(f"Error calculating buy_at: {str(e)}")
         return None
 
-def calculate_stop_loss(data, atr_multiplier=3.0): # Increased multiplier for wider stop
+def calculate_stop_loss(data, atr_multiplier=3.0): # Increased multiplier for wider stop from 2.5
     """
     Calculates the stop loss price based on ATR and recent lows.
     """
@@ -792,7 +792,7 @@ def calculate_stop_loss(data, atr_multiplier=3.0): # Increased multiplier for wi
         logging.error(f"Error calculating stop_loss: {str(e)}")
         return None
 
-def calculate_target(data, risk_reward_ratio=2.5): # Increased risk-reward ratio
+def calculate_target(data, risk_reward_ratio=2.5): # Increased risk-reward ratio from 2.0
     """
     Calculates the target price based on ATR and a risk-reward ratio.
     """
@@ -873,9 +873,9 @@ def classify_market_regime(data):
         return 'Highly Volatile'
 
     if adx > 25: # Strong trend
-        if close > sma_50 and close > sma_200 and sma_50 > sma_200: # All bullish alignment
+        if close > sma_50 and sma_50 > sma_200 and close > sma_200: # All bullish alignment
             return 'Bullish Trending'
-        elif close < sma_50 and close < sma_200 and sma_50 < sma_200: # All bearish alignment
+        elif close < sma_50 and sma_50 < sma_200 and close < sma_200: # All bearish alignment
             return 'Bearish Trending'
         else: # Price is trending but mixed signals from MAs
             return 'Trending (Unclear Direction)'
@@ -943,12 +943,19 @@ def compute_signal_score(data, symbol=None):
         macd_signal = data['MACD_signal'].iloc[-1]
         macd_hist = data['MACD_hist'].iloc[-1]
 
-        if macd > macd_signal and macd_hist > 0: # Bullish crossover and positive histogram (momentum)
+        # Simplified MACD conditions for signal
+        if macd > macd_signal and macd > 0: # Bullish crossover above zero
             score += weights['MACD_Bullish']
-            reason_components.append("MACD is bullish (crossover & momentum).")
-        elif macd < macd_signal and macd_hist < 0: # Bearish crossover and negative histogram
+            reason_components.append("MACD is bullish (crossover above zero).")
+        elif macd < macd_signal and macd < 0: # Bearish crossover below zero
             score += weights['MACD_Bearish']
-            reason_components.append("MACD is bearish (crossover & momentum).")
+            reason_components.append("MACD is bearish (crossover below zero).")
+        elif macd > macd_signal and macd_hist > 0: # Bullish crossover with momentum (even if below zero)
+            score += weights['MACD_Bullish'] * 0.5 # Less strong signal
+            reason_components.append("MACD is bullish (crossover & positive momentum).")
+        elif macd < macd_signal and macd_hist < 0: # Bearish crossover with momentum (even if above zero)
+            score += weights['MACD_Bearish'] * 0.5 # Less strong signal
+            reason_components.append("MACD is bearish (crossover & negative momentum).")
 
     # Ichimoku Cloud
     if all(col in data.columns and pd.notnull(data[col].iloc[-1]) for col in ['Ichimoku_Span_A', 'Ichimoku_Span_B', 'Close']):
@@ -965,10 +972,10 @@ def compute_signal_score(data, symbol=None):
     # CMF
     if 'CMF' in data.columns and pd.notnull(data['CMF'].iloc[-1]):
         cmf = data['CMF'].iloc[-1]
-        if cmf > 0.15: # Strong buying pressure
+        if cmf > 0.10: # Stronger buying pressure threshold
             score += weights['CMF_Buying']
             reason_components.append(f"CMF({cmf:.2f}) indicates buying pressure.")
-        elif cmf < -0.15: # Strong selling pressure
+        elif cmf < -0.10: # Stronger selling pressure threshold
             score += weights['CMF_Selling']
             reason_components.append(f"CMF({cmf:.2f}) indicates selling pressure.")
 
@@ -1111,53 +1118,56 @@ def adaptive_recommendation(data, symbol=None, equity=100000, risk_per_trade_pct
         # --- Trend-Following Strategy Logic ---
         # Define bullish conditions
         is_uptrend_sma = (current_price > sma_50 and sma_50 > sma_200) and (pd.notnull(sma_50) and pd.notnull(sma_200))
-        is_macd_bullish = (macd > macd_signal and macd_signal < 0) and (pd.notnull(macd) and pd.notnull(macd_signal)) # Crossover below zero, then rising
+        is_macd_bullish = (macd > macd_signal and macd > 0) and (pd.notnull(macd) and pd.notnull(macd_signal)) # Crossover above zero, confirming strength
         is_strong_adx_bullish = (adx > 25 and dmp > dmn) and (pd.notnull(adx) and pd.notnull(dmp) and pd.notnull(dmn))
         is_ichimoku_bullish = (current_price > max(ichimoku_span_a, ichimoku_span_b)) and (pd.notnull(ichimoku_span_a) and pd.notnull(ichimoku_span_b))
-        is_cmf_positive = (cmf > 0.05) and pd.notnull(cmf) # Slight buying pressure
+        is_cmf_positive = (cmf > 0.10) and pd.notnull(cmf) # Stronger buying pressure
 
         # Define bearish conditions
         is_downtrend_sma = (current_price < sma_50 and sma_50 < sma_200) and (pd.notnull(sma_50) and pd.notnull(sma_200))
-        is_macd_bearish = (macd < macd_signal and macd_signal > 0) and (pd.notnull(macd) and pd.notnull(macd_signal)) # Crossover above zero, then falling
+        is_macd_bearish = (macd < macd_signal and macd < 0) and (pd.notnull(macd) and pd.notnull(macd_signal)) # Crossover below zero, confirming weakness
         is_strong_adx_bearish = (adx > 25 and dmn > dmp) and (pd.notnull(adx) and pd.notnull(dmp) and pd.notnull(dmn))
         is_ichimoku_bearish = (current_price < min(ichimoku_span_a, ichimoku_span_b)) and (pd.notnull(ichimoku_span_a) and pd.notnull(ichimoku_span_b))
-        is_cmf_negative = (cmf < -0.05) and pd.notnull(cmf) # Slight selling pressure
+        is_cmf_negative = (cmf < -0.10) and pd.notnull(cmf) # Stronger selling pressure
 
 
         # --- BUY Logic ---
-        if is_uptrend_sma and is_macd_bullish and is_strong_adx_bullish:
-            if is_ichimoku_bullish and is_cmf_positive:
-                final_recommendation = "Strong Buy (Confirmed Trend Entry)"
-            else:
-                final_recommendation = "Buy (Trend Following)"
-        elif is_uptrend_sma and (is_macd_bullish or is_ichimoku_bullish): # Less strict buy
+        # Prioritize strong, confirmed bullish trends
+        if is_uptrend_sma and is_macd_bullish and is_strong_adx_bullish and is_ichimoku_bullish and is_cmf_positive:
+            final_recommendation = "Strong Buy (Confirmed Trend Entry)"
+        elif is_uptrend_sma and is_macd_bullish and is_strong_adx_bullish:
+            final_recommendation = "Buy (Trend Following)"
+        elif is_uptrend_sma and (is_macd_bullish or is_ichimoku_bullish): # Less strict buy, for developing trends
             final_recommendation = "Consider Buy (Developing Trend)"
-
-        # Additional Buy condition: mean reversion in a bullish context
-        elif market_regime == 'Sideways/Consolidating' and pd.notnull(data['RSI'].iloc[-1]) and data['RSI'].iloc[-1] < 30 and score >= 2:
-            final_recommendation = "Buy (Oversold in Range)"
-        elif "Highly Volatile" in market_regime and pd.notnull(data['RSI'].iloc[-1]) and data['RSI'].iloc[-1] < 25 and score > 4:
-            final_recommendation = "Strong Buy (Volatile Reversal Potential)"
+        # Added a specific condition for breakouts
+        elif 'Upper_Band' in data.columns and pd.notnull(data['Upper_Band'].iloc[-1]) and \
+             current_price > data['Upper_Band'].iloc[-1] and volume_spike:
+            final_recommendation = "Buy (Breakout with Volume)"
 
 
         # --- SELL Logic ---
-        # Strong Sell signals that might warrant an immediate exit (or warning)
-        if is_downtrend_sma and is_macd_bearish and is_strong_adx_bearish:
+        # Prioritize strong, confirmed bearish trends or reversals
+        if is_downtrend_sma and is_macd_bearish and is_strong_adx_bearish and is_ichimoku_bearish and is_cmf_negative:
             final_recommendation = "Strong Sell (Confirmed Trend Reversal)"
-        elif is_macd_bearish or is_ichimoku_bearish: # Any significant bearish reversal
-            # If current recommendation is Buy/Hold, this downgrades it to Sell
+        elif is_downtrend_sma and is_macd_bearish and is_strong_adx_bearish:
+            # If currently recommending Buy/Hold, this downgrades it to Sell
             if final_recommendation.startswith("Buy") or final_recommendation == "Hold":
-                final_recommendation = "Sell (Trend Weakening)"
+                final_recommendation = "Sell (Trend Reversal)"
             else:
-                final_recommendation = "Strong Sell (Confirmed Trend Reversal)"
+                final_recommendation = "Strong Sell (Trend Reversal)"
+        # Any significant bearish reversal
+        elif is_macd_bearish or is_ichimoku_bearish:
+             if final_recommendation.startswith("Buy") or final_recommendation == "Hold":
+                final_recommendation = "Sell (Trend Weakening)"
 
         # Overbought conditions in non-trending markets or extreme overbought in trending
         if pd.notnull(data['RSI'].iloc[-1]) and data['RSI'].iloc[-1] > 75:
-            if final_recommendation.startswith("Buy"): # If currently recommending Buy, downgrade
+            # If current recommendation is Buy, downgrade to Hold/Sell depending on strength
+            if final_recommendation.startswith("Buy"):
                 final_recommendation = "Hold (Overbought, Consider Profit Booking)"
             elif final_recommendation == "Hold":
                 final_recommendation = "Sell (Overbought)"
-            else:
+            else: # Already a sell, reinforce
                 final_recommendation = "Strong Sell (Extremely Overbought)"
 
 
@@ -1350,7 +1360,9 @@ def backtest_stock(data, symbol, strategy="Swing", _data_hash=None):
         "win_rate": 0,
         "buy_signals": [],
         "sell_signals": [],
-        "trade_details": []
+        "trade_details": [],
+        "total_profit_amount": 0.0, # Added
+        "total_loss_amount": 0.0    # Added
     }
     recommendation_mode = st.session_state.get('recommendation_mode', 'Standard')
 
@@ -1360,6 +1372,8 @@ def backtest_stock(data, symbol, strategy="Swing", _data_hash=None):
     current_trailing_stop = None # Track trailing stop for open position
     trades = []
     returns = []
+    total_profit_amount = 0.0 # To accumulate
+    total_loss_amount = 0.0   # To accumulate
 
     # Need enough data for indicator calculation (longest indicator window) plus one day for current open
     min_data_for_backtest_analysis = max(INDICATOR_MIN_LENGTHS.values())
@@ -1392,8 +1406,11 @@ def backtest_stock(data, symbol, strategy="Swing", _data_hash=None):
             continue
 
         # Generate recommendation based on sliced_data_for_signal (i.e., data *before* the current trade day)
+        # Pass the current capital to adaptive_recommendation for position sizing during backtest
+        current_equity_for_rec = st.session_state.get('initial_capital', 50000) # Use the UI-set capital
+        
         if recommendation_mode == "Adaptive":
-            rec = adaptive_recommendation(sliced_data_for_signal, symbol=symbol)
+            rec = adaptive_recommendation(sliced_data_for_signal, symbol=symbol, equity=current_equity_for_rec)
             signal_type = rec["Recommendation"] # Adaptive recommendation
         else:
             rec = generate_recommendations(sliced_data_for_signal, symbol)
@@ -1421,7 +1438,7 @@ def backtest_stock(data, symbol, strategy="Swing", _data_hash=None):
             
             # If recommended buy price exists and current open is significantly higher, skip
             # Also, ensure we are buying near the recommended price for a "Buy" signal.
-            if pd.notnull(rec_buy_at) and (entry_price_with_slippage > rec_buy_at * 1.01 or entry_price_with_slippage < rec_buy_at * 0.99):
+            if pd.notnull(rec_buy_at) and (abs(entry_price_with_slippage - rec_buy_at) / rec_buy_at > 0.02): # +/- 2% from recommended buy price
                  # logging.debug(f"Skipping buy for {symbol} on {trade_date_str}: Open price {entry_price_with_slippage:.2f} too far from recommended Buy At {rec_buy_at:.2f}.")
                  continue # Don't enter if price is not close to desired entry
 
@@ -1437,8 +1454,12 @@ def backtest_stock(data, symbol, strategy="Swing", _data_hash=None):
             exit_price = trade_close_price # Default exit at close if no trigger
             
             # Update trailing stop daily if in profit
-            if trade_close_price > entry_price and 'ATR' in sliced_data_for_signal.columns and pd.notnull(sliced_data_for_signal['ATR'].iloc[-1]):
-                current_trailing_stop = calculate_trailing_stop(trade_close_price, sliced_data_for_signal['ATR'].iloc[-1], 2.0, current_trailing_stop)
+            # Only update if current_day_data has ATR and Close
+            if 'ATR' in current_day_data and pd.notnull(current_day_data['ATR']) and pd.notnull(current_day_data['Close']):
+                if current_day_data['Close'] > entry_price: # Only trail if in profit
+                    current_trailing_stop = calculate_trailing_stop(current_day_data['Close'], current_day_data['ATR'], 2.0, current_trailing_stop)
+                elif current_trailing_stop is None: # If not yet in profit, set initial trailing stop at entry_price - ATR_multiplier*ATR
+                    current_trailing_stop = entry_price - (current_day_data['ATR'] * 2.5) # A wider initial stop for trailing stop.
 
             # Retrieve dynamic stop loss and target from current day's analysis (slice_data_for_signal)
             stop_loss_price = calculate_stop_loss(sliced_data_for_signal)
@@ -1455,16 +1476,11 @@ def backtest_stock(data, symbol, strategy="Swing", _data_hash=None):
                 exit_price = target_price * (1 - slippage_pct) # Exit at target with slippage
                 exit_reason = "Target Hit"
             # 2. Check for explicit Sell Signal from the strategy only if other exits not triggered
+            # Now, we simply trust the `signal_type` from `adaptive_recommendation`
             elif "Sell" in signal_type and exit_reason is None:
-                # If current price is below EMA20 and MACD is bearish, confirm sell
-                ema_20 = sliced_data_for_signal['EMA_20'].iloc[-1] if 'EMA_20' in sliced_data_for_signal.columns and pd.notnull(sliced_data_for_signal['EMA_20'].iloc[-1]) else np.nan
-                macd = sliced_data_for_signal['MACD'].iloc[-1] if 'MACD' in sliced_data_for_signal.columns and pd.notnull(sliced_data_for_signal['MACD'].iloc[-1]) else np.nan
-                macd_signal = sliced_data_for_signal['MACD_signal'].iloc[-1] if 'MACD_signal' in sliced_data_for_signal.columns and pd.notnull(sliced_data_for_signal['MACD_signal'].iloc[-1]) else np.nan
+                exit_price = trade_close_price * (1 - slippage_pct)
+                exit_reason = "Sell Signal"
 
-                if (pd.notnull(ema_20) and trade_close_price < ema_20 and trade_close_price < trade_open_price) or \
-                   (pd.notnull(macd) and pd.notnull(macd_signal) and macd < macd_signal and macd < 0):
-                    exit_price = trade_close_price * (1 - slippage_pct)
-                    exit_reason = "Sell Signal"
 
             if exit_reason:
                 position = None
@@ -1472,6 +1488,12 @@ def backtest_stock(data, symbol, strategy="Swing", _data_hash=None):
 
                 if entry_price != 0:
                     returns.append(profit / entry_price)
+                
+                # Accumulate total profit/loss amounts
+                if profit > 0:
+                    total_profit_amount += profit
+                else:
+                    total_loss_amount += profit # Losses are negative, so add them directly
 
                 trades.append({
                     "entry_date": entry_date_str, # Already a string
@@ -1494,6 +1516,12 @@ def backtest_stock(data, symbol, strategy="Swing", _data_hash=None):
         profit = exit_price - entry_price
         if entry_price != 0:
             returns.append(profit / entry_price)
+        
+        if profit > 0: # Accumulate final trade profit/loss
+            total_profit_amount += profit
+        else:
+            total_loss_amount += profit
+
         trades.append({
             "entry_date": entry_date_str,
             "entry_price": entry_price,
@@ -1508,6 +1536,11 @@ def backtest_stock(data, symbol, strategy="Swing", _data_hash=None):
     if trades:
         results["trade_details"] = trades
         results["trades"] = len(trades)
+        
+        # Add total profit/loss amounts to results
+        results["total_profit_amount"] = total_profit_amount
+        results["total_loss_amount"] = total_loss_amount
+
 
         total_growth_factor = 1.0
         for r in returns:
@@ -1587,6 +1620,8 @@ def analyze_stock_parallel(symbol):
 
         # Get recommendation mode from session state (this is the mode for the current app render)
         recommendation_mode = st.session_state.get('recommendation_mode', 'Standard')
+        current_equity_for_rec = st.session_state.get('initial_capital', 50000) # Pass initial capital
+
 
         # Note: The output dict structure for analyze_stock_parallel should contain *all* expected columns,
         # filling with None/NaN where not applicable to avoid KeyError when DataFrame is created.
@@ -1604,7 +1639,7 @@ def analyze_stock_parallel(symbol):
         }
 
         if recommendation_mode == "Adaptive":
-            rec = adaptive_recommendation(data, symbol)
+            rec = adaptive_recommendation(data, symbol, equity=current_equity_for_rec) # Pass equity
             if not rec or not rec.get('Recommendation'):
                 logging.error(f"Invalid adaptive_recommendation output for {symbol}: {rec}")
                 result_dict["Reason"] = "Adaptive analysis failed or incomplete."
@@ -2084,10 +2119,10 @@ def display_dashboard(symbol=None, data=None, recommendations=None):
             st.warning("⚠️ No valid stock data retrieved to generate Intraday Top 5 Picks.")
         else: # Proceed only if intraday_results is NOT empty
             if st.session_state.recommendation_mode == "Adaptive":
-                filtered_df = intraday_results[intraday_results["Recommendation"].astype(str).str.contains("Buy", na=False, case=False)]
+                filtered_df = intraday_results[intraday_results["Recommendation"].str.contains("Buy", na=False, case=False)]
             else:
                 if "Intraday" in intraday_results.columns:
-                    filtered_df = intraday_results[intraday_results["Intraday"].astype(str).str.contains("Buy", na=False, case=False)]
+                    filtered_df = intraday_results[intraday_results["Intraday"].str.contains("Buy", na=False, case=False)]
                 else:
                     logging.error("Intraday column not found in intraday_results during filtering for display.")
 
@@ -2311,6 +2346,10 @@ def display_dashboard(symbol=None, data=None, recommendations=None):
                 st.write(f"**Max Drawdown**: {backtest_results['max_drawdown']:.2f}%")
                 st.write(f"**Number of Trades**: {backtest_results['trades']}")
                 st.write(f"**Win Rate**: {backtest_results['win_rate']:.2f}%")
+                # Display total profit/loss amounts
+                st.write(f"**Total Profit Amount**: ₹{backtest_results['total_profit_amount']:.2f}")
+                st.write(f"**Total Loss Amount**: ₹{backtest_results['total_loss_amount']:.2f}") # This will be a negative value
+
                 with st.expander("Trade Details"):
                     for trade in backtest_results["trade_details"]:
                         profit = trade.get("profit", 0)
@@ -2472,6 +2511,8 @@ def main():
         st.session_state.symbol = stock_list[0]
     if 'recommendation_mode' not in st.session_state:
         st.session_state.recommendation_mode = "Standard"
+    if 'initial_capital' not in st.session_state: # Initialize initial capital
+        st.session_state.initial_capital = 50000
 
     symbol = st.sidebar.selectbox(
         "Select Stock",
@@ -2488,6 +2529,16 @@ def main():
     )
     st.session_state.recommendation_mode = recommendation_mode
 
+    # Add Initial Capital input to sidebar
+    st.session_state.initial_capital = st.sidebar.number_input(
+        "Initial Capital (for Position Sizing)",
+        min_value=10000,
+        max_value=10000000,
+        value=st.session_state.initial_capital,
+        step=5000,
+        help="This capital amount is used to calculate position sizes for adaptive recommendations and backtests."
+    )
+
     if st.sidebar.button("Analyze Selected Stock"):
         if symbol:
             with st.spinner(f"Loading and analyzing data for {normalize_symbol_dhan(symbol)}..."):
@@ -2503,7 +2554,8 @@ def main():
                         return
 
                     if recommendation_mode == "Adaptive":
-                        recommendations = adaptive_recommendation(data, symbol)
+                        # Pass the initial_capital to adaptive_recommendation
+                        recommendations = adaptive_recommendation(data, symbol, equity=st.session_state.initial_capital)
                     else:
                         recommendations = generate_recommendations(data, symbol)
 
