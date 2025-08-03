@@ -1844,7 +1844,7 @@ def analyze_all_stocks(stock_list, batch_size=10, progress_bar_obj=None, loading
             loading_text_obj.text(f"Progress: {percentage}%")
 
         # Add a delay between batches to further reduce API pressure
-        time.sleep(max(2, batch_size / 5)))
+        time.sleep(max(2, batch_size / 5))
 
     results_df = pd.DataFrame(results)
     if results_df.empty:
