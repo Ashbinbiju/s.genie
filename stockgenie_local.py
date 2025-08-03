@@ -475,7 +475,7 @@ def parse_period_to_days(period):
         return 30
 
 # Increased period for a more conservative rate limit
-@RateLimiter(calls=5, period=1)
+@RateLimiter(calls=4, period=1)
 @lru_cache(maxsize=1000) # Caches results in memory for speed
 def fetch_stock_data_cached(symbol, period="5y", interval="1d"):
     """
