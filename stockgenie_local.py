@@ -3,7 +3,7 @@ import ta
 import logging
 import numpy as np
 import streamlit as st
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, date 
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from functools import lru_cache
 import plotly.express as px
@@ -29,8 +29,14 @@ data_api_lock = Lock()
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
 # Load Streamlit secrets for Dhan API
-DHAN_CLIENT_ID = st.secrets["DHAN_CLIENT_ID"]
-DHAN_ACCESS_TOKEN = st.secrets["DHAN_ACCESS_TOKEN"]
+# Ensure DHAN_CLIENT_ID and DHAN_ACCESS_TOKEN are correctly set in Streamlit secrets
+try:
+    DHAN_CLIENT_ID = st.secrets["DHAN_CLIENT_ID"]
+    DHAN_ACCESS_TOKEN = st.secrets["DHAN_ACCESS_TOKEN"]
+except KeyError:
+    st.error("Dhan API credentials not found in Streamlit secrets. Please set DHAN_CLIENT_ID and DHAN_ACCESS_TOKEN.")
+    st.stop()
+
 
 def dhan_headers():
     return {
@@ -56,7 +62,7 @@ def retry(max_retries=5, delay=5, backoff_factor=2, jitter=1):
                         st.warning(f"Rate limit hit. Retrying {func.__name__} after {sleep_time:.2f} seconds...")
                         time.sleep(sleep_time)
                     else:
-                        raise e # Re-raise if not a 429
+                        raise e 
                 except (requests.exceptions.RequestException, ConnectionError) as e:
                     retries += 1
                     if retries == max_retries:
@@ -64,7 +70,6 @@ def retry(max_retries=5, delay=5, backoff_factor=2, jitter=1):
                     sleep_time = (delay * (backoff_factor ** retries)) + random.uniform(0, jitter)
                     st.warning(f"Connection error for {func.__name__}: {e}. Retrying after {sleep_time:.2f} seconds...")
                     time.sleep(sleep_time)
-            # If function returns nothing in loop, return None
             return None 
         return wrapper
     return decorator
@@ -83,7 +88,7 @@ def load_dhan_instrument_master():
         return df
     except Exception as e:
         logging.error(f"Failed to load Dhan instrument master: {e}")
-        return pd.DataFrame() # Return empty DataFrame on failure
+        return pd.DataFrame() 
 
 
 def get_dhan_security_id(symbol):
@@ -268,9 +273,7 @@ SECTORS = {
     "AUBANK.NS", "POONAWALLA.NS", "SUNDARMFIN.NS", "IIFL.NS", "ABCAPITAL.NS",
     "L&TFH.NS", "CREDITACC.NS", "MANAPPURAM.NS", "DHANI.NS", "JMFINANCIL.NS",
     "EDELWEISS.NS", "INDIASHLTR.NS", "MOTILALOFS.NS", "CDSL.NS", "BSE.NS",
-    "MCX.NS", "ANGELONE.NS", "KARURVYSYA.NS", "RBLBANK.NS", "PNB.NS",
-    "CANBK.NS", "UNIONBANK.NS", "IOB.NS", "YESBANK.NS", "UCOBANK.NS",
-    "BANKINDIA.NS", "CENTRALBK.NS", "IDBI.NS", "J&KBANK.NS", "DCBBANK.NS",
+    "MCX.NS", "ANGELONE.NS", "KARURVYSYA.NS", "CUB.NS", "J&KBANK.NS", "DCBBANK.NS",
     "FEDERALBNK.NS", "SOUTHBANK.NS", "CSBBANK.NS", "TMB.NS", "KTKBANK.NS",
     "EQUITASBNK.NS", "UJJIVANSFB.NS", "BANDHANBNK.NS", "SURYODAY.NS", "FSL.NS",
     "PSB.NS", "PFS.NS", "HDFCAMC.NS", "NAM-INDIA.NS", "UTIAMC.NS", "ABSLAMC.NS",
@@ -369,25 +372,6 @@ SECTORS = {
     "HFCL.NS", "TEJASNET.NS", "STLTECH.NS", "ITI.NS", "ASTEC.NS"
   ],
 
-  "Infrastructure": [
-    "LT.NS", "GMRINFRA.NS", "IRB.NS", "NBCC.NS", "RVNL.NS", "KEC.NS",
-    "PNCINFRA.NS", "KNRCON.NS", "GRINFRA.NS", "NCC.NS", "HGINFRA.NS",
-    "ASHOKA.NS", "SADBHAV.NS", "JWL.NS", "PATELENG.NS", "KALPATPOWR.NS",
-    "IRCON.NS", "ENGINERSIN.NS", "AHLUWALIA.NS", "PSPPROJECTS.NS", "CAPACITE.NS",
-    "WELSPUNIND.NS", "TITAGARH.NS", "HCC.NS", "MANINFRA.NS", "RIIL.NS",
-    "DBREALTY.NS", "JWL.NS"
-  ],
-
-  "Insurance": [
-    "SBILIFE.NS", "HDFCLIFE.NS", "ICICIGI.NS", "ICICIPRULI.NS", "LICI.NS",
-    "GICRE.NS", "NIACL.NS", "STARHEALTH.NS", "BAJAJFINSV.NS", "MAXFIN.NS"
-  ],
-
-  "Diversified": [
-    "ITC.NS", "RELIANCE.NS", "ADANIENT.NS", "GRASIM.NS", "HINDUNILVR.NS",
-    "DCMSHRIRAM.NS", "3MINDIA.NS", "CENTURYPLY.NS", "KFINTECH.NS", "BALMERLAWRI.NS",
-    "GODREJIND.NS", "VBL.NS", "BIRLACORPN.NS"
-  ],
 
   "Construction Materials": [
     "ULTRACEMCO.NS", "SHREECEM.NS", "AMBUJACEM.NS", "ACC.NS", "JKCEMENT.NS",
@@ -535,7 +519,23 @@ def fetch_stock_data_cached(symbol, period="5y", interval="1d"):
             "volume": "Volume",
             "timestamp": "Date"
         })
-        df["Date"] = pd.to_datetime(df["Date"])
+        
+        # --- CRITICAL FIX FOR 1970-01-01 DATES ---
+        # This is the last stand for the date conversion.
+        # If 'Date' (originally 'timestamp') is coming as nanosecond epoch:
+        # Check if the 'Date' column is numeric.
+        if pd.api.types.is_numeric_dtype(df['Date']):
+            # Convert numeric epoch to datetime. Assume nanoseconds.
+            # Convert to int to avoid float precision issues if not exact nanoseconds
+            df["Date"] = pd.to_datetime(df["Date"].astype(np.int64), unit='ns', errors='coerce')
+        else:
+            # If it's not numeric, assume it's a string date and convert normally.
+            # This should handle cases where the API might sometimes send string dates.
+            df["Date"] = pd.to_datetime(df["Date"], errors='coerce')
+        # Filter out NaT (Not a Time) dates if any failed conversion
+        df = df.dropna(subset=['Date'])
+        # --- END CRITICAL FIX ---
+
         df.set_index("Date", inplace=True)
 
         required_columns = ["Open", "High", "Low", "Close", "Volume"]
@@ -547,6 +547,19 @@ def fetch_stock_data_cached(symbol, period="5y", interval="1d"):
         for col in required_columns:
             df[col] = pd.to_numeric(df[col], errors='coerce')
         df = df.dropna(subset=required_columns)
+
+        # --- NEW ADDITION: Filter out 1970-01-01 dates from the index ---
+        # These are usually valid epoch dates (timestamp=0) but not relevant for stock data.
+        if not df.empty and isinstance(df.index, pd.DatetimeIndex):
+            # Define a cutoff date just after epoch start to filter problematic dates
+            epoch_start_threshold = pd.Timestamp('1970-01-02', tz='UTC') # Use UTC for safety or no tz if dates are naive
+
+            original_len = len(df)
+            # Remove dates before the threshold
+            df = df[df.index >= epoch_start_threshold]
+            if len(df) < original_len:
+                logging.warning(f"Filtered out {original_len - len(df)} epoch (1970-01-01) dates for {symbol}.")
+        # --- END NEW ADDITION ---
 
         logging.info(f"Successfully fetched data for {symbol}: {len(df)} rows")
         
@@ -581,7 +594,7 @@ def monte_carlo_simulation(data, simulations=1000, days=30):
             return simulation_results
 
         simulation_results = []
-        for _ in range(simulations):
+        for _ in range(days):
             price_series = [data['Close'].iloc[-1]]
             for _ in range(days):
                 price = price_series[-1] * (1 + np.random.normal(mean_return, std_return))
@@ -696,7 +709,7 @@ def analyze_stock(data):
         'Upper_Band', 'Middle_Band', 'Lower_Band', 'SlowK', 'SlowD', 'ATR', 'ADX', 'OBV',
         'Avg_Volume', 'Volume_Spike', 'Ichimoku_Tenkan', 'Ichimoku_Kijun',
         'Ichimoku_Span_A', 'Ichimoku_Span_B', 'Ichimoku_Chikou', 'CMF',
-        'TRIX', 'Ultimate_Osc', 'VPT', 'ATR_pct', 'DMP', 'DMN', 'ADX_Slope' # CMO removed
+        'TRIX', 'Ultimate_Osc', 'VPT', 'ATR_pct', 'DMP', 'DMN', 'ADX_Slope' 
     ]
 
     # Initialize all columns to NaN to ensure they exist before computation
@@ -716,7 +729,7 @@ def analyze_stock(data):
 
     try:
         # Calculate Average Volume first for Volume_Spike
-        if can_compute_indicator(data, 'Volume_Spike'): # Avg_Volume is part of Volume_Spike calc
+        if can_compute_indicator(data, 'Volume_Spike'): 
             data['Avg_Volume'] = data['Volume'].rolling(window=20).mean()
 
         if can_compute_indicator(data, 'RSI'):
@@ -780,17 +793,6 @@ def analyze_stock(data):
         if can_compute_indicator(data, 'Ultimate_Osc'):
             data['Ultimate_Osc'] = ta.momentum.UltimateOscillator(high=data['High'], low=data['Low'], close=data['Close']).ultimate_oscillator()
         
-        # CMO removed due to persistent AttributeError in logs
-        # if can_compute_indicator(data, 'CMO'):
-        #     try:
-        #         data['CMO'] = ta.momentum.ChandeMomentumOscillator(close=data['Close'], window=14).chande_momentum_oscillator()
-        #     except AttributeError:
-        #         logging.error("CMO calculation failed: ChandeMomentumOscillator not found in ta.momentum. Skipping CMO.")
-        #         data['CMO'] = np.nan # Ensure column exists but is NaN
-        #     except Exception as e:
-        #         logging.error(f"Error computing CMO: {e}. Skipping CMO.")
-        #         data['CMO'] = np.nan
-
         if can_compute_indicator(data, 'VPT'):
             data['VPT'] = ta.volume.VolumePriceTrendIndicator(data['Close'], data['Volume']).volume_price_trend()
 
@@ -1380,15 +1382,14 @@ def backtest_stock(data, symbol, strategy="Swing", _data_hash=None):
     
     position = None
     entry_price = 0
-    entry_date = None
+    # Store dates as string format YYYY-MM-DD to avoid Timestamp pickling issues
+    entry_date_str = None 
     trades = []
     returns = []
     
     # Need enough data for indicator calculation (longest indicator window) plus one day for current open
     min_data_for_backtest_analysis = max(INDICATOR_MIN_LENGTHS.values()) 
-    # We need data up to the signal day (i) AND the next day (i+1) for open/high/low/close
-    # So the loop should start from min_data_for_backtest_analysis to ensure sliced_data_for_signal is valid
-    # and it should run up to len(full_analyzed_data) - 1 to ensure current_day_data exists.
+    
     if len(data) < min_data_for_backtest_analysis + 1:
         logging.warning(f"Not enough data to backtest {symbol}. Need at least {min_data_for_backtest_analysis + 1} rows, got {len(data)}")
         return results
@@ -1403,9 +1404,7 @@ def backtest_stock(data, symbol, strategy="Swing", _data_hash=None):
     # Start backtesting from the point where all indicators are valid
     # `i` will be the index of the *signal day* (previous day's close for calculation)
     # `i+1` will be the *trade day* (next day's open/high/low/close)
-    start_index = min_data_for_backtest_analysis -1 # Corrected start_index for 0-based indexing for `iloc` 
-                                                  # so sliced_data_for_signal has at least min_data_for_backtest_analysis rows
-                                                  # and current_day_data is available (i+1)
+    start_index = min_data_for_backtest_analysis -1 
 
     for i in range(start_index, len(full_analyzed_data) - 1): # Loop up to second to last row
         # Data available *up to and including* day 'i' is used to generate the signal for day 'i+1'
@@ -1434,8 +1433,8 @@ def backtest_stock(data, symbol, strategy="Swing", _data_hash=None):
         trade_high_price = current_day_data['High']
         trade_low_price = current_day_data['Low']
         trade_close_price = current_day_data['Close']
-        trade_date = current_day_data.name # This is the index (Date)
-
+        trade_date_str = current_day_data.name.strftime('%Y-%m-%d') # Convert to string here
+        
         # Add small random slippage
         slippage_pct = random.uniform(0.001, 0.005) # 0.1% to 0.5%
         
@@ -1451,8 +1450,8 @@ def backtest_stock(data, symbol, strategy="Swing", _data_hash=None):
 
             position = "Long"
             entry_price = entry_price_with_slippage
-            entry_date = trade_date
-            results["buy_signals"].append((pd.Timestamp(entry_date), entry_price)) # Explicitly ensure Timestamp
+            entry_date_str = trade_date_str # Store as string
+            results["buy_signals"].append((trade_date_str, entry_price)) # Store as string
         
         elif position == "Long":
             explicit_sell = "Sell" in signal
@@ -1483,16 +1482,16 @@ def backtest_stock(data, symbol, strategy="Swing", _data_hash=None):
                     returns.append(profit / entry_price)
                     
                 trades.append({
-                    "entry_date": pd.Timestamp(entry_date), # Explicitly ensure Timestamp
+                    "entry_date": entry_date_str, # Already a string
                     "entry_price": entry_price,
-                    "exit_date": pd.Timestamp(trade_date), # Explicitly ensure Timestamp
+                    "exit_date": trade_date_str, # A string
                     "exit_price": exit_price,
                     "profit": profit,
                     "reason": exit_reason
                 })
-                results["sell_signals"].append((pd.Timestamp(trade_date), exit_price)) # Explicitly ensure Timestamp
+                results["sell_signals"].append((trade_date_str, exit_price)) # A string
                 entry_price = 0
-                entry_date = None
+                entry_date_str = None
     
     # If a position is still open at the very end of the data, close it at the last available close price
     if position == "Long":
@@ -1503,14 +1502,14 @@ def backtest_stock(data, symbol, strategy="Swing", _data_hash=None):
         if entry_price != 0:
             returns.append(profit / entry_price)
         trades.append({
-            "entry_date": pd.Timestamp(entry_date), # Explicitly ensure Timestamp
+            "entry_date": entry_date_str,
             "entry_price": entry_price,
-            "exit_date": pd.Timestamp(full_analyzed_data.index[-1]), # Explicitly ensure Timestamp
+            "exit_date": full_analyzed_data.index[-1].strftime('%Y-%m-%d'), # Convert to string
             "exit_price": exit_price,
             "profit": profit,
             "reason": "Closed at end of period"
         })
-        results["sell_signals"].append((pd.Timestamp(full_analyzed_data.index[-1]), exit_price)) # Explicitly ensure Timestamp
+        results["sell_signals"].append((full_analyzed_data.index[-1].strftime('%Y-%m-%d'), exit_price)) # Convert to string
 
 
     if trades:
@@ -1552,7 +1551,7 @@ def backtest_stock(data, symbol, strategy="Swing", _data_hash=None):
     return results
     
 
-def analyze_batch(stock_batch, progress_callback=None, status_callback=None):
+def analyze_batch(stock_batch): # Removed progress_callback and status_callback
     results = []
     errors = []
     # ThreadPoolExecutor to process stocks in parallel
@@ -1568,13 +1567,9 @@ def analyze_batch(stock_batch, progress_callback=None, status_callback=None):
                         errors.append(result["Error"])
                     else:
                         results.append(result)
-                if status_callback:
-                    status_callback(f"✅ Completed: {symbol}")
             except Exception as e:
                 error_msg = f"Error processing {symbol}: {str(e)}"
                 errors.append(error_msg)
-                if status_callback:
-                    status_callback(f"❌ Failed: {symbol}")
     if errors:
         st.error(f"Encountered {len(errors)} errors during batch processing:\n" + "\n".join(errors))
     return results
@@ -1596,18 +1591,35 @@ def analyze_stock_parallel(symbol):
              logging.warning(f"Final analyzed data for {symbol} is incomplete (missing Close/ATR).")
              return None
 
+        # Get recommendation mode from session state (this is the mode for the current app render)
         recommendation_mode = st.session_state.get('recommendation_mode', 'Standard')
         
+        # Note: The output dict structure for analyze_stock_parallel should contain *all* expected columns,
+        # filling with None/NaN where not applicable to avoid KeyError when DataFrame is created.
+        result_dict = {
+            "Symbol": symbol,
+            "Current Price": None,
+            "Buy At": None,
+            "Stop Loss": None,
+            "Target": None,
+            "Score": 0,
+            "Recommendation": None, "Regime": None, # Adaptive fields
+            "Position Size Shares": None, "Position Size Value": None, "Trailing Stop": None, "Reason": None,
+            "Intraday": None, "Swing": None, "Short-Term": None, # Standard fields
+            "Long-Term": None, "Mean_Reversion": None, "Breakout": None, "Ichimoku_Trend": None
+        }
+
         if recommendation_mode == "Adaptive":
             rec = adaptive_recommendation(data, symbol)
             if not rec or not rec.get('Recommendation'):
                 logging.error(f"Invalid adaptive_recommendation output for {symbol}: {rec}")
-                return None
+                # return None or return result_dict with only symbol for error
+                result_dict["Reason"] = "Adaptive analysis failed or incomplete."
+                return result_dict
             
             position_size = rec.get("Position Size", {"shares": 0, "value": 0})
             
-            return {
-                "Symbol": symbol,
+            result_dict.update({
                 "Current Price": rec.get("Current Price"),
                 "Buy At": rec.get("Buy At"),
                 "Stop Loss": rec.get("Stop Loss"),
@@ -1619,17 +1631,16 @@ def analyze_stock_parallel(symbol):
                 "Position Size Value": position_size.get("value", 0),
                 "Trailing Stop": rec.get("Trailing Stop"),
                 "Reason": rec.get("Reason"),
-                "Intraday": None, "Swing": None, "Short-Term": None, # Set to None for Adaptive mode
-                "Long-Term": None, "Mean_Reversion": None, "Breakout": None,
-                "Ichimoku_Trend": None
-            }
-        else:
+            })
+        else: # Standard mode
             rec = generate_recommendations(data, symbol)
             if not rec or not rec.get('Intraday'): # Using Intraday as a proxy for any standard rec
                 logging.error(f"Invalid generate_recommendations output for {symbol}: {rec}")
-                return None
-            return {
-                "Symbol": symbol,
+                # return None or return result_dict with only symbol for error
+                result_dict["Reason"] = "Standard analysis failed or incomplete."
+                return result_dict
+
+            result_dict.update({
                 "Current Price": rec.get("Current Price"),
                 "Buy At": rec.get("Buy At"),
                 "Stop Loss": rec.get("Stop Loss"),
@@ -1642,42 +1653,47 @@ def analyze_stock_parallel(symbol):
                 "Breakout": rec.get("Breakout", "Hold"),
                 "Ichimoku_Trend": rec.get("Ichimoku_Trend", "Hold"),
                 "Score": rec.get("Score", 0),
-                "Recommendation": None, "Regime": None, # Set to None for Standard mode
-                "Position Size Shares": None, "Position Size Value": None, "Trailing Stop": None,
-                "Reason": None
-            }
+            })
+        return result_dict
+
     except Exception as e:
         logging.error(f"Error in analyze_stock_parallel for {symbol}: {str(e)}")
-        return None
+        # If an unhandled error occurs, return a dict with symbol and an error message
+        return {"Symbol": symbol, "Error": f"Analysis failed: {str(e)}"}
 
-def analyze_all_stocks(stock_list, batch_size=10, progress_callback=None, status_callback=None):
+# Modified analyze_all_stocks to accept Streamlit UI objects directly
+def analyze_all_stocks(stock_list, batch_size=10, progress_bar_obj=None, loading_text_obj=None, status_text_obj=None):
     results = []
     total_stocks = len(stock_list)
     processed = 0
     for i in range(0, len(stock_list), batch_size):
         batch = stock_list[i:i + batch_size]
-        if status_callback:
+        if status_text_obj:
             batch_names = ", ".join(batch[:3])
             if len(batch) > 3:
                 batch_names += f" and {len(batch)-3} more"
             status_text_message = f"🔄 Analyzing: {batch_names}"
-            status_callback(status_text_message) # Pass message to status_callback
-        batch_results = analyze_batch(batch, progress_callback=progress_callback, status_callback=status_callback)
+            status_text_obj.text(status_text_message) # Update directly on the passed object
+
+        batch_results = analyze_batch(batch) 
         results.extend([r for r in batch_results if r is not None])
         processed += len(batch)
-        if progress_callback:
-            progress_callback(processed / total_stocks)
-        # Sleep to ensure enough time passes for all calls in batch across workers
-        # With Period=2.0s and 3 workers, effective rate is 1.5 calls/sec.
-        # For batch_size=10, it needs at least 10/1.5 = 6.67 seconds.
-        # `max(10, ...)` ensures a minimum 10 second delay, which is very safe.
+        
+        # Update progress bar and loading text directly
+        if progress_bar_obj and loading_text_obj:
+            progress_value = processed / total_stocks
+            progress_bar_obj.progress(progress_value)
+            percentage = int(progress_value * 100)
+            loading_text_obj.text(f"Progress: {percentage}%")
+        
         time.sleep(max(10, batch_size * 2.0 / 3))
         
     results_df = pd.DataFrame(results)
     if results_df.empty:
-        st.warning("⚠️ No valid stock data retrieved.")
-        return pd.DataFrame()
-    
+        # Changed warning to be more specific here.
+        logging.warning("No valid stock data retrieved from batch analysis.")
+        return pd.DataFrame() # Return an empty DataFrame
+
     # Ensure all expected columns exist, fill with NaN if not
     expected_cols = [
         "Symbol", "Current Price", "Buy At", "Stop Loss", "Target", "Score",
@@ -1688,16 +1704,14 @@ def analyze_all_stocks(stock_list, batch_size=10, progress_callback=None, status
     for col in expected_cols:
         if col not in results_df.columns:
             results_df[col] = np.nan
+        # Convert objects to string type for .str.contains to work reliably, handling NaNs
+        if results_df[col].dtype == 'object':
+             results_df[col] = results_df[col].astype(str)
 
     return results_df.sort_values(by="Score", ascending=False)
 
-    
-def analyze_intraday_stocks(stock_list, batch_size=3, progress_callback=None, status_callback=None):
-    # Note: This function still uses 1d interval data. If true intraday data (e.g., 1m or 5m candles)
-    # is desired for "Intraday Picks", the `fetch_stock_data_cached` call within `analyze_stock_parallel`
-    # would need its `interval` parameter changed (e.g., `interval="1m"` and `period="7d"`).
-    # This change would drastically increase API calls and processing time.
-    
+# Modified analyze_intraday_stocks to accept Streamlit UI objects directly
+def analyze_intraday_stocks(stock_list, batch_size=3, progress_bar_obj=None, loading_text_obj=None, status_text_obj=None):
     results = []
     total_stocks = len(stock_list)
     processed = 0
@@ -1705,24 +1719,28 @@ def analyze_intraday_stocks(stock_list, batch_size=3, progress_callback=None, st
     for i in range(0, len(stock_list), batch_size):
         batch = stock_list[i:i + batch_size]
         
-        if status_callback:
+        if status_text_obj:
             batch_names = ", ".join(batch[:3])
             if len(batch) > 3:
                 batch_names += f" and {len(batch)-3} more"
             status_text_message = f"🔄 Analyzing: {batch_names}"
-            status_callback(status_text_message)
+            status_text_obj.text(status_text_message)
         
-        batch_results = analyze_batch(batch, progress_callback=progress_callback, status_callback=status_callback)
+        batch_results = analyze_batch(batch) 
         results.extend([r for r in batch_results if r is not None])
         
         processed += len(batch)
-        if progress_callback:
-            progress_callback(processed / total_stocks)
+        if progress_bar_obj and loading_text_obj:
+            progress_value = processed / total_stocks
+            progress_bar_obj.progress(progress_value)
+            percentage = int(progress_value * 100)
+            loading_text_obj.text(f"Progress: {percentage}%")
         
-        time.sleep(max(10, batch_size * 2.0 / 3)) # Consistent sleep with analyze_all_stocks
+        time.sleep(max(10, batch_size * 2.0 / 3))
     
     results_df = pd.DataFrame(results)
     if results_df.empty:
+        logging.warning("No valid stock data retrieved for intraday analysis.")
         return pd.DataFrame()
     
     expected_cols = [
@@ -1734,14 +1752,21 @@ def analyze_intraday_stocks(stock_list, batch_size=3, progress_callback=None, st
     for col in expected_cols:
         if col not in results_df.columns:
             results_df[col] = np.nan
+        # Convert objects to string type for .str.contains to work reliably, handling NaNs
+        if results_df[col].dtype == 'object':
+             results_df[col] = results_df[col].astype(str)
+
 
     recommendation_mode = st.session_state.get('recommendation_mode', 'Standard')
     if recommendation_mode == "Adaptive":
-        # For intraday picks, filter for "Buy" recommendations, regardless of specific type (e.g., strong buy, volatile opportunity)
         filtered_df = results_df[results_df["Recommendation"].str.contains("Buy", na=False, case=False)]
     else:
         # For standard mode, filter explicitly for "Intraday" buy signals
-        filtered_df = results_df[results_df["Intraday"].str.contains("Buy", na=False, case=False)]
+        if "Intraday" in results_df.columns: # Defensive check
+            filtered_df = results_df[results_df["Intraday"].str.contains("Buy", na=False, case=False)]
+        else: # Should not happen with `expected_cols` loop, but for extreme safety
+            logging.error("Intraday column not found in results_df during intraday filtering.")
+            filtered_df = pd.DataFrame() # Return empty if column is critically missing
         
     return filtered_df.sort_values(by="Score", ascending=False).head(5)
 
@@ -1759,28 +1784,19 @@ def colored_recommendation(recommendation):
     else:
         return f"⚪ {recommendation}"
             
-def update_progress_with_status(progress_bar, loading_text, status_text, progress_value, stock_status=None):
-    progress_bar.progress(progress_value)
-    
-    percentage = int(progress_value * 100)
-    
-    loading_text.text(f"Progress: {percentage}%")
-    
-    if stock_status:
-        status_text.text(stock_status)
-
 def insert_top_picks_supabase(results_df, pick_type="daily"):
     recommendation_mode = st.session_state.get('recommendation_mode', 'Standard')
 
     if recommendation_mode == "Adaptive":
-        filtered_df = results_df[results_df["Recommendation"].str.contains("Buy", na=False, case=False)].head(5)
+        filtered_df = results_df[results_df["Recommendation"].astype(str).str.contains("Buy", na=False, case=False)].head(5)
     else:
-        filtered_df = results_df[
-            (results_df["Intraday"].str.contains("Buy", na=False, case=False)) |
-            (results_df["Swing"].str.contains("Buy", na=False, case=False)) |
-            (results_df["Short-Term"].str.contains("Buy", na=False, case=False)) |
-            (results_df["Long-Term"].str.contains("Buy", na=False, case=False))
-        ].sort_values(by="Score", ascending=False).head(5)
+        # Defensive string conversion before contains
+        # Combine conditions for different standard recommendation types
+        buy_condition = pd.Series([False] * len(results_df), index=results_df.index)
+        for col in ["Intraday", "Swing", "Short-Term", "Long-Term"]:
+            if col in results_df.columns:
+                buy_condition = buy_condition | results_df[col].astype(str).str.contains("Buy", na=False, case=False)
+        filtered_df = results_df[buy_condition].sort_values(by="Score", ascending=False).head(5)
 
     if filtered_df.empty:
         logging.info(f"No {pick_type} picks to insert into Supabase.")
@@ -1935,39 +1951,55 @@ def display_dashboard(symbol=None, data=None, recommendations=None):
             else:
                 st.info("No sector data available or able to be processed.")
 
+    # Placeholders for the analysis progress and status messages.
+    # Initialize them to empty containers. They will be populated when buttons are clicked.
+    daily_picks_progress_container = st.empty()
+    daily_picks_loading_text_container = st.empty()
+    daily_picks_status_text_container = st.empty()
+
+    intraday_picks_progress_container = st.empty()
+    intraday_picks_loading_text_container = st.empty()
+    intraday_picks_status_text_container = st.empty()
+
 
     if st.button("🚀 Generate Daily Top Picks"):
-        progress_bar = st.progress(0)
-        loading_text = st.empty()
-        status_text = st.empty() # Placeholder for current stock status
+        # Create the actual progress bar and text elements, replacing the empty containers.
+        daily_progress_bar = daily_picks_progress_container.progress(0)
+        daily_loading_text = daily_picks_loading_text_container.empty()
+        daily_status_text = daily_picks_status_text_container.empty()
         
-        status_text.text(f"📊 Analyzing {len(selected_stocks)} stocks...")
+        daily_status_text.text(f"📊 Analyzing {len(selected_stocks)} stocks for Daily Picks...")
         
         results_df = analyze_all_stocks(
             selected_stocks,
             batch_size=10,
-            progress_callback=lambda x: update_progress_with_status(progress_bar, loading_text, status_text, x),
-            status_callback=lambda status: status_text.text(status) # Pass actual status message
+            progress_bar_obj=daily_progress_bar, # Pass the specific objects
+            loading_text_obj=daily_loading_text,
+            status_text_obj=daily_status_text
         )
         
+        # Clear the placeholders after the analysis is complete
+        daily_picks_progress_container.empty()
+        daily_picks_loading_text_container.empty()
+        daily_picks_status_text_container.empty()
+        
         insert_top_picks_supabase(results_df, pick_type="daily")
-        progress_bar.empty()
-        loading_text.empty()
-        status_text.empty()
         
         display_results_df = pd.DataFrame()
         recommendation_mode = st.session_state.get('recommendation_mode', 'Standard')
         
-        if recommendation_mode == "Adaptive":
-            display_results_df = results_df[results_df["Recommendation"].str.contains("Buy", na=False, case=False)].sort_values(by="Score", ascending=False).head(5)
-        else:
-            display_results_df = results_df[
-                (results_df["Intraday"].str.contains("Buy", na=False, case=False)) |
-                (results_df["Swing"].str.contains("Buy", na=False, case=False)) |
-                (results_df["Short-Term"].str.contains("Buy", na=False, case=False)) |
-                (results_df["Long-Term"].str.contains("Buy", na=False, case=False))
-            ].sort_values(by="Score", ascending=False).head(5)
-
+        if results_df.empty: # Check if results_df is empty AFTER analysis
+            st.warning("⚠️ No valid stock data retrieved to generate Daily Top Picks.")
+        elif recommendation_mode == "Adaptive":
+            display_results_df = results_df[results_df["Recommendation"].astype(str).str.contains("Buy", na=False, case=False)].sort_values(by="Score", ascending=False).head(5)
+        else: # Standard mode filtering
+            # Combine conditions for different standard recommendation types
+            buy_condition = pd.Series([False] * len(results_df), index=results_df.index)
+            for col in ["Intraday", "Swing", "Short-Term", "Long-Term"]:
+                if col in results_df.columns: # Defensive check, though `expected_cols` should ensure presence
+                    # Ensure column is string type before applying .str.contains
+                    buy_condition = buy_condition | results_df[col].astype(str).str.contains("Buy", na=False, case=False)
+            display_results_df = results_df[buy_condition].sort_values(by="Score", ascending=False).head(5)
 
         if not display_results_df.empty:
             st.subheader("🏆 Today's Top 5 Stocks")
@@ -2009,27 +2041,45 @@ def display_dashboard(symbol=None, data=None, recommendations=None):
             st.warning("⚠️ No top picks available (or no 'Buy' recommendations) due to data issues or current market conditions.")
 
     if st.button("⚡ Generate Intraday Top 5 Picks"):
-        progress_bar = st.progress(0)
-        loading_text = st.empty()
-        status_text = st.empty()
+        # Create the actual progress bar and text elements, replacing the empty containers.
+        intraday_progress_bar = intraday_picks_progress_container.progress(0)
+        intraday_loading_text = intraday_picks_loading_text_container.empty()
+        intraday_status_text = intraday_picks_status_text_container.empty()
         
-        status_text.text(f"📊 Analyzing {len(selected_stocks)} stocks for intraday...")
+        intraday_status_text.text(f"📊 Analyzing {len(selected_stocks)} stocks for Intraday Picks...")
         
         intraday_results = analyze_intraday_stocks(
             selected_stocks,
             batch_size=10, 
-            progress_callback=lambda x: update_progress_with_status(progress_bar, loading_text, status_text, x),
-            status_callback=lambda status: status_text.text(status)
+            progress_bar_obj=intraday_progress_bar, 
+            loading_text_obj=intraday_loading_text,
+            status_text_obj=intraday_status_text
         )
         
-        insert_top_picks_supabase(intraday_results, pick_type="intraday")
-        progress_bar.empty()
-        loading_text.empty()
-        status_text.empty()
+        # Clear the placeholders after the analysis is complete
+        intraday_picks_progress_container.empty()
+        intraday_picks_loading_text_container.empty()
+        intraday_picks_status_text_container.empty()
         
-        if not intraday_results.empty:
+        insert_top_picks_supabase(intraday_results, pick_type="intraday")
+        
+        filtered_df = pd.DataFrame() # Initialize filtered_df here
+        if intraday_results.empty: # Check if intraday_results is empty AFTER analysis
+            st.warning("⚠️ No valid stock data retrieved to generate Intraday Top 5 Picks.")
+        elif st.session_state.recommendation_mode == "Adaptive":
+            # For intraday picks, filter for "Buy" recommendations, regardless of specific type (e.g., strong buy, volatile opportunity)
+            filtered_df = intraday_results[intraday_results["Recommendation"].astype(str).str.contains("Buy", na=False, case=False)]
+        else:
+            # For standard mode, filter explicitly for "Intraday" buy signals
+            if "Intraday" in intraday_results.columns:
+                filtered_df = intraday_results[intraday_results["Intraday"].astype(str).str.contains("Buy", na=False, case=False)]
+            else:
+                logging.error("Intraday column not found in intraday_results during filtering for display.")
+                # filtered_df remains empty as initialized
+        
+        if not filtered_df.empty:
             st.subheader("🏆 Top 5 Intraday Stocks")
-            for _, row in intraday_results.iterrows():
+            for _, row in filtered_df.sort_values(by="Score", ascending=False).head(5).iterrows(): # Re-sort and head(5) here
                 with st.expander(f"{row['Symbol']} - {tooltip('Score', TOOLTIPS['Score'])}: {row['Score']:.2f}/10"):
                     current_price = f"₹{row.get('Current Price', np.nan):.2f}" if pd.notnull(row.get('Current Price')) else 'N/A'
                     buy_at = f"₹{row.get('Buy At', np.nan):.2f}" if pd.notnull(row.get('Buy At')) else 'N/A'
@@ -2105,9 +2155,12 @@ def display_dashboard(symbol=None, data=None, recommendations=None):
                         df['% Change'] = df['% Change'].map(lambda x: f"{x:.2f}%" if pd.notnull(x) else 'N/A')
 
                     # Determine which columns to display based on whether 'recommendation' (Adaptive) exists and has data
-                    if 'recommendation' in df.columns and df['recommendation'].notna().any() and \
-                       df['recommendation'].str.contains("Buy|Sell|Hold", case=False, na=False).any(): # Check if it contains actual Adaptive recs
-                        
+                    # Check if 'recommendation' column exists AND has any non-NaN, non-empty string that looks like a recommendation
+                    is_adaptive_data_present = 'recommendation' in df.columns and \
+                                               df['recommendation'].notna().any() and \
+                                               df['recommendation'].astype(str).str.contains("Buy|Sell|Hold|N/A", case=False, na=False).any()
+                    
+                    if is_adaptive_data_present: # Assume adaptive structure
                         display_cols = [
                             "symbol", "buy_at", "current_price", "% Change", "What to do now?",
                             "recommendation", "regime", "position_size_shares", "position_size_value",
@@ -2117,7 +2170,7 @@ def display_dashboard(symbol=None, data=None, recommendations=None):
                         # Apply colored recommendations to the 'recommendation' column for consistency
                         if 'recommendation' in final_display_df.columns:
                             final_display_df['recommendation'] = final_display_df['recommendation'].apply(colored_recommendation)
-                    else: # Fallback to standard columns if Adaptive mode recommendations are not primary
+                    else: # Fallback to standard columns if Adaptive mode recommendations are not primary or not present
                         standard_cols = ["symbol", "buy_at", "current_price", "% Change", "What to do now?", 
                                          "intraday", "swing", "short_term", "long_term", "mean_reversion", 
                                          "breakout", "ichimoku_trend", "target", "stop_loss", "pick_type", "score"]
@@ -2165,7 +2218,7 @@ def display_dashboard(symbol=None, data=None, recommendations=None):
         st.subheader("📈 Trading Recommendations")
         if st.session_state.recommendation_mode == "Adaptive":
             pos_shares = recommendations.get('Position Size', {}).get('shares', 'N/A')
-            pos_value = recommendations.get('Position Size', {}).get('value', 'N/A')
+            pos_value = f"₹{recommendations.get('Position Size', {}).get('value', 'N/A'):.2f}" if pd.notnull(recommendations.get('Position Size', {}).get('value')) else 'N/A'
             
             col1, col2, col3 = st.columns(3)
             with col1:
@@ -2173,7 +2226,7 @@ def display_dashboard(symbol=None, data=None, recommendations=None):
                 st.write(f"**{tooltip('Score', TOOLTIPS['Score'])}**: {recommendations.get('Score', 'N/A')}/10")
             with col2:
                 st.write(f"**Position Size**: {pos_shares} shares")
-                st.write(f"**Value**: ₹{pos_value}")
+                st.write(f"**Value**: {pos_value}")
             with col3:
                 st.write(f"**Trailing Stop**: ₹{recommendations.get('Trailing Stop', 'N/A')}")
                 st.write(f"**Volatility**: {assess_risk(data)}")
@@ -2189,7 +2242,7 @@ def display_dashboard(symbol=None, data=None, recommendations=None):
                 st.write(f"**Long-Term**: {colored_recommendation(recommendations.get('Long-Term', 'N/A'))}")
             with col3:
                 st.write(f"**Mean Reversion**: {colored_recommendation(recommendations.get('Mean_Reversion', 'N/A'))}")
-                st.write(f"**Breakout**: {colored_recommendation(recommendations.get('Breakout', 'N/A'))}")
+                st.write(f"**Breakout**: {colored_recommendation(recommend-ations.get('Breakout', 'N/A'))}")
                 st.write(f"**Ichimoku Trend**: {colored_recommendation(recommendations.get('Ichimoku_Trend', 'N/A'))}")
             st.write(f"**{tooltip('Score', TOOLTIPS['Score'])}**: {recommendations.get('Score', 'N/A')}/10")
             st.write(f"**Volatility**: {assess_risk(data)}")
@@ -2227,22 +2280,46 @@ def display_dashboard(symbol=None, data=None, recommendations=None):
                 with st.expander("Trade Details"):
                     for trade in backtest_results["trade_details"]:
                         profit = trade.get("profit", 0)
-                        # Ensure trade dates are formatted correctly
-                        entry_date_str = trade['entry_date'].strftime('%Y-%m-%d') if pd.api.types.is_datetime64_any_dtype(trade['entry_date']) else str(trade['entry_date'])
-                        exit_date_str = trade['exit_date'].strftime('%Y-%m-%d') if pd.api.types.is_datetime64_any_dtype(trade['exit_date']) else str(trade['exit_date'])
-                        st.write(f"Entry: {entry_date_str} @ ₹{trade['entry_price']:.2f}, "
-                                 f"Exit: {exit_date_str} @ ₹{trade['exit_price']:.2f}, "
+                        # Dates are now already strings in YYYY-MM-DD format, so no strftime needed
+                        st.write(f"Entry: {trade['entry_date']} @ ₹{trade['entry_price']:.2f}, "
+                                 f"Exit: {trade['exit_date']} @ ₹{trade['exit_price']:.2f}, "
                                  f"Profit: ₹{profit:.2f} ({trade['reason']})")
 
                 fig = px.line(data, x=data.index, y='Close', title=f"{normalize_symbol_dhan(symbol)} Price with Signals")
+                
+                # --- MODIFIED PLOTTING LOGIC FOR BUY/SELL SIGNALS ---
+                # Define a threshold date to filter out problematic epoch dates for plotting
+                epoch_plot_threshold = pd.Timestamp('1970-01-02', tz='UTC') 
+
                 if backtest_results["buy_signals"]:
-                    buy_dates, buy_prices = zip(*backtest_results["buy_signals"])
-                    fig.add_scatter(x=list(buy_dates), y=list(buy_prices), mode='markers', name='Buy Signals',
-                                   marker=dict(color='green', symbol='triangle-up', size=10))
+                    buy_dates_str, buy_prices = zip(*backtest_results["buy_signals"])
+                    # Convert strings to datetime objects, coercing errors to NaT
+                    buy_dates_dt = pd.to_datetime(list(buy_dates_str), errors='coerce')
+                    
+                    # Filter out NaT and dates earlier than the epoch threshold
+                    valid_buy_signals_for_plot = [(d, p) for d, p in zip(buy_dates_dt, buy_prices) 
+                                                  if pd.notna(d) and d >= epoch_plot_threshold]
+                    
+                    if valid_buy_signals_for_plot:
+                        buy_dates_filtered, buy_prices_filtered = zip(*valid_buy_signals_for_plot)
+                        fig.add_scatter(x=list(buy_dates_filtered), y=list(buy_prices_filtered), mode='markers', name='Buy Signals',
+                                       marker=dict(color='green', symbol='triangle-up', size=10))
+
                 if backtest_results["sell_signals"]:
-                    sell_dates, sell_prices = zip(*backtest_results["sell_signals"])
-                    fig.add_scatter(x=list(sell_dates), y=list(sell_prices), mode='markers', name='Sell Signals',
-                                   marker=dict(color='red', symbol='triangle-down', size=10))
+                    sell_dates_str, sell_prices = zip(*backtest_results["sell_signals"])
+                    # Convert strings to datetime objects, coercing errors to NaT
+                    sell_dates_dt = pd.to_datetime(list(sell_dates_str), errors='coerce')
+                    
+                    # Filter out NaT and dates earlier than the epoch threshold
+                    valid_sell_signals_for_plot = [(d, p) for d, p in zip(sell_dates_dt, sell_prices) 
+                                                   if pd.notna(d) and d >= epoch_plot_threshold]
+                    
+                    if valid_sell_signals_for_plot:
+                        sell_dates_filtered, sell_prices_filtered = zip(*valid_sell_signals_for_plot)
+                        fig.add_scatter(x=list(sell_dates_filtered), y=list(sell_prices_filtered), mode='markers', name='Sell Signals',
+                                       marker=dict(color='red', symbol='triangle-down', size=10))
+                # --- END MODIFIED PLOTTING LOGIC ---
+
                 st.plotly_chart(fig, use_container_width=True)
             elif backtest_results:
                 st.info(f"No valid trades generated for {strategy_name} strategy on {normalize_symbol_dhan(symbol)} with available data.")
@@ -2407,6 +2484,8 @@ def main():
                     st.session_state.symbol = None # Reset selected symbol for clearer state
     else:
         # Initial display or re-run where symbol/data might be in session_state
+        # The display_dashboard function will now create its own placeholders
+        # and handle their visibility based on button clicks.
         display_dashboard()
 
     # Clear cache button
