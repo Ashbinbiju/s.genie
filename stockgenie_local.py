@@ -70,6 +70,13 @@ def retry(max_retries=5, delay=5, backoff_factor=2, jitter=1):
                     sleep_time = (delay * (backoff_factor ** retries)) + random.uniform(0, jitter)
                     st.warning(f"Connection error for {func.__name__}: {e}. Retrying after {sleep_time:.2f} seconds...")
                     time.sleep(sleep_time)
+                except Exception as e: # Catch all other exceptions for retry
+                    retries += 1
+                    if retries == max_retries:
+                        raise e
+                    sleep_time = (delay * (backoff_factor ** retries)) + random.uniform(0, jitter)
+                    st.warning(f"Unexpected error for {func.__name__}: {e}. Retrying after {sleep_time:.2f} seconds...")
+                    time.sleep(sleep_time)
             return None 
         return wrapper
     return decorator
@@ -283,7 +290,8 @@ def parse_period_to_days(period):
         logging.error(f"Invalid period format: {period}, error: {e}. Defaulting to 30 days.")
         return 30
         
-@RateLimiter(calls=1, period=6) # Adjusted period from 1.5 to 2.0 seconds for higher robustness
+# Increased period for a more conservative rate limit
+@RateLimiter(calls=1, period=3.5) # Increased from 2.0 to 3.5 seconds for higher robustness
 @lru_cache(maxsize=1000) # Caches results in memory for speed
 def fetch_stock_data_cached(symbol, period="5y", interval="1d"):
     """
@@ -320,7 +328,21 @@ def fetch_stock_data_cached(symbol, period="5y", interval="1d"):
     try:
         logging.info(f"Requesting data for {symbol} with payload: {payload}")
         response = requests.post(url, headers=headers, data=json.dumps(payload), timeout=10)
-        response.raise_for_status()
+        
+        # Explicitly check for rate limit messages even if status code is not 429
+        if response.status_code == 429:
+            logging.warning(f"Dhan API returned 429 (Too Many Requests) for {symbol}. Retrying...")
+            response.raise_for_status() # This will be caught by the @retry decorator
+        
+        response_text = response.text
+        # Check for specific "too many calls" message in response body
+        if "too many calls" in response_text.lower() or "limit exceeded" in response_text.lower():
+            logging.warning(f"Dhan API response text indicates 'too many calls' or 'limit exceeded' for {symbol} (Status: {response.status_code}). Response: {response_text}. Raising error to trigger retry.")
+            # If the API sends "too many calls" in a non-429 response, we need to force a retry by raising an exception
+            # that the @retry decorator will catch. A generic RequestException is appropriate.
+            raise requests.exceptions.RequestException(f"API indicated 'too many calls' in response body for {symbol}")
+
+        response.raise_for_status() # This raises HTTPError for other 4xx/5xx responses
         data = response.json()
 
         api_data = data.get("data", data)
@@ -409,6 +431,7 @@ def fetch_stock_data_cached(symbol, period="5y", interval="1d"):
         logging.error(f"HTTP error for {symbol}: {e}, Response: {e.response.text if e.response else 'No response'}")
         return pd.DataFrame()
     except requests.exceptions.RequestException as e:
+        # This catches both specific RequestException and the custom one we raise
         logging.error(f"Request error for {symbol}: {e}")
         return pd.DataFrame()
     except Exception as e:
@@ -1374,7 +1397,7 @@ def analyze_batch(stock_batch): # Removed progress_callback and status_callback
     errors = []
     # ThreadPoolExecutor to process stocks in parallel
     # The actual data fetching is rate-limited by @RateLimiter on fetch_stock_data_cached
-    with ThreadPoolExecutor(max_workers=2) as executor: # Number of parallel analysis tasks
+    with ThreadPoolExecutor(max_workers=3) as executor: # Number of parallel analysis tasks
         futures = {executor.submit(analyze_stock_parallel, symbol): symbol for symbol in stock_batch}
         for future in as_completed(futures):
             symbol = futures[future]
@@ -1504,8 +1527,9 @@ def analyze_all_stocks(stock_list, batch_size=10, progress_bar_obj=None, loading
             percentage = int(progress_value * 100)
             loading_text_obj.text(f"Progress: {percentage}%")
         
-        time.sleep(max(10, batch_size * 2.0 / 3))
-        
+        # Add a delay between batches to further reduce API pressure
+        time.sleep(max(10, batch_size * 2.0 / 3)) # Ensure minimum 10 seconds, or ~2 seconds per stock in batch
+
     results_df = pd.DataFrame(results)
     if results_df.empty:
         # Changed warning to be more specific here.
@@ -1554,7 +1578,8 @@ def analyze_intraday_stocks(stock_list, batch_size=3, progress_bar_obj=None, loa
             percentage = int(progress_value * 100)
             loading_text_obj.text(f"Progress: {percentage}%")
         
-        time.sleep(max(10, batch_size * 2.0 / 3))
+        # Add a delay between batches to further reduce API pressure
+        time.sleep(max(10, batch_size * 2.0 / 3)) # Ensure minimum 10 seconds, or ~2 seconds per stock in batch
     
     results_df = pd.DataFrame(results)
     if results_df.empty:
@@ -1697,7 +1722,7 @@ def insert_top_picks_supabase(results_df, pick_type="daily"):
         st.error(f"Supabase upsert exception: {e}")
 
 
-@RateLimiter(calls=1, period=6) # Rate limit this call to prevent burst for latest prices
+@RateLimiter(calls=1, period=1) # Rate limit this call to prevent burst for latest prices
 def fetch_latest_price(symbol):
     # Fetch 2 days of 1-day interval data to ensure we get today's close if available
     data = fetch_stock_data_cached(symbol, period="2d", interval="1d") # Use cached fetcher
