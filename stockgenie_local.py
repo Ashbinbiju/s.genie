@@ -1819,7 +1819,7 @@ def analyze_stock_parallel(symbol):
         return {"Symbol": symbol, "Error": f"Analysis failed: {str(e)}"}
 
 # Modified analyze_all_stocks to accept Streamlit UI objects directly
-def analyze_all_stocks(stock_list, batch_size=10, progress_bar_obj=None, loading_text_obj=None, status_text_obj=None):
+def analyze_all_stocks(stock_list, batch_size=4, progress_bar_obj=None, loading_text_obj=None, status_text_obj=None):
     results = []
     total_stocks = len(stock_list)
     processed = 0
