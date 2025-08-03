@@ -2261,6 +2261,10 @@ def display_dashboard(symbol=None, data=None, recommendations=None):
             st.write(f"**{tooltip('Score', TOOLTIPS['Score'])}**: {recommendations.get('Score', 'N/A')}/10")
             st.write(f"**Volatility**: {assess_risk(data)}")
 
+        # === MODIFIED SECTION FOR BACKTEST BUTTONS ===
+        # Create a placeholder for the spinner that appears *before* the form
+        backtest_spinner_placeholder = st.empty()
+
         with st.form(key="backtest_form"):
             col1, col2 = st.columns(2)
             with col1:
@@ -2268,18 +2272,34 @@ def display_dashboard(symbol=None, data=None, recommendations=None):
             with col2:
                 intraday_button = st.form_submit_button("🔍 Backtest Intraday Strategy")
 
-            if swing_button or intraday_button:
-                strategy = "Swing" if swing_button else "Intraday"
+        # Logic that runs AFTER a form submission should be outside the `with st.form:` block
+        # to prevent the form from "flickering" or disabling buttons prematurely.
+        if swing_button or intraday_button:
+            strategy = "Swing" if swing_button else "Intraday"
+            # Display the spinner using the placeholder created earlier
+            with backtest_spinner_placeholder.container(): # Use .container() to make it a block element
                 with st.spinner(f"Running {strategy} Strategy backtest... (This may take a while for large data sets)"):
                     # Use a hash of the raw data to ensure backtest cache invalidates if underlying data changes
-                    # Hashing only the latest 300 rows of core OHLCV data
-                    data_for_hash = data[['Open', 'High', 'Low', 'Close', 'Volume']].tail(300).to_json()
-                    data_hash = hash(data_for_hash)
-                    backtest_results = backtest_stock(data, symbol, strategy=strategy, _data_hash=data_hash)
-                    if strategy == "Swing":
-                        st.session_state.backtest_results_swing = backtest_results
+                    # Ensure st.session_state.data exists before accessing it
+                    if st.session_state.data is not None:
+                        data_for_hash = st.session_state.data[['Open', 'High', 'Low', 'Close', 'Volume']].tail(300).to_json()
+                        data_hash = hash(data_for_hash)
+                        backtest_results = backtest_stock(st.session_state.data, st.session_state.symbol, strategy=strategy, _data_hash=data_hash)
+                        if strategy == "Swing":
+                            st.session_state.backtest_results_swing = backtest_results
+                        else:
+                            st.session_state.backtest_results_intraday = backtest_results
                     else:
-                        st.session_state.backtest_results_intraday = backtest_results
+                        st.warning("Cannot backtest: No stock data loaded in session state.")
+                        st.session_state.backtest_results_swing = None
+                        st.session_state.backtest_results_intraday = None
+
+            # Clear the spinner placeholder after backtesting is done
+            backtest_spinner_placeholder.empty()
+            # Rerun the app to refresh the UI and display results properly (re-enabling buttons)
+            st.rerun() # Use st.rerun() for newer Streamlit versions
+
+        # === END MODIFIED SECTION ===
 
         for strategy_name, results_key in [("Swing", "backtest_results_swing"), ("Intraday", "backtest_results_intraday")]:
             backtest_results = st.session_state.get(results_key)
