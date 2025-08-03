@@ -1942,15 +1942,7 @@ def colored_recommendation(recommendation):
     else:
         return f"⚪ {recommendation}"
 
-    if 'Position Size Shares' in results_df.columns:
-        # Replace the string 'None' with actual NaN
-        results_df['Position Size Shares'] = results_df['Position Size Shares'].replace('None', np.nan)
 
-        # Convert to numeric, coercing any non-convertible values (like other strings, or NaNs) to NaN
-        results_df['Position Size Shares'] = pd.to_numeric(results_df['Position Size Shares'], errors='coerce')
-
-        # Fill any NaN values with 0.0 (or another default numeric value if appropriate)
-        results_df['Position Size Shares'] = results_df['Position Size Shares'].fillna(0.0)
 
 def insert_top_picks_supabase(results_df, pick_type="daily"):
     recommendation_mode = st.session_state.get('recommendation_mode', 'Standard')
@@ -2151,84 +2143,109 @@ def display_dashboard(symbol=None, data=None, recommendations=None):
     intraday_picks_loading_text_container = st.empty()
     intraday_picks_status_text_container = st.empty()
 
+if st.button("🚀 Generate Daily Top Picks"):
+    # Create the actual progress bar and text elements, replacing the empty containers.
+    daily_progress_bar = daily_picks_progress_container.progress(0)
+    daily_loading_text = daily_picks_loading_text_container.empty()
+    daily_status_text = daily_picks_status_text_container.empty()
 
-    if st.button("🚀 Generate Daily Top Picks"):
-        # Create the actual progress bar and text elements, replacing the empty containers.
-        daily_progress_bar = daily_picks_progress_container.progress(0)
-        daily_loading_text = daily_picks_loading_text_container.empty()
-        daily_status_text = daily_picks_status_text_container.empty()
+    daily_status_text.text(f"📊 Analyzing {len(selected_stocks)} stocks for Daily Picks...")
 
-        daily_status_text.text(f"📊 Analyzing {len(selected_stocks)} stocks for Daily Picks...")
+    results_df = analyze_all_stocks(
+        selected_stocks,
+        batch_size=10,
+        progress_bar_obj=daily_progress_bar, # Pass the specific objects
+        loading_text_obj=daily_loading_text,
+        status_text_obj=daily_status_text
+    )
 
-        results_df = analyze_all_stocks(
-            selected_stocks,
-            batch_size=10,
-            progress_bar_obj=daily_progress_bar, # Pass the specific objects
-            loading_text_obj=daily_loading_text,
-            status_text_obj=daily_status_text
-        )
+    # Clear the placeholders after the analysis is complete
+    daily_picks_progress_container.empty()
+    daily_picks_loading_text_container.empty()
+    daily_picks_status_text_container.empty()
 
-        # Clear the placeholders after the analysis is complete
-        daily_picks_progress_container.empty()
-        daily_picks_loading_text_container.empty()
-        daily_picks_status_text_container.empty()
+    # --- START OF DATA CLEANING BLOCKS ---
+    # These blocks are all at the same indentation level as `results_df = analyze_all_stocks(...)`
 
-        insert_top_picks_supabase(results_df, pick_type="daily") # Pass the potentially empty results_df
+    if 'Position Size Shares' in results_df.columns:
+        # Replace the string 'None' with actual NaN
+        results_df['Position Size Shares'] = results_df['Position Size Shares'].replace('None', np.nan)
+        # Convert to numeric, coercing any non-convertible values to NaN
+        results_df['Position Size Shares'] = pd.to_numeric(results_df['Position Size Shares'], errors='coerce')
+        # Fill any NaN values with 0.0 (or another default numeric value if appropriate)
+        results_df['Position Size Shares'] = results_df['Position Size Shares'].fillna(0.0)
 
-        display_results_df = pd.DataFrame()
-        recommendation_mode = st.session_state.get('recommendation_mode', 'Standard')
+    if 'Position Size Value' in results_df.columns:
+        results_df['Position Size Value'] = results_df['Position Size Value'].replace('None', np.nan)
+        results_df['Position Size Value'] = pd.to_numeric(results_df['Position Size Value'], errors='coerce')
+        results_df['Position Size Value'] = results_df['Position Size Value'].fillna(0.0)
 
-        # NEW: Check if results_df is empty before trying to filter/sort for display
-        if results_df.empty:
-            st.warning("⚠️ No valid stock data retrieved to generate Daily Top Picks.")
-        else: # Proceed only if results_df is NOT empty
-            if recommendation_mode == "Adaptive":
-                display_results_df = results_df[results_df["Recommendation"].astype(str).str.contains("Buy", na=False, case=False)].sort_values(by="Score", ascending=False).head(5)
-            else: # Standard mode filtering
-                buy_condition = pd.Series([False] * len(results_df), index=results_df.index)
-                for col in ["Intraday", "Swing", "Short-Term", "Long-Term"]:
-                    if col in results_df.columns:
-                        buy_condition = buy_condition | results_df[col].astype(str).str.contains("Buy", na=False, case=False)
-                display_results_df = results_df[buy_condition].sort_values(by="Score", ascending=False).head(5)
+    if 'Trailing Stop' in results_df.columns:
+        results_df['Trailing Stop'] = results_df['Trailing Stop'].replace('None', np.nan)
+        results_df['Trailing Stop'] = pd.to_numeric(results_df['Trailing Stop'], errors='coerce')
+        results_df['Trailing Stop'] = results_df['Trailing Stop'].fillna(0.0)
 
-            if not display_results_df.empty:
-                st.subheader("🏆 Today's Top 5 Stocks")
-                for _, row in display_results_df.iterrows():
-                    with st.expander(f"{row['Symbol']} - {tooltip('Score', TOOLTIPS['Score'])}: {row['Score']:.2f}/10"):
-                        current_price = f"₹{row.get('Current Price', np.nan):.2f}" if pd.notnull(row.get('Current Price')) else 'N/A'
-                        buy_at = f"₹{row.get('Buy At', np.nan):.2f}" if pd.notnull(row.get('Buy At')) else 'N/A'
-                        stop_loss = f"₹{row.get('Stop Loss', np.nan):.2f}" if pd.notnull(row.get('Stop Loss')) else 'N/A'
-                        target = f"₹{row.get('Target', np.nan):.2f}" if pd.notnull(row.get('Target')) else 'N/A'
+    # --- END OF DATA CLEANING BLOCKS ---
+    # All cleaning is done. Now, proceed with Supabase insertion and display.
 
-                        if st.session_state.recommendation_mode == "Adaptive":
-                            pos_shares = f"{int(row.get('Position Size Shares', 0))}" if pd.notnull(row.get('Position Size Shares')) else 'N/A'
-                            pos_value = f"₹{row.get('Position Size Value', 0):.2f}" if pd.notnull(row.get('Position Size Value')) else 'N/A'
-                            trailing_stop = f"₹{row.get('Trailing Stop', np.nan):.2f}" if pd.notnull(row.get('Trailing Stop')) else 'N/A'
-                            st.markdown(f"""
-                            Current Price: {current_price}  
-                            Buy At: {buy_at} | Stop Loss: {stop_loss}  
-                            Target: {target}  
-                            Recommendation: {colored_recommendation(row.get('Recommendation', 'N/A'))}  
-                            Regime: {row.get('Regime', 'N/A')}  
-                            Position Size: {pos_shares} shares (~{pos_value})  
-                            Trailing Stop: {trailing_stop}  
-                            Reason: {row.get('Reason', 'N/A')}
-                            """)
-                        else:
-                            st.markdown(f"""
-                            Current Price: {current_price}  
-                            Buy At: {buy_at} | Stop Loss: {stop_loss}  
-                            Target: {target}  
-                            Intraday: {colored_recommendation(row.get('Intraday', 'N/A'))}  
-                            Swing: {colored_recommendation(row.get('Swing', 'N/A'))}  
-                            Short-Term: {colored_recommendation(row.get('Short-Term', 'N/A'))}  
-                            Long-Term: {colored_recommendation(row.get('Long-Term', 'N/A'))}  
-                            Mean Reversion: {colored_recommendation(row.get('Mean_Reversion', 'N/A'))}  
-                            Breakout: {colored_recommendation(row.get('Breakout', 'N/A'))}  
-                            Ichimoku Trend: {colored_recommendation(row.get('Ichimoku_Trend', 'N/A'))}
-                            """)
-            else:
-                st.warning("⚠️ No top picks available (or no 'Buy' recommendations) due to data issues or current market conditions.")
+    # This line MUST be unindented to be at the same level as the 'if' cleaning blocks above.
+    insert_top_picks_supabase(results_df, pick_type="daily") # Pass the potentially empty results_df
+
+    # All the following display logic must also be at this unindented level.
+    display_results_df = pd.DataFrame()
+    recommendation_mode = st.session_state.get('recommendation_mode', 'Standard')
+
+    # NEW: Check if results_df is empty before trying to filter/sort for display
+    if results_df.empty:
+        st.warning("⚠️ No valid stock data retrieved to generate Daily Top Picks.")
+    else: # Proceed only if results_df is NOT empty
+        if recommendation_mode == "Adaptive":
+            display_results_df = results_df[results_df["Recommendation"].astype(str).str.contains("Buy", na=False, case=False)].sort_values(by="Score", ascending=False).head(5)
+        else: # Standard mode filtering
+            buy_condition = pd.Series([False] * len(results_df), index=results_df.index)
+            for col in ["Intraday", "Swing", "Short-Term", "Long-Term"]:
+                if col in results_df.columns:
+                    buy_condition = buy_condition | results_df[col].astype(str).str.contains("Buy", na=False, case=False)
+            display_results_df = results_df[buy_condition].sort_values(by="Score", ascending=False).head(5)
+
+        if not display_results_df.empty:
+            st.subheader("🏆 Today's Top 5 Stocks")
+            for _, row in display_results_df.iterrows():
+                with st.expander(f"{row['Symbol']} - {tooltip('Score', TOOLTIPS['Score'])}: {row['Score']:.2f}/10"):
+                    current_price = f"₹{row.get('Current Price', np.nan):.2f}" if pd.notnull(row.get('Current Price')) else 'N/A'
+                    buy_at = f"₹{row.get('Buy At', np.nan):.2f}" if pd.notnull(row.get('Buy At')) else 'N/A'
+                    stop_loss = f"₹{row.get('Stop Loss', np.nan):.2f}" if pd.notnull(row.get('Stop Loss')) else 'N/A'
+                    target = f"₹{row.get('Target', np.nan):.2f}" if pd.notnull(row.get('Target')) else 'N/A'
+
+                    if st.session_state.recommendation_mode == "Adaptive":
+                        pos_shares = f"{int(row.get('Position Size Shares', 0))}" if pd.notnull(row.get('Position Size Shares')) else 'N/A'
+                        pos_value = f"₹{row.get('Position Size Value', 0):.2f}" if pd.notnull(row.get('Position Size Value')) else 'N/A'
+                        trailing_stop = f"₹{row.get('Trailing Stop', np.nan):.2f}" if pd.notnull(row.get('Trailing Stop')) else 'N/A'
+                        st.markdown(f"""
+                        Current Price: {current_price}  
+                        Buy At: {buy_at} | Stop Loss: {stop_loss}  
+                        Target: {target}  
+                        Recommendation: {colored_recommendation(row.get('Recommendation', 'N/A'))}  
+                        Regime: {row.get('Regime', 'N/A')}  
+                        Position Size: {pos_shares} shares (~{pos_value})  
+                        Trailing Stop: {trailing_stop}  
+                        Reason: {row.get('Reason', 'N/A')}
+                        """)
+                    else:
+                        st.markdown(f"""
+                        Current Price: {current_price}  
+                        Buy At: {buy_at} | Stop Loss: {stop_loss}  
+                        Target: {target}  
+                        Intraday: {colored_recommendation(row.get('Intraday', 'N/A'))}  
+                        Swing: {colored_recommendation(row.get('Swing', 'N/A'))}  
+                        Short-Term: {colored_recommendation(row.get('Short-Term', 'N/A'))}  
+                        Long-Term: {colored_recommendation(row.get('Long-Term', 'N/A'))}  
+                        Mean Reversion: {colored_recommendation(row.get('Mean_Reversion', 'N/A'))}  
+                        Breakout: {colored_recommendation(row.get('Breakout', 'N/A'))}  
+                        Ichimoku Trend: {colored_recommendation(row.get('Ichimoku_Trend', 'N/A'))}
+                        """)
+        else:
+            st.warning("⚠️ No top picks available (or no 'Buy' recommendations) due to data issues or current market conditions.")
 
     if st.button("⚡ Generate Intraday Top 5 Picks"):
         # Create the actual progress bar and text elements, replacing the empty containers.
