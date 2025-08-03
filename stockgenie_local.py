@@ -11,6 +11,7 @@ import time
 import requests
 import io
 import random
+import numpy as np
 from arch import arch_model
 import warnings
 from supabase import create_client, Client
@@ -1940,6 +1941,16 @@ def colored_recommendation(recommendation):
         return f"🔴 {recommendation}"
     else:
         return f"⚪ {recommendation}"
+
+    if 'Position Size Shares' in results_df.columns:
+        # Replace the string 'None' with actual NaN
+        results_df['Position Size Shares'] = results_df['Position Size Shares'].replace('None', np.nan)
+
+        # Convert to numeric, coercing any non-convertible values (like other strings, or NaNs) to NaN
+        results_df['Position Size Shares'] = pd.to_numeric(results_df['Position Size Shares'], errors='coerce')
+
+        # Fill any NaN values with 0.0 (or another default numeric value if appropriate)
+        results_df['Position Size Shares'] = results_df['Position Size Shares'].fillna(0.0)
 
 def insert_top_picks_supabase(results_df, pick_type="daily"):
     recommendation_mode = st.session_state.get('recommendation_mode', 'Standard')
