@@ -3,7 +3,7 @@ import ta
 import logging
 import numpy as np
 import streamlit as st
-from datetime import datetime, timedelta, date 
+from datetime import datetime, timedelta
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from functools import lru_cache
 import plotly.express as px
@@ -56,7 +56,7 @@ def retry(max_retries=5, delay=5, backoff_factor=2, jitter=1):
                         st.warning(f"Rate limit hit. Retrying {func.__name__} after {sleep_time:.2f} seconds...")
                         time.sleep(sleep_time)
                     else:
-                        raise e 
+                        raise e # Re-raise if not a 429
                 except (requests.exceptions.RequestException, ConnectionError) as e:
                     retries += 1
                     if retries == max_retries:
@@ -64,6 +64,7 @@ def retry(max_retries=5, delay=5, backoff_factor=2, jitter=1):
                     sleep_time = (delay * (backoff_factor ** retries)) + random.uniform(0, jitter)
                     st.warning(f"Connection error for {func.__name__}: {e}. Retrying after {sleep_time:.2f} seconds...")
                     time.sleep(sleep_time)
+            # If function returns nothing in loop, return None
             return None 
         return wrapper
     return decorator
@@ -82,7 +83,7 @@ def load_dhan_instrument_master():
         return df
     except Exception as e:
         logging.error(f"Failed to load Dhan instrument master: {e}")
-        return pd.DataFrame() 
+        return pd.DataFrame() # Return empty DataFrame on failure
 
 
 def get_dhan_security_id(symbol):
@@ -267,7 +268,9 @@ SECTORS = {
     "AUBANK.NS", "POONAWALLA.NS", "SUNDARMFIN.NS", "IIFL.NS", "ABCAPITAL.NS",
     "L&TFH.NS", "CREDITACC.NS", "MANAPPURAM.NS", "DHANI.NS", "JMFINANCIL.NS",
     "EDELWEISS.NS", "INDIASHLTR.NS", "MOTILALOFS.NS", "CDSL.NS", "BSE.NS",
-    "MCX.NS", "ANGELONE.NS", "KARURVYSYA.NS", "CUB.NS", "J&KBANK.NS", "DCBBANK.NS",
+    "MCX.NS", "ANGELONE.NS", "KARURVYSYA.NS", "RBLBANK.NS", "PNB.NS",
+    "CANBK.NS", "UNIONBANK.NS", "IOB.NS", "YESBANK.NS", "UCOBANK.NS",
+    "BANKINDIA.NS", "CENTRALBK.NS", "IDBI.NS", "J&KBANK.NS", "DCBBANK.NS",
     "FEDERALBNK.NS", "SOUTHBANK.NS", "CSBBANK.NS", "TMB.NS", "KTKBANK.NS",
     "EQUITASBNK.NS", "UJJIVANSFB.NS", "BANDHANBNK.NS", "SURYODAY.NS", "FSL.NS",
     "PSB.NS", "PFS.NS", "HDFCAMC.NS", "NAM-INDIA.NS", "UTIAMC.NS", "ABSLAMC.NS",
@@ -532,23 +535,7 @@ def fetch_stock_data_cached(symbol, period="5y", interval="1d"):
             "volume": "Volume",
             "timestamp": "Date"
         })
-        
-        # --- CRITICAL FIX FOR 1970-01-01 DATES ---
-        # This is the last stand for the date conversion.
-        # If 'Date' (originally 'timestamp') is coming as nanosecond epoch:
-        # Check if the 'Date' column is numeric.
-        if pd.api.types.is_numeric_dtype(df['Date']):
-            # Convert numeric epoch to datetime. Assume nanoseconds.
-            # Convert to int to avoid float precision issues if not exact nanoseconds
-            df["Date"] = pd.to_datetime(df["Date"].astype(np.int64), unit='ns', errors='coerce')
-        else:
-            # If it's not numeric, assume it's a string date and convert normally.
-            # This should handle cases where the API might sometimes send string dates.
-            df["Date"] = pd.to_datetime(df["Date"], errors='coerce')
-        # Filter out NaT (Not a Time) dates if any failed conversion
-        df = df.dropna(subset=['Date'])
-        # --- END CRITICAL FIX ---
-
+        df["Date"] = pd.to_datetime(df["Date"])
         df.set_index("Date", inplace=True)
 
         required_columns = ["Open", "High", "Low", "Close", "Volume"]
@@ -594,7 +581,7 @@ def monte_carlo_simulation(data, simulations=1000, days=30):
             return simulation_results
 
         simulation_results = []
-        for _ in range(days):
+        for _ in range(simulations):
             price_series = [data['Close'].iloc[-1]]
             for _ in range(days):
                 price = price_series[-1] * (1 + np.random.normal(mean_return, std_return))
@@ -709,7 +696,7 @@ def analyze_stock(data):
         'Upper_Band', 'Middle_Band', 'Lower_Band', 'SlowK', 'SlowD', 'ATR', 'ADX', 'OBV',
         'Avg_Volume', 'Volume_Spike', 'Ichimoku_Tenkan', 'Ichimoku_Kijun',
         'Ichimoku_Span_A', 'Ichimoku_Span_B', 'Ichimoku_Chikou', 'CMF',
-        'TRIX', 'Ultimate_Osc', 'VPT', 'ATR_pct', 'DMP', 'DMN', 'ADX_Slope' 
+        'TRIX', 'Ultimate_Osc', 'VPT', 'ATR_pct', 'DMP', 'DMN', 'ADX_Slope' # CMO removed
     ]
 
     # Initialize all columns to NaN to ensure they exist before computation
@@ -729,7 +716,7 @@ def analyze_stock(data):
 
     try:
         # Calculate Average Volume first for Volume_Spike
-        if can_compute_indicator(data, 'Volume_Spike'): 
+        if can_compute_indicator(data, 'Volume_Spike'): # Avg_Volume is part of Volume_Spike calc
             data['Avg_Volume'] = data['Volume'].rolling(window=20).mean()
 
         if can_compute_indicator(data, 'RSI'):
@@ -793,6 +780,17 @@ def analyze_stock(data):
         if can_compute_indicator(data, 'Ultimate_Osc'):
             data['Ultimate_Osc'] = ta.momentum.UltimateOscillator(high=data['High'], low=data['Low'], close=data['Close']).ultimate_oscillator()
         
+        # CMO removed due to persistent AttributeError in logs
+        # if can_compute_indicator(data, 'CMO'):
+        #     try:
+        #         data['CMO'] = ta.momentum.ChandeMomentumOscillator(close=data['Close'], window=14).chande_momentum_oscillator()
+        #     except AttributeError:
+        #         logging.error("CMO calculation failed: ChandeMomentumOscillator not found in ta.momentum. Skipping CMO.")
+        #         data['CMO'] = np.nan # Ensure column exists but is NaN
+        #     except Exception as e:
+        #         logging.error(f"Error computing CMO: {e}. Skipping CMO.")
+        #         data['CMO'] = np.nan
+
         if can_compute_indicator(data, 'VPT'):
             data['VPT'] = ta.volume.VolumePriceTrendIndicator(data['Close'], data['Volume']).volume_price_trend()
 
@@ -1382,14 +1380,15 @@ def backtest_stock(data, symbol, strategy="Swing", _data_hash=None):
     
     position = None
     entry_price = 0
-    # Store dates as string format YYYY-MM-DD to avoid Timestamp pickling issues
-    entry_date_str = None 
+    entry_date = None
     trades = []
     returns = []
     
     # Need enough data for indicator calculation (longest indicator window) plus one day for current open
     min_data_for_backtest_analysis = max(INDICATOR_MIN_LENGTHS.values()) 
-    
+    # We need data up to the signal day (i) AND the next day (i+1) for open/high/low/close
+    # So the loop should start from min_data_for_backtest_analysis to ensure sliced_data_for_signal is valid
+    # and it should run up to len(full_analyzed_data) - 1 to ensure current_day_data exists.
     if len(data) < min_data_for_backtest_analysis + 1:
         logging.warning(f"Not enough data to backtest {symbol}. Need at least {min_data_for_backtest_analysis + 1} rows, got {len(data)}")
         return results
@@ -1404,7 +1403,9 @@ def backtest_stock(data, symbol, strategy="Swing", _data_hash=None):
     # Start backtesting from the point where all indicators are valid
     # `i` will be the index of the *signal day* (previous day's close for calculation)
     # `i+1` will be the *trade day* (next day's open/high/low/close)
-    start_index = min_data_for_backtest_analysis -1 
+    start_index = min_data_for_backtest_analysis -1 # Corrected start_index for 0-based indexing for `iloc` 
+                                                  # so sliced_data_for_signal has at least min_data_for_backtest_analysis rows
+                                                  # and current_day_data is available (i+1)
 
     for i in range(start_index, len(full_analyzed_data) - 1): # Loop up to second to last row
         # Data available *up to and including* day 'i' is used to generate the signal for day 'i+1'
@@ -1433,8 +1434,8 @@ def backtest_stock(data, symbol, strategy="Swing", _data_hash=None):
         trade_high_price = current_day_data['High']
         trade_low_price = current_day_data['Low']
         trade_close_price = current_day_data['Close']
-        trade_date_str = current_day_data.name.strftime('%Y-%m-%d') # Convert to string here
-        
+        trade_date = current_day_data.name # This is the index (Date)
+
         # Add small random slippage
         slippage_pct = random.uniform(0.001, 0.005) # 0.1% to 0.5%
         
@@ -1450,8 +1451,8 @@ def backtest_stock(data, symbol, strategy="Swing", _data_hash=None):
 
             position = "Long"
             entry_price = entry_price_with_slippage
-            entry_date_str = trade_date_str # Store as string
-            results["buy_signals"].append((trade_date_str, entry_price)) # Store as string
+            entry_date = trade_date
+            results["buy_signals"].append((pd.Timestamp(entry_date), entry_price)) # Explicitly ensure Timestamp
         
         elif position == "Long":
             explicit_sell = "Sell" in signal
@@ -1482,16 +1483,16 @@ def backtest_stock(data, symbol, strategy="Swing", _data_hash=None):
                     returns.append(profit / entry_price)
                     
                 trades.append({
-                    "entry_date": entry_date_str, # Already a string
+                    "entry_date": pd.Timestamp(entry_date), # Explicitly ensure Timestamp
                     "entry_price": entry_price,
-                    "exit_date": trade_date_str, # A string
+                    "exit_date": pd.Timestamp(trade_date), # Explicitly ensure Timestamp
                     "exit_price": exit_price,
                     "profit": profit,
                     "reason": exit_reason
                 })
-                results["sell_signals"].append((trade_date_str, exit_price)) # A string
+                results["sell_signals"].append((pd.Timestamp(trade_date), exit_price)) # Explicitly ensure Timestamp
                 entry_price = 0
-                entry_date_str = None
+                entry_date = None
     
     # If a position is still open at the very end of the data, close it at the last available close price
     if position == "Long":
@@ -1502,14 +1503,14 @@ def backtest_stock(data, symbol, strategy="Swing", _data_hash=None):
         if entry_price != 0:
             returns.append(profit / entry_price)
         trades.append({
-            "entry_date": entry_date_str,
+            "entry_date": pd.Timestamp(entry_date), # Explicitly ensure Timestamp
             "entry_price": entry_price,
-            "exit_date": full_analyzed_data.index[-1].strftime('%Y-%m-%d'), # Convert to string
+            "exit_date": pd.Timestamp(full_analyzed_data.index[-1]), # Explicitly ensure Timestamp
             "exit_price": exit_price,
             "profit": profit,
             "reason": "Closed at end of period"
         })
-        results["sell_signals"].append((full_analyzed_data.index[-1].strftime('%Y-%m-%d'), exit_price)) # Convert to string
+        results["sell_signals"].append((pd.Timestamp(full_analyzed_data.index[-1]), exit_price)) # Explicitly ensure Timestamp
 
 
     if trades:
@@ -1665,7 +1666,7 @@ def analyze_all_stocks(stock_list, batch_size=10, progress_callback=None, status
         results.extend([r for r in batch_results if r is not None])
         processed += len(batch)
         if progress_callback:
-            progress_bar.progress(processed / total_stocks) # This seems to be the source of the `missing ScriptRunContext` warning, but it's common and harmless for performance.
+            progress_callback(processed / total_stocks)
         # Sleep to ensure enough time passes for all calls in batch across workers
         # With Period=2.0s and 3 workers, effective rate is 1.5 calls/sec.
         # For batch_size=10, it needs at least 10/1.5 = 6.67 seconds.
@@ -1716,7 +1717,7 @@ def analyze_intraday_stocks(stock_list, batch_size=3, progress_callback=None, st
         
         processed += len(batch)
         if progress_callback:
-            progress_bar.progress(processed / total_stocks) # This seems to be the source of the `missing ScriptRunContext` warning, but it's common and harmless for performance.
+            progress_callback(processed / total_stocks)
         
         time.sleep(max(10, batch_size * 2.0 / 3)) # Consistent sleep with analyze_all_stocks
     
@@ -1938,7 +1939,7 @@ def display_dashboard(symbol=None, data=None, recommendations=None):
     if st.button("🚀 Generate Daily Top Picks"):
         progress_bar = st.progress(0)
         loading_text = st.empty()
-        status_text = st.empty() 
+        status_text = st.empty() # Placeholder for current stock status
         
         status_text.text(f"📊 Analyzing {len(selected_stocks)} stocks...")
         
@@ -1946,7 +1947,7 @@ def display_dashboard(symbol=None, data=None, recommendations=None):
             selected_stocks,
             batch_size=10,
             progress_callback=lambda x: update_progress_with_status(progress_bar, loading_text, status_text, x),
-            status_callback=lambda status: status_text.text(status) 
+            status_callback=lambda status: status_text.text(status) # Pass actual status message
         )
         
         insert_top_picks_supabase(results_df, pick_type="daily")
@@ -2226,23 +2227,20 @@ def display_dashboard(symbol=None, data=None, recommendations=None):
                 with st.expander("Trade Details"):
                     for trade in backtest_results["trade_details"]:
                         profit = trade.get("profit", 0)
-                        # Dates are now already strings in YYYY-MM-DD format, so no strftime needed
-                        st.write(f"Entry: {trade['entry_date']} @ ₹{trade['entry_price']:.2f}, "
-                                 f"Exit: {trade['exit_date']} @ ₹{trade['exit_price']:.2f}, "
+                        # Ensure trade dates are formatted correctly
+                        entry_date_str = trade['entry_date'].strftime('%Y-%m-%d') if pd.api.types.is_datetime64_any_dtype(trade['entry_date']) else str(trade['entry_date'])
+                        exit_date_str = trade['exit_date'].strftime('%Y-%m-%d') if pd.api.types.is_datetime64_any_dtype(trade['exit_date']) else str(trade['exit_date'])
+                        st.write(f"Entry: {entry_date_str} @ ₹{trade['entry_price']:.2f}, "
+                                 f"Exit: {exit_date_str} @ ₹{trade['exit_price']:.2f}, "
                                  f"Profit: ₹{profit:.2f} ({trade['reason']})")
 
                 fig = px.line(data, x=data.index, y='Close', title=f"{normalize_symbol_dhan(symbol)} Price with Signals")
-                # When adding scatter points, if the buy_signals/sell_signals dates are strings, convert them back to datetime objects for plotly
                 if backtest_results["buy_signals"]:
-                    buy_dates_str, buy_prices = zip(*backtest_results["buy_signals"])
-                    # Convert strings back to datetime objects for plotting
-                    buy_dates = pd.to_datetime(list(buy_dates_str))
+                    buy_dates, buy_prices = zip(*backtest_results["buy_signals"])
                     fig.add_scatter(x=list(buy_dates), y=list(buy_prices), mode='markers', name='Buy Signals',
                                    marker=dict(color='green', symbol='triangle-up', size=10))
                 if backtest_results["sell_signals"]:
-                    sell_dates_str, sell_prices = zip(*backtest_results["sell_signals"])
-                    # Convert strings back to datetime objects for plotting
-                    sell_dates = pd.to_datetime(list(sell_dates_str))
+                    sell_dates, sell_prices = zip(*backtest_results["sell_signals"])
                     fig.add_scatter(x=list(sell_dates), y=list(sell_prices), mode='markers', name='Sell Signals',
                                    marker=dict(color='red', symbol='triangle-down', size=10))
                 st.plotly_chart(fig, use_container_width=True)
