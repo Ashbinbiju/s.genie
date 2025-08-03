@@ -283,7 +283,7 @@ def parse_period_to_days(period):
         logging.error(f"Invalid period format: {period}, error: {e}. Defaulting to 30 days.")
         return 30
         
-@RateLimiter(calls=1, period=2.0) # Adjusted period from 1.5 to 2.0 seconds for higher robustness
+@RateLimiter(calls=1, period=6) # Adjusted period from 1.5 to 2.0 seconds for higher robustness
 @lru_cache(maxsize=1000) # Caches results in memory for speed
 def fetch_stock_data_cached(symbol, period="5y", interval="1d"):
     """
@@ -1374,7 +1374,7 @@ def analyze_batch(stock_batch): # Removed progress_callback and status_callback
     errors = []
     # ThreadPoolExecutor to process stocks in parallel
     # The actual data fetching is rate-limited by @RateLimiter on fetch_stock_data_cached
-    with ThreadPoolExecutor(max_workers=3) as executor: # Number of parallel analysis tasks
+    with ThreadPoolExecutor(max_workers=2) as executor: # Number of parallel analysis tasks
         futures = {executor.submit(analyze_stock_parallel, symbol): symbol for symbol in stock_batch}
         for future in as_completed(futures):
             symbol = futures[future]
@@ -1697,7 +1697,7 @@ def insert_top_picks_supabase(results_df, pick_type="daily"):
         st.error(f"Supabase upsert exception: {e}")
 
 
-@RateLimiter(calls=1, period=1) # Rate limit this call to prevent burst for latest prices
+@RateLimiter(calls=1, period=6) # Rate limit this call to prevent burst for latest prices
 def fetch_latest_price(symbol):
     # Fetch 2 days of 1-day interval data to ensure we get today's close if available
     data = fetch_stock_data_cached(symbol, period="2d", interval="1d") # Use cached fetcher
