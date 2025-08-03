@@ -2,6 +2,7 @@ import pandas as pd
 import ta
 import logging
 import numpy as np
+from functools import lru_cache 
 import streamlit as st
 from datetime import datetime, timedelta, date
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -476,8 +477,8 @@ def parse_period_to_days(period):
         return 30
 
 # Increased period for a more conservative rate limit
+@lru_cache(maxsize=1000) 
 @RateLimiter(calls=4, period=1)
-@lru_cache(maxsize=1000) # Caches results in memory for speed
 def fetch_stock_data_cached(symbol, period="5y", interval="1d"):
     """
     Fetches stock data from Dhan API, with rate limiting and caching.
@@ -2725,17 +2726,17 @@ def main():
         # The display_dashboard function will now create its own placeholders
         # and handle their visibility based on button clicks.
         display_dashboard()
-
+        
     # Clear cache button
-    if st.sidebar.button("Clear All Caches", help="Clears cached data for stock prices and backtests. Useful if data seems stale or for debugging."):
-        st.cache_data.clear() # Clears Streamlit's file-based cache
-        fetch_stock_data_cached.cache_clear() # Clears functools.lru_cache for stock data
-        st.session_state.data = None
-        st.session_state.recommendations = None
-        st.session_state.backtest_results_swing = None
-        st.session_state.backtest_results_intraday = None
-        st.success("All caches cleared!")
-        st.rerun() # Rerun the app to reflect the cleared state
+        if st.sidebar.button("Clear All Caches", help="Clears cached data and restarts the app."):
+            st.session_state.clear()
+            st.cache_data.clear() # Clears Streamlit's file-based cache
+    # This is the line that was causing the AttributeError:
+    # fetch_stock_data_cached.cache_clear() # OLD LINE
+            st.session_state.data = None
+            st.session_state.recommendations = None
+            st.session_state.backtest_results_swing = None
+            st.rerun() # Rerun the app to reflect the cleared state
 
 if __name__ == "__main__":
     main()
