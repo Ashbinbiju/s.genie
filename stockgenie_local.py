@@ -2153,7 +2153,7 @@ def display_dashboard(symbol=None, data=None, recommendations=None):
 
         results_df = analyze_all_stocks(
             selected_stocks,
-            batch_size=10,
+            batch_size=4,
             progress_bar_obj=daily_progress_bar, # Pass the specific objects
             loading_text_obj=daily_loading_text,
             status_text_obj=daily_status_text
@@ -2252,7 +2252,7 @@ def display_dashboard(symbol=None, data=None, recommendations=None):
 
         intraday_results = analyze_intraday_stocks(
             selected_stocks,
-            batch_size=10,
+            batch_size=4,
             progress_bar_obj=intraday_progress_bar,
             loading_text_obj=intraday_loading_text,
             status_text_obj=intraday_status_text
