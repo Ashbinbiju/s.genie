@@ -502,25 +502,28 @@ def fetch_stock_data_cached(symbol, period="1y", interval="1d"): # Default perio
     headers = dhan_headers()
     num_days_in_period = parse_period_to_days(period)
 
-    # --- REVISED DATE LOGIC FOR ROBUSTNESS ---
-    # Attempt to fetch up to 3 days ago to be safer, then set fromDate relative to that.
-    # This avoids issues if 'yesterday' was a weekend/holiday.
-    end_date_obj = pd.Timestamp.now() - pd.Timedelta(days=3) # Start from 3 days ago to be safe
-    # If 3 days ago is still a non-trading day, go back further until a weekday is found
-    # NOTE: This only accounts for weekends, not public holidays.
-    # For full robustness, you'd need a list of NSE holidays.
-    while end_date_obj.weekday() > 4: # 5 is Saturday, 6 is Sunday
-        end_date_obj -= pd.Timedelta(days=1)
+    # --- REVISED DATE LOGIC FOR ROBUSTNESS (Accounts for weekends/holidays better) ---
+    # Find the most recent *trading day* for toDate
+    current_date = pd.Timestamp.now()
+    days_back = 1 # Start checking from yesterday
 
-    to_date_str = end_date_obj.strftime("%Y-%m-%d")
-    from_date_str = (end_date_obj - pd.to_timedelta(num_days_in_period, unit='D')).strftime("%Y-%m-%d")
+    while True:
+        potential_to_date = current_date - pd.Timedelta(days=days_back)
+        # Check if it's a weekday (Monday=0, Sunday=6)
+        # NOTE: This still doesn't account for public holidays, but is much better than before.
+        if potential_to_date.weekday() < 5: # 0-4 are Monday-Friday
+            break # Found a weekday, use this as our toDate
+        days_back += 1
+
+    to_date_str = potential_to_date.strftime("%Y-%m-%d")
+    from_date_str = (potential_to_date - pd.to_timedelta(num_days_in_period, unit='D')).strftime("%Y-%m-%d")
     # --- END REVISED DATE LOGIC ---
 
     payload = {
         "securityId": str(security_id),
         "exchangeSegment": "NSE_EQ",
         "instrument": "EQUITY",
-        "interval": interval,
+        "interval": "1d", # Explicitly set to '1d' as this is for daily data
         "fromDate": from_date_str,
         "toDate": to_date_str
     }
@@ -2162,13 +2165,8 @@ def insert_top_picks_supabase(results_df, pick_type="daily"):
 
 @RateLimiter(calls=1, period=1) # Rate limit this call to prevent burst for latest prices
 def fetch_latest_price(symbol):
-    # Fetch 2 days of 1-day interval data to ensure we get today's close if available
-    # toDate needs to be a past completed day for historical API
-    # Adjusted period to fetch potentially valid data for today's price if available for any intraday endpoint.
-    # However, for 'historical' API, we must use a past day for 'toDate'.
-    # For fetching "latest price", using '1m' interval for intraday data might be more appropriate if available.
-    # But sticking to '1d' and previous day for consistency with fetch_stock_data_cached for now.
-    data = fetch_stock_data_cached(symbol, period="3d", interval="1d") # Fetch slightly more data
+    # Fetch data up to the most recent trading day using the robust logic
+    data = fetch_stock_data_cached(symbol, period="3d", interval="1d") # Fetch slightly more data to ensure a recent trading day is found
     if not data.empty and 'Close' in data.columns and pd.notnull(data['Close'].iloc[-1]):
         return float(data['Close'].iloc[-1])
     return None
