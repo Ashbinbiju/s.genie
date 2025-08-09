@@ -6,7 +6,7 @@ from functools import lru_cache
 import streamlit as st
 from datetime import datetime, timedelta, date
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from functools import lru_cache
+# from functools import lru_cache # Duplicate import, removed from here
 import plotly.express as px
 import time
 import requests
@@ -243,7 +243,7 @@ TOOLTIPS = {
     "Ichimoku": "Ichimoku Cloud - Comprehensive trend indicator",
     "CMF": "Chaikin Money Flow - Buying/selling pressure",
     "TRIX": "Triple Exponential Average - Momentum oscillator with triple smoothing",
-    "Ultimate_Osc": "Ultimate Oscillator - Combines short, medium, and long-term momentum",
+    "Ultimate_Osc": "Combines short, medium, and long-term momentum (0-100, >70=overbought, <30=oversold)",
     "VPT": "Volume Price Trend - Tracks trend strength with price and volume",
     "Score": "Measured by RSI, MACD, Ichimoku Cloud, and ATR volatility. Low score = weak signal, high score = strong signal.",
     "OBV": "On-Balance Volume - Measures buying and selling pressure by adding/subtracting volume based on price changes."
@@ -506,7 +506,7 @@ def fetch_stock_data_cached(symbol, period="1y", interval="1d"): # Changed defau
         "instrument": "EQUITY",
         "interval": interval,
         "fromDate": (pd.Timestamp.now() - pd.to_timedelta(days, unit='D')).strftime("%Y-%m-%d"),
-        "toDate": pd.Timestamp.now().strftime("%Y-%m-%d")
+        "toDate": (pd.Timestamp.now() - pd.Timedelta(days=1)).strftime("%Y-%m-%d") # Changed to previous day
     }
 
     try:
@@ -995,8 +995,8 @@ def classify_market_regime(data):
        pd.isna(atr_pct) or pd.isna(adx) or pd.isna(adx_slope):
         return 'Incomplete Indicator Data'
 
-    if atr_pct > 0.04:
-        return "Highly Volatile" # Increased threshold for "Highly Volatile"
+    if atr_pct > 0.04: # Threshold for highly volatile
+        return "Highly Volatile"
 
     if adx > 25: # Strong trend
         if close > sma_50 and sma_50 > sma_200 and close > sma_200: # All bullish alignment
@@ -1366,7 +1366,7 @@ def generate_recommendations(data, symbol=None):
     }
 
     # Ensure sufficient data for comprehensive analysis (Ichimoku is max length)
-    required_length = max(INDICATOR_MIN_LENGTHS['Ichimoku'], INDICATOR_MIN_LENGTHS['SMA_200'])
+    required_length = max(INDICATOR_MIN_LENGTHS['Ichimoku'], INDICATOR_MIN_LENGTHS['SMA_200'], INDICATOR_MIN_LENGTHS['Volume_Spike'])
     if not validate_data(data, min_length=required_length):
         recommendations["Reason"] = "Insufficient historical data for standard analysis."
         logging.warning(f"Invalid data for standard recommendations: {symbol}. Length: {len(data)}")
@@ -1528,7 +1528,7 @@ def generate_recommendations(data, symbol=None):
                 recommendations["Reason"] += " | Potential mean reversion opportunity in sideways market."
 
         elif "Highly Volatile" == market_regime:
-            recommendations["Recommendation"] = "Avoid (High Volatility Market)"
+            recommendations["Recommendation"] = "Avoid (Highly Volatile Market)" # Renamed from High Volatility to be distinct from the filter
             recommendations["Reason"] += " | Market is highly volatile, caution advised."
 
 
@@ -1647,8 +1647,9 @@ def backtest_stock(data, symbol, strategy="Swing", _data_hash=None):
         slippage_pct = random.uniform(0.001, 0.005) # 0.1% to 0.5%
 
         # --- Entry Logic ---
-        # Enter on Buy signal if no open position and not an "Avoid"
-        if "Buy" in signal_type and position is None and "Avoid" not in signal_type:
+        # Enter on Buy signal if no open position and not an "Avoid" or "Review" or "Hold" type signal
+        if "Buy" in signal_type and position is None and \
+           "Avoid" not in signal_type and "Review" not in signal_type and "Hold" not in signal_type:
             entry_price_with_slippage = trade_open_price * (1 + slippage_pct)
 
             # Ensure we're not buying at a ridiculous price relative to signal's recommended buy_at
@@ -1694,7 +1695,8 @@ def backtest_stock(data, symbol, strategy="Swing", _data_hash=None):
                 exit_price = target_price * (1 - slippage_pct) # Exit at target with slippage
                 exit_reason = "Target Hit"
             # 2. Check for explicit Sell Signal from the strategy only if other exits not triggered
-            elif ("Sell" in signal_type or "Avoid" in signal_type or "Hold" in signal_type) and exit_reason is None: # Exit if not explicitly a "Buy" anymore
+            # Exit if the consolidated recommendation is no longer a 'Buy'
+            elif ("Sell" in signal_type or "Avoid" in signal_type or "Hold" in signal_type or "Review" in signal_type or "Consider Sell" in signal_type) and exit_reason is None:
                 exit_price = trade_close_price * (1 - slippage_pct)
                 exit_reason = f"Strategy Signal ({signal_type})"
 
@@ -2011,7 +2013,11 @@ def analyze_intraday_stocks(stock_list, batch_size=3, progress_bar_obj=None, loa
     else:
         # For standard mode, filter explicitly for "Intraday" buy signals
         if "Intraday" in results_df.columns: # Defensive check
-            filtered_df = results_df[results_df["Intraday"].str.contains("Buy", na=False, case=False)]
+            # Filter for anything that contains "Buy" and is not "Avoid" or "Review" or "Hold"
+            filtered_df = results_df[results_df["Intraday"].astype(str).str.contains("Buy", na=False, case=False) & \
+                                    ~results_df["Intraday"].astype(str).str.contains("Avoid", na=False, case=False) & \
+                                    ~results_df["Intraday"].astype(str).str.contains("Review", na=False, case=False) & \
+                                    ~results_df["Intraday"].astype(str).str.contains("Hold", na=False, case=False)]
         else: # Should not happen with `expected_cols` loop, but for extreme safety
             logging.error("Intraday column not found in results_df during intraday filtering.")
             filtered_df = pd.DataFrame() # Return empty if column is critically missing
@@ -2141,6 +2147,7 @@ def insert_top_picks_supabase(results_df, pick_type="daily"):
 @RateLimiter(calls=1, period=1) # Rate limit this call to prevent burst for latest prices
 def fetch_latest_price(symbol):
     # Fetch 2 days of 1-day interval data to ensure we get today's close if available
+    # toDate needs to be yesterday for historical API
     data = fetch_stock_data_cached(symbol, period="2d", interval="1d") # Use cached fetcher
     if not data.empty and 'Close' in data.columns and pd.notnull(data['Close'].iloc[-1]):
         return float(data['Close'].iloc[-1])
@@ -2218,19 +2225,6 @@ def display_dashboard(symbol=None, data=None, recommendations=None):
     if not selected_stocks:
         st.warning("⚠️ No stocks selected. Please choose at least one sector.")
         return
-
-    # Simple sector performance (not directly enhanced in this response, but kept for context)
-    # The `get_top_sectors_cached` function is not provided, so this button might not work out-of-the-box.
-    # If you have it, ensure it's robust.
-    # if st.button("🔎 Analyze Top Performing Sectors"):
-    #     with st.spinner("🔍 Crunching sector data ..."):
-    #         top_sectors = get_top_sectors_cached(rate_limit_delay=10, stocks_per_sector=10)
-    #         st.subheader("🔝 Top 3 Performing Sectors Today")
-    #         if top_sectors:
-    #             for name, score in top_sectors:
-    #                 st.markdown(f"- **{name}**: {score:.2f}/10")
-    #         else:
-    #             st.info("No sector data available or able to be processed.")
 
     # Placeholders for the analysis progress and status messages.
     # Initialize them to empty containers. They will be populated when buttons are clicked.
@@ -2372,10 +2366,10 @@ def display_dashboard(symbol=None, data=None, recommendations=None):
             else:
                 # For standard intraday picks, filter by the specific 'Intraday' field
                 if "Intraday" in intraday_results.columns:
-                    filtered_df = intraday_results[intraday_results["Intraday"].astype(str).str.contains("Buy", na=False, case=False)] & \
+                    filtered_df = intraday_results[intraday_results["Intraday"].astype(str).str.contains("Buy", na=False, case=False) & \
                                     ~intraday_results["Intraday"].astype(str).str.contains("Avoid", na=False, case=False) & \
                                     ~intraday_results["Intraday"].astype(str).str.contains("Review", na=False, case=False) & \
-                                    ~intraday_results["Intraday"].astype(str).str.contains("Hold", na=False, case=False)
+                                    ~intraday_results["Intraday"].astype(str).str.contains("Hold", na=False, case=False)]
                 else:
                     logging.error("Intraday column not found in intraday_results during filtering for display.")
 
@@ -2407,9 +2401,9 @@ def display_dashboard(symbol=None, data=None, recommendations=None):
                             Buy At: {buy_at} | Stop Loss: {stop_loss}  
                             Target: {target}  
                             Intraday: {colored_recommendation(row.get('Intraday', 'N/A'))}
-                            Recommendation: {colored_recommendation(row.get('Recommendation', 'N/A'))} # Consolidated standard rec
-                            Regime: {row.get('Regime', 'N/A')} # Market regime for context
-                            Reason: {row.get('Reason', 'N/A')} # Reason for consolidated rec
+                            Recommendation: {colored_recommendation(row.get('Recommendation', 'N/A'))}
+                            Regime: {row.get('Regime', 'N/A')}
+                            Reason: {row.get('Reason', 'N/A')}
                             """)
             else:
                 st.warning("⚠️ No intraday picks available (or no 'Buy' recommendations) due to data issues.")
@@ -2467,26 +2461,36 @@ def display_dashboard(symbol=None, data=None, recommendations=None):
                                                df['recommendation'].astype(str).str.len() > 0 # Ensure not just empty string
 
                     if is_adaptive_data_present: # Assume adaptive structure
-                        display_cols = [
-                            "symbol", "buy_at", "current_price", "% Change", "What to do now?",
-                            "recommendation", "regime", "position_size_shares", "position_size_value",
-                            "trailing_stop", "reason", "target", "stop_loss", "pick_type", "score"
-                        ]
-                        final_display_df = df[[col for col in display_cols if col in df.columns]]
-                        # Apply colored recommendations to the 'recommendation' column for consistency
-                        if 'recommendation' in final_display_df.columns:
-                            final_display_df['recommendation'] = final_display_df['recommendation'].apply(colored_recommendation)
+                        # Filter to ensure it's actually an adaptive recommendation.
+                        # One way is to check for fields specific to adaptive mode like 'position_size_shares'
+                        # or if the recommendation string itself looks like adaptive
+                        if df['position_size_shares'].notna().any() and df['position_size_shares'].sum() > 0:
+                            display_cols = [
+                                "symbol", "buy_at", "current_price", "% Change", "What to do now?",
+                                "recommendation", "regime", "position_size_shares", "position_size_value",
+                                "trailing_stop", "reason", "target", "stop_loss", "pick_type", "score"
+                            ]
+                        else: # Fallback to standard if adaptive fields are missing/empty
+                             logging.info("Historical data lacks adaptive-specific fields, falling back to standard display for this date.")
+                             standard_cols = ["symbol", "buy_at", "current_price", "% Change", "What to do now?",
+                                             "recommendation", "regime", "reason",
+                                             "intraday", "swing", "short_term", "long_term", "mean_reversion",
+                                             "breakout", "ichimoku_trend", "target", "stop_loss", "pick_type", "score"]
+                             display_cols = standard_cols # Use standard columns
                     else: # Fallback to standard columns if Adaptive mode recommendations are not primary or not present
                         # Display the specific standard recommendations too for historical clarity
                         standard_cols = ["symbol", "buy_at", "current_price", "% Change", "What to do now?",
                                          "recommendation", "regime", "reason", # Consolidated standard rec and its context
                                          "intraday", "swing", "short_term", "long_term", "mean_reversion",
                                          "breakout", "ichimoku_trend", "target", "stop_loss", "pick_type", "score"]
-                        final_display_df = df[[col for col in standard_cols if col in df.columns]]
-                        # Apply colored recommendations to relevant standard columns
-                        for col_name in ["recommendation", "intraday", "swing", "short_term", "long_term", "mean_reversion", "breakout", "ichimoku_trend"]:
-                            if col_name in final_display_df.columns:
-                                final_display_df[col_name] = final_display_df[col_name].apply(colored_recommendation)
+                        display_cols = standard_cols
+
+                    final_display_df = df[[col for col in display_cols if col in df.columns]]
+                    # Apply colored recommendations to relevant columns
+                    for col_name in ["recommendation", "intraday", "swing", "short_term", "long_term", "mean_reversion", "breakout", "ichimoku_trend"]:
+                        if col_name in final_display_df.columns:
+                            final_display_df[col_name] = final_display_df[col_name].apply(colored_recommendation)
+
 
                     styled_df = style_picks_df(final_display_df)
                     st.dataframe(styled_df, use_container_width=True)
@@ -2801,6 +2805,7 @@ def main():
             with st.spinner(f"Loading and analyzing data for {normalize_symbol_dhan(symbol)}..."):
                 data = fetch_stock_data_cached(symbol) # Use the cached fetcher
                 # Max length for indicators is Ichimoku 52 periods. Need at least 52+1 for current day for backtesting.
+                # Also include Volume_Spike's 20-period Average Volume minimum length for comprehensive analysis.
                 required_min_length = max(INDICATOR_MIN_LENGTHS.values()) + 1
                 if not data.empty and len(data) >= required_min_length:
                     data = analyze_stock(data)
