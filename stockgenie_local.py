@@ -27,10 +27,8 @@ from threading import Lock
 data_api_calls = 0
 data_api_lock = Lock()
 
-# Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
-# Load Streamlit secrets for Dhan API
 try:
     DHAN_CLIENT_ID = st.secrets["DHAN_CLIENT_ID"]
     DHAN_ACCESS_TOKEN = st.secrets["DHAN_ACCESS_TOKEN"]
@@ -38,6 +36,11 @@ except KeyError:
     st.error("Dhan API credentials not found in Streamlit secrets. Please set DHAN_CLIENT_ID and DHAN_ACCESS_TOKEN.")
     st.stop()
 
+USER_AGENTS = [
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64)",
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)",
+    "Mozilla/5.0 (X11; Ubuntu; Linux x86_64; rv:90.0)"
+]
 
 def dhan_headers():
     return {
@@ -71,7 +74,7 @@ def retry(max_retries=5, delay=5, backoff_factor=2, jitter=1):
                     sleep_time = (delay * (backoff_factor ** retries)) + random.uniform(0, jitter)
                     st.warning(f"Connection error for {func.__name__}: {e}. Retrying after {sleep_time:.2f} seconds...")
                     time.sleep(sleep_time)
-                except Exception as e: # Catch all other exceptions for retry
+                except Exception as e:
                     retries += 1
                     if retries == max_retries:
                         raise e
@@ -83,24 +86,26 @@ def retry(max_retries=5, delay=5, backoff_factor=2, jitter=1):
     return decorator
 
 @st.cache_data(ttl=86400)
-@retry(max_retries=3, delay=5) # Add retry for master file download
+@retry(max_retries=3, delay=5)
 def load_dhan_instrument_master():
     url = "https://images.dhan.co/api-data/api-scrip-master.csv"
     try:
-        session = requests.Session()
-        session.headers.update({"User-Agent": random.choice(USER_AGENTS)})
-        response = session.get(url, timeout=10)
-        response.raise_for_status()
-        df = pd.read_csv(io.StringIO(response.text), low_memory=False)
-        df = df[(df['SEM_EXM_EXCH_ID'] == 'NSE') & (df['SEM_SEGMENT'] == 'E')]
-        return df
+        with data_api_lock:
+            session = requests.Session()
+            session.headers.update({"User-Agent": random.choice(USER_AGENTS)})
+            response = session.get(url, timeout=10)
+            response.raise_for_status()
+            df = pd.read_csv(io.StringIO(response.text), low_memory=False)
+            df = df[(df['SEM_EXM_EXCH_ID'] == 'NSE') & (df['SEM_SEGMENT'] == 'E')]
+            return df
     except Exception as e:
         logging.error(f"Failed to load Dhan instrument master: {e}")
         return pd.DataFrame()
 
+def normalize_symbol_dhan(symbol):
+    return symbol.replace(".NS", "").replace(".BO", "").replace("-EQ", "")
 
 def get_dhan_security_id(symbol):
-    """Get Dhan security ID for a given symbol"""
     df = load_dhan_instrument_master()
     if df.empty:
         logging.error(f"Instrument master data is empty, cannot find security ID for {symbol}")
@@ -120,34 +125,69 @@ def get_dhan_security_id(symbol):
     logging.warning(f"No security_id found for {symbol} ({symbol_clean}). Possible matches: {possible_matches[['SM_SYMBOL_NAME', 'SEM_TRADING_SYMBOL']].to_dict('records')}")
     return None
 
-def test_dhan_connection():
-    """Test if Dhan API credentials are working"""
-    url = "https://api.dhan.co/v2/charts/intraday"
-    headers = {
-        "Content-Type": "application/json",
-        "access-token": DHAN_ACCESS_TOKEN,
-        "client-id": DHAN_CLIENT_ID
+def get_dhan_symbol(symbol_or_security_id):
+    df = load_dhan_instrument_master()
+    if df.empty:
+        logging.error("Instrument master data is empty, cannot find symbol.")
+        return None
+
+    if str(symbol_or_security_id).isdigit():
+        row = df[df['SEM_SMST_SECURITY_ID'].astype(str) == str(symbol_or_security_id)]
+        if not row.empty:
+            return row.iloc[0]['SEM_TRADING_SYMBOL']
+
+    symbol_clean = normalize_symbol_dhan(symbol_or_security_id).upper()
+    row = df[df['SEM_TRADING_SYMBOL'].astype(str).str.upper() == symbol_clean]
+    if not row.empty:
+        return row.iloc[0]['SEM_TRADING_SYMBOL']
+
+    logging.warning(f"No matching symbol found for {symbol_or_security_id}")
+    return None
+
+@retry(max_retries=3, delay=5)
+def get_dhan_historical_data(symbol_or_security_id, from_date, to_date, interval="1d", exchange_segment="NSE_EQ"):
+    symbol = get_dhan_symbol(symbol_or_security_id)
+    if not symbol:
+        raise ValueError(f"Could not resolve symbol for {symbol_or_security_id}")
+
+    url = "https://api.dhan.co/v2/charts/historical"
+    headers = dhan_headers()
+    payload = {
+        "symbol": symbol,
+        "exchangeSegment": exchange_segment,
+        "interval": interval,
+        "fromDate": from_date,
+        "toDate": to_date
     }
 
-    # Use a highly liquid stock for testing like Reliance, which always has intraday data
-    # Security ID for RELIANCE is often 2885 for NSE_EQ.
-    test_security_id = get_dhan_security_id("RELIANCE.NS")
-    if not test_security_id:
-        logging.error("Could not find security ID for RELIANCE.NS, cannot test Dhan connection.")
+    response = requests.post(url, headers=headers, json=payload)
+    response.raise_for_status()
+    data = response.json()
+
+    if "errorCode" in data:
+        raise Exception(f"{data['errorCode']}: {data['errorMessage']}")
+
+    return data
+
+def test_dhan_connection():
+    test_symbol = get_dhan_symbol("RELIANCE.NS")
+    if not test_symbol:
+        logging.error("Could not find symbol for RELIANCE.NS, cannot test Dhan connection.")
         return False
 
-    # For testing, requesting for the day before yesterday to ensure data availability
     payload = {
-        "securityId": str(test_security_id),
+        "symbol": test_symbol,
         "exchangeSegment": "NSE_EQ",
-        "instrument": "EQUITY",
-        "fromDate": (pd.Timestamp.now() - pd.Timedelta(days=2)).strftime("%Y-%m-%d"), # 2 days ago
-        "toDate": (pd.Timestamp.now() - pd.Timedelta(days=1)).strftime("%Y-%m-%d"), # yesterday
-        "interval": "1m"
+        "interval": "1d",
+        "fromDate": (pd.Timestamp.now() - pd.Timedelta(days=2)).strftime("%Y-%m-%d"),
+        "toDate": (pd.Timestamp.now() - pd.Timedelta(days=1)).strftime("%Y-%m-%d")
     }
 
+    url = "https://api.dhan.co/v2/charts/historical"
+    headers = dhan_headers()
+
     try:
-        response = requests.post(url, headers=headers, data=json.dumps(payload), timeout=10)
+        response = requests.post(url, headers=headers, json=payload, timeout=10)
         if response.status_code == 200:
             logging.info("Dhan API connection successful!")
             return True
@@ -158,8 +198,6 @@ def test_dhan_connection():
         logging.error(f"Dhan API connection error: {e}")
         return False
 
-def normalize_symbol_dhan(symbol):
-    return symbol.replace(".NS", "").replace(".BO", "").replace("-EQ", "")
 
 # --- Supabase setup ---
 SUPABASE_URL = st.secrets["SUPABASE_URL"]
