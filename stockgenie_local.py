@@ -250,9 +250,9 @@ TOOLTIPS = {
 }
 
 SECTORS = {
- 
+
 "Day": ["CARTRADE","ACMESOLAR","AGIIL","ALICON","BLUESTARCO","SWIGGY","INDIAMART","ASTERDM","CRIZAC"],
- 
+
   "Bank": [
     "HDFCBANK.NS", "ICICIBANK.NS", "SBIN.NS", "KOTAKBANK.NS", "AXISBANK.NS",
     "INDUSINDBK.NS", "PNB.NS", "BANKBARODA.NS", "CANBK.NS", "UNIONBANK.NS",
@@ -294,7 +294,7 @@ SECTORS = {
 
   "Automobile & Ancillaries": [
     "MARUTI.NS", "TATAMOTORS.NS", "M&M.NS", "BAJAJ-AUTO.NS", "HEROMOTOCO.NS",
-    "EICHERMOT.NS", "TVSMOTOR.NS", "ASHOKLEY.NS", "MRF.NS", "BALKRISIND.NS",
+    ""EICHERMOT.NS", "TVSMOTOR.NS", "ASHOKLEY.NS", "MRF.NS", "BALKRISIND.NS",
     "APOLLOTYRE.NS", "CEATLTD.NS", "JKTYRE.NS", "MOTHERSON.NS", "BHARATFORG.NS",
     "SUNDRMFAST.NS", "EXIDEIND.NS", "ARE&M.NS", "BOSCHLTD.NS", "ENDURANCE.NS",
     "UNOMINDA.NS", "ZFCVINDIA.NS", "GABRIEL.NS", "SUPRAJIT.NS", "LUMAXTECH.NS",
@@ -475,10 +475,9 @@ def parse_period_to_days(period):
         logging.error(f"Invalid period format: {period}, error: {e}. Defaulting to 30 days.")
         return 30
 
-# Increased period for a more conservative rate limit
 @lru_cache(maxsize=1000)
 @RateLimiter(calls=4, period=1)
-def fetch_stock_data_cached(symbol, period="5y", interval="1d"):
+def fetch_stock_data_cached(symbol, period="1y", interval="1d"): # Changed default period to "1y"
     """
     Fetches stock data from Dhan API, with rate limiting and caching.
     This function wraps the actual API call, allowing its results to be cached in memory.
@@ -511,20 +510,17 @@ def fetch_stock_data_cached(symbol, period="5y", interval="1d"):
     }
 
     try:
-        # logging.info(f"Requesting data for {symbol} with payload: {payload}") # Too verbose for production
+        logging.info(f"Requesting data for {symbol} with payload: {json.dumps(payload)}")
         response = requests.post(url, headers=headers, data=json.dumps(payload), timeout=10)
 
-        # Explicitly check for rate limit messages even if status code is not 429
-        if response.status_code == 429:
-            logging.warning(f"Dhan API returned 429 (Too Many Requests) for {symbol}. Retrying...")
-            response.raise_for_status() # This will be caught by the @retry decorator
+        # Added: More robust error logging for non-200 responses
+        if response.status_code != 200:
+            logging.error(f"Dhan API returned non-200 status for {symbol}. Status: {response.status_code}, Response Body: {response.text}, Payload: {json.dumps(payload)}")
 
         response_text = response.text
         # Check for specific "too many calls" message in response body
         if "too many calls" in response_text.lower() or "limit exceeded" in response_text.lower():
             logging.warning(f"Dhan API response text indicates 'too many calls' or 'limit exceeded' for {symbol} (Status: {response.status_code}). Response: {response_text}. Raising error to trigger retry.")
-            # If the API sends "too many calls" in a non-429 response, we need to force a retry by raising an exception
-            # that the @retry decorator will catch. A generic RequestException is appropriate.
             raise requests.exceptions.RequestException(f"API indicated 'too many calls' in response body for {symbol}")
 
         response.raise_for_status() # This raises HTTPError for other 4xx/5xx responses
@@ -605,22 +601,22 @@ def fetch_stock_data_cached(symbol, period="5y", interval="1d"):
                 logging.warning(f"Filtered out {original_len - len(df)} early epoch dates for {symbol}.")
         # --- END NEW ADDITION ---
 
-        # logging.info(f"Successfully fetched data for {symbol}: {len(df)} rows") # Too verbose
-
         # Add a small random sleep AFTER successful fetch to reduce burst impact on server-side limits
         time.sleep(random.uniform(0.1, 0.5))
 
         return df[required_columns]
 
     except requests.exceptions.HTTPError as e:
-        logging.error(f"HTTP error for {symbol}: {e}, Response: {e.response.text if e.response else 'No response'}")
+        # Enhanced logging to ensure we get the response text if available
+        error_response_text = e.response.text if e.response is not None else 'No response body from server'
+        logging.error(f"HTTP error for {symbol}: {e}. URL: {url}, Payload: {json.dumps(payload)}, Status: {e.response.status_code if e.response else 'N/A'}, Response: {error_response_text}")
         return pd.DataFrame()
     except requests.exceptions.RequestException as e:
         # This catches both specific RequestException and the custom one we raise
-        logging.error(f"Request error for {symbol}: {e}")
+        logging.error(f"Request error for {symbol}: {e}. URL: {url}, Payload: {json.dumps(payload)}")
         return pd.DataFrame()
     except Exception as e:
-        logging.error(f"Unexpected error for {symbol}: {e}")
+        logging.error(f"Unexpected error for {symbol}: {e}. URL: {url}, Payload: {json.dumps(payload)}")
         return pd.DataFrame()
 
 
@@ -1000,7 +996,7 @@ def classify_market_regime(data):
         return 'Incomplete Indicator Data'
 
     if atr_pct > 0.04:
-        return 'Highly Volatile'
+        return "Highly Volatile" # Increased threshold for "Highly Volatile"
 
     if adx > 25: # Strong trend
         if close > sma_50 and sma_50 > sma_200 and close > sma_200: # All bullish alignment
@@ -1345,7 +1341,6 @@ def adaptive_recommendation(data, symbol=None, equity=100000, risk_per_trade_pct
         recommendations["Reason"] = f"An unexpected error occurred: {str(e)}"
         return recommendations
 
-# --- MODIFIED generate_recommendations FUNCTION ---
 def generate_recommendations(data, symbol=None):
     """
     Generates trading recommendations based on technical indicators (Standard Mode).
@@ -1634,16 +1629,8 @@ def backtest_stock(data, symbol, strategy="Swing", _data_hash=None):
             signal_type = rec["Recommendation"] # Adaptive recommendation
         else:
             rec = generate_recommendations(sliced_data_for_signal, symbol)
-            # In standard mode, 'Recommendation' is the consolidated one,
-            # but backtest currently looks for "Swing" for swing strategy.
-            # Let's adjust backtest logic to primarily use the consolidated 'Recommendation'
-            # if we just want one general strategy backtest.
-            # If 'strategy' parameter implies a specific standard sub-strategy (like "Intraday" or "Swing"),
-            # then we'll use that.
-            if strategy in rec and rec[strategy] != "Hold": # Check specific sub-strategy (e.g., "Swing")
-                 signal_type = rec[strategy]
-            else: # Fallback to the overall "Recommendation" field in standard mode if specific is "Hold"
-                 signal_type = rec["Recommendation"]
+            # Use the consolidated 'Recommendation' field from the updated generate_recommendations
+            signal_type = rec["Recommendation"]
 
 
         if signal_type is None:
@@ -1660,8 +1647,8 @@ def backtest_stock(data, symbol, strategy="Swing", _data_hash=None):
         slippage_pct = random.uniform(0.001, 0.005) # 0.1% to 0.5%
 
         # --- Entry Logic ---
-        # Enter on Buy signal if no open position
-        if "Buy" in signal_type and position is None:
+        # Enter on Buy signal if no open position and not an "Avoid"
+        if "Buy" in signal_type and position is None and "Avoid" not in signal_type:
             entry_price_with_slippage = trade_open_price * (1 + slippage_pct)
 
             # Ensure we're not buying at a ridiculous price relative to signal's recommended buy_at
@@ -1707,9 +1694,9 @@ def backtest_stock(data, symbol, strategy="Swing", _data_hash=None):
                 exit_price = target_price * (1 - slippage_pct) # Exit at target with slippage
                 exit_reason = "Target Hit"
             # 2. Check for explicit Sell Signal from the strategy only if other exits not triggered
-            elif "Sell" in signal_type and exit_reason is None:
+            elif ("Sell" in signal_type or "Avoid" in signal_type or "Hold" in signal_type) and exit_reason is None: # Exit if not explicitly a "Buy" anymore
                 exit_price = trade_close_price * (1 - slippage_pct)
-                exit_reason = "Sell Signal"
+                exit_reason = f"Strategy Signal ({signal_type})"
 
 
             if exit_reason:
@@ -2042,6 +2029,10 @@ def colored_recommendation(recommendation):
         return f"💥 {recommendation}"
     elif "Sell" in recommendation or "Consider Sell" in recommendation:
         return f"🔴 {recommendation}"
+    elif "Avoid" in recommendation: # Added specific color for 'Avoid'
+        return f"🚫 {recommendation}"
+    elif "Review" in recommendation: # Added specific color for 'Review'
+        return f"⚠️ {recommendation}"
     else:
         return f"⚪ {recommendation}"
 
@@ -2067,7 +2058,11 @@ def insert_top_picks_supabase(results_df, pick_type="daily"):
         # For standard mode, filter by the consolidated 'Recommendation' field
         if 'Recommendation' not in results_df.columns: # Defensive check
              results_df['Recommendation'] = np.nan
-        buy_condition = results_df["Recommendation"].astype(str).str.contains("Buy", na=False, case=False)
+        # Filter for anything that contains "Buy" and is not "Avoid" or "Review" or "Hold"
+        buy_condition = results_df["Recommendation"].astype(str).str.contains("Buy", na=False, case=False) & \
+                        ~results_df["Recommendation"].astype(str).str.contains("Avoid", na=False, case=False) & \
+                        ~results_df["Recommendation"].astype(str).str.contains("Review", na=False, case=False) & \
+                        ~results_df["Recommendation"].astype(str).str.contains("Hold", na=False, case=False)
         filtered_df_pre_sort = results_df[buy_condition]
 
 
@@ -2303,7 +2298,11 @@ def display_dashboard(symbol=None, data=None, recommendations=None):
             else: # Standard mode filtering
                 # Now filter based on the single 'Recommendation' column which holds the consolidated standard rec
                 if 'Recommendation' in results_df.columns: # Defensive check
-                    buy_condition = results_df["Recommendation"].astype(str).str.contains("Buy", na=False, case=False)
+                    # Filter for anything that contains "Buy" and is not "Avoid" or "Review" or "Hold"
+                    buy_condition = results_df["Recommendation"].astype(str).str.contains("Buy", na=False, case=False) & \
+                                    ~results_df["Recommendation"].astype(str).str.contains("Avoid", na=False, case=False) & \
+                                    ~results_df["Recommendation"].astype(str).str.contains("Review", na=False, case=False) & \
+                                    ~results_df["Recommendation"].astype(str).str.contains("Hold", na=False, case=False)
                     display_results_df = results_df[buy_condition].sort_values(by="Score", ascending=False).head(5)
                 else:
                     logging.error("Recommendation column not found in results_df during daily picks display.")
@@ -2373,7 +2372,10 @@ def display_dashboard(symbol=None, data=None, recommendations=None):
             else:
                 # For standard intraday picks, filter by the specific 'Intraday' field
                 if "Intraday" in intraday_results.columns:
-                    filtered_df = intraday_results[intraday_results["Intraday"].str.contains("Buy", na=False, case=False)]
+                    filtered_df = intraday_results[intraday_results["Intraday"].astype(str).str.contains("Buy", na=False, case=False)] & \
+                                    ~intraday_results["Intraday"].astype(str).str.contains("Avoid", na=False, case=False) & \
+                                    ~intraday_results["Intraday"].astype(str).str.contains("Review", na=False, case=False) & \
+                                    ~intraday_results["Intraday"].astype(str).str.contains("Hold", na=False, case=False)
                 else:
                     logging.error("Intraday column not found in intraday_results during filtering for display.")
 
@@ -2833,8 +2835,6 @@ def main():
         if st.sidebar.button("Clear All Caches", help="Clears cached data and restarts the app."):
             st.session_state.clear()
             st.cache_data.clear() # Clears Streamlit's file-based cache
-    # This is the line that was causing the AttributeError:
-    # fetch_stock_data_cached.cache_clear() # OLD LINE
             st.session_state.data = None
             st.session_state.recommendations = None
             st.session_state.backtest_results_swing = None
