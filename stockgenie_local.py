@@ -1355,7 +1355,7 @@ import pandas as pd
 import streamlit as st
 from datetime import datetime, timedelta
 
-def generate_recommendations_v2(
+def generate_recommendations(
     data,
     symbol=None,
     sector_trend=None,
