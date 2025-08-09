@@ -136,12 +136,13 @@ def test_dhan_connection():
         logging.error("Could not find security ID for RELIANCE.NS, cannot test Dhan connection.")
         return False
 
+    # For testing, requesting for the day before yesterday to ensure data availability
     payload = {
         "securityId": str(test_security_id),
         "exchangeSegment": "NSE_EQ",
         "instrument": "EQUITY",
-        "fromDate": (pd.Timestamp.now() - pd.Timedelta(days=1)).strftime("%Y-%m-%d"),
-        "toDate": pd.Timestamp.now().strftime("%Y-%m-%d"),
+        "fromDate": (pd.Timestamp.now() - pd.Timedelta(days=2)).strftime("%Y-%m-%d"), # 2 days ago
+        "toDate": (pd.Timestamp.now() - pd.Timedelta(days=1)).strftime("%Y-%m-%d"), # yesterday
         "interval": "1m"
     }
 
@@ -477,7 +478,7 @@ def parse_period_to_days(period):
 
 @lru_cache(maxsize=1000)
 @RateLimiter(calls=4, period=1)
-def fetch_stock_data_cached(symbol, period="1y", interval="1d"): # Changed default period to "1y"
+def fetch_stock_data_cached(symbol, period="1y", interval="1d"): # Default period to "1y"
     """
     Fetches stock data from Dhan API, with rate limiting and caching.
     This function wraps the actual API call, allowing its results to be cached in memory.
@@ -499,14 +500,29 @@ def fetch_stock_data_cached(symbol, period="1y", interval="1d"): # Changed defau
 
     url = "https://api.dhan.co/v2/charts/historical"
     headers = dhan_headers()
-    days = parse_period_to_days(period)
+    num_days_in_period = parse_period_to_days(period)
+
+    # --- REVISED DATE LOGIC FOR ROBUSTNESS ---
+    # Attempt to fetch up to 3 days ago to be safer, then set fromDate relative to that.
+    # This avoids issues if 'yesterday' was a weekend/holiday.
+    end_date_obj = pd.Timestamp.now() - pd.Timedelta(days=3) # Start from 3 days ago to be safe
+    # If 3 days ago is still a non-trading day, go back further until a weekday is found
+    # NOTE: This only accounts for weekends, not public holidays.
+    # For full robustness, you'd need a list of NSE holidays.
+    while end_date_obj.weekday() > 4: # 5 is Saturday, 6 is Sunday
+        end_date_obj -= pd.Timedelta(days=1)
+
+    to_date_str = end_date_obj.strftime("%Y-%m-%d")
+    from_date_str = (end_date_obj - pd.to_timedelta(num_days_in_period, unit='D')).strftime("%Y-%m-%d")
+    # --- END REVISED DATE LOGIC ---
+
     payload = {
         "securityId": str(security_id),
         "exchangeSegment": "NSE_EQ",
         "instrument": "EQUITY",
         "interval": interval,
-        "fromDate": (pd.Timestamp.now() - pd.to_timedelta(days, unit='D')).strftime("%Y-%m-%d"),
-        "toDate": (pd.Timestamp.now() - pd.Timedelta(days=1)).strftime("%Y-%m-%d") # Changed to previous day
+        "fromDate": from_date_str,
+        "toDate": to_date_str
     }
 
     try:
@@ -996,7 +1012,7 @@ def classify_market_regime(data):
         return 'Incomplete Indicator Data'
 
     if atr_pct > 0.04: # Threshold for highly volatile
-        return "Highly Volatile"
+        return "High Volatility"
 
     if adx > 25: # Strong trend
         if close > sma_50 and sma_50 > sma_200 and close > sma_200: # All bullish alignment
@@ -1527,8 +1543,8 @@ def generate_recommendations(data, symbol=None):
                 recommendations["Recommendation"] = "Consider Sell (Sideways Mean Reversion)"
                 recommendations["Reason"] += " | Potential mean reversion opportunity in sideways market."
 
-        elif "Highly Volatile" == market_regime:
-            recommendations["Recommendation"] = "Avoid (Highly Volatile Market)" # Renamed from High Volatility to be distinct from the filter
+        elif "High Volatility" == market_regime: # Corrected from "Highly Volatile" to match classify_market_regime
+            recommendations["Recommendation"] = "Avoid (High Volatility Market)"
             recommendations["Reason"] += " | Market is highly volatile, caution advised."
 
 
@@ -1680,7 +1696,7 @@ def backtest_stock(data, symbol, strategy="Swing", _data_hash=None):
                 elif current_trailing_stop is None: # If not yet in profit, set initial trailing stop at entry_price - ATR_multiplier*ATR
                     current_trailing_stop = entry_price - (current_day_data['ATR'] * 2.5) # A wider initial stop for trailing stop.
 
-            # Retrieve dynamic stop loss and target from current day's analysis (slice_data_for_signal)
+            # Retrieve dynamic stop loss and target from current day's analysis (sliced_data_for_signal)
             stop_loss_price = calculate_stop_loss(sliced_data_for_signal)
             target_price = calculate_target(sliced_data_for_signal)
 
@@ -2147,8 +2163,12 @@ def insert_top_picks_supabase(results_df, pick_type="daily"):
 @RateLimiter(calls=1, period=1) # Rate limit this call to prevent burst for latest prices
 def fetch_latest_price(symbol):
     # Fetch 2 days of 1-day interval data to ensure we get today's close if available
-    # toDate needs to be yesterday for historical API
-    data = fetch_stock_data_cached(symbol, period="2d", interval="1d") # Use cached fetcher
+    # toDate needs to be a past completed day for historical API
+    # Adjusted period to fetch potentially valid data for today's price if available for any intraday endpoint.
+    # However, for 'historical' API, we must use a past day for 'toDate'.
+    # For fetching "latest price", using '1m' interval for intraday data might be more appropriate if available.
+    # But sticking to '1d' and previous day for consistency with fetch_stock_data_cached for now.
+    data = fetch_stock_data_cached(symbol, period="3d", interval="1d") # Fetch slightly more data
     if not data.empty and 'Close' in data.columns and pd.notnull(data['Close'].iloc[-1]):
         return float(data['Close'].iloc[-1])
     return None
