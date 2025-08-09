@@ -23,8 +23,6 @@ from ta.volatility import AverageTrueRange, BollingerBands
 from ta.volume import OnBalanceVolumeIndicator, ChaikinMoneyFlowIndicator
 from ratelimit import RateLimitDecorator as RateLimiter
 from threading import Lock
-import time
-import json
 
 data_api_calls = 0
 data_api_lock = Lock()
@@ -1348,478 +1346,134 @@ def adaptive_recommendation(data, symbol=None, equity=100000, risk_per_trade_pct
         recommendations["Reason"] = f"An unexpected error occurred: {str(e)}"
         return recommendations
 
-import math
-import logging
-import numpy as np
-import pandas as pd
-import streamlit as st
-from datetime import datetime, timedelta
-
-def generate_recommendations(
-    data,
-    symbol=None,
-    sector_trend=None,
-    market_trend=None,
-    market_cap_category=None,   # "large", "mid", "small" or None (optional)
-    historical_scores=None,     # list or pd.Series of past composite scores (for percentile thresholds)
-    config: dict = None
-):
+def generate_recommendations(data, symbol=None):
     """
-    Robust, weighted recommendation engine.
-    - data: pd.DataFrame with indicators computed (last row is latest)
-    - symbol: optional string for cooldown tracking & logging
-    - sector_trend / market_trend: optional strings ("Bullish","Bearish","Neutral")
-    - market_cap_category: optional to scale ATR/volume thresholds ("large","mid","small")
-    - historical_scores: optional iterable of prior final composite scores (used for 90th percentile ultra-strong detection)
-    - config: optional dict to override defaults (weights, thresholds, cooldowns, etc.)
-    Returns: dict with Recommendation, Scores, Reasons, metadata
+    Generates trading recommendations based on technical indicators (Standard Mode).
+    This function remains largely the same, but the core logic for the Adaptive mode is now separate.
     """
-
-    # ------------------------
-    # Default configuration
-    # ------------------------
-    defaults = {
-        # indicator weights (positive -> buy propensity, negative -> sell propensity not used here; we compute separate buy/sell contributions)
-        "weights": {
-            "RSI": 2.0,            # when oversold -> buy, when overbought -> sell
-            "MACD": 3.0,           # MACD crossover
-            "EMA_cross": 2.0,      # EMA short > EMA long -> buy
-            "SMA_alignment": 1.5,  # 50/200 alignment
-            "ADX": 1.5,            # strength amplifier
-            "Volume_spike": 1.0,
-            "CMF": 0.8,
-            "ATR_pct": 1.0
-        },
-        # thresholds for making "strong" signals (per-indicator thresholds used internally)
-        "rsi_oversold": 30,
-        "rsi_overbought": 70,
-        "adx_strong": 25,
-        "volume_spike_multiplier": 1.5,
-        # ATR thresholds by market cap (in percent)
-        "atr_pct_thresholds": {
-            "large": {"min": 1.0, "max": 4.0},
-            "mid":   {"min": 1.5, "max": 6.0},
-            "small": {"min": 2.5, "max": 10.0},
-            "default": {"min": 1.5, "max": 8.0}
-        },
-        # Volume thresholds (minimum avg volume)
-        "min_avg_volume": {
-            "large": 200_000,   # example: 200k shares/day
-            "mid":  100_000,
-            "small": 20_000,
-            "default": 50_000
-        },
-        # confirmation and cooldown
-        "confirm_periods": 2,           # require signal present in last N periods
-        "cooldown_periods": 3,          # block same-direction trades for N periods after exit
-        # conflict resolution params
-        "strong_percentile_override": 0.90,  # 90th percentile of historical scores overrides filters
-        "conflict_tolerance_ratio": 1.5,     # if buy_sum >= sell_sum * ratio -> buy wins
-        "min_score_to_act": 3.5,        # minimum net score (buy_sum - sell_sum) to consider actionable (tunable)
-        # scoring scale
-        "score_scale": 10.0
+    recommendations = {
+        "Intraday": "Hold",
+        "Swing": "Hold",
+        "Short-Term": "Hold",
+        "Long-Term": "Hold",
+        "Mean_Reversion": "Hold",
+        "Breakout": "Hold",
+        "Ichimoku_Trend": "Hold",
+        "Current Price": None,
+        "Buy At": None,
+        "Stop Loss": None,
+        "Target": None,
+        "Score": 0
     }
 
-    if config is None:
-        config = {}
-    # shallow merge
-    for k, v in defaults.items():
-        if k not in config:
-            config[k] = v
+    # Ensure sufficient data for Ichimoku
+    if not validate_data(data, min_length=INDICATOR_MIN_LENGTHS['Ichimoku']):
+        logging.warning(f"Invalid data for standard recommendations: {symbol}")
+        return recommendations
 
-    weights = config["weights"]
-
-    # ------------------------
-    # Defensive checks
-    # ------------------------
-    result = {
-        "Symbol": symbol,
-        "Recommendation": "Hold",
-        "Buy_Score": 0.0,
-        "Sell_Score": 0.0,
-        "Net_Score": 0.0,
-        "Score": 0.0,  # scaled final score -10..10 (we'll map later)
-        "Reasons": [],
-        "Indicators_Used": [],
-        "Conflict": False,
-        "Cooldown_Applied": False,
-        "Filters": [],
-        "Pnl_Attribution": {}, # placeholder to be updated by trade logging system
-        "Meta": {}
-    }
-
-    if not isinstance(data, pd.DataFrame) or data.empty:
-        result["Reasons"].append("No data provided")
-        return result
-
-    # Ensure latest row exists
-    latest = data.iloc[-1]
-
-    # ------------------------
-    # Helper getters (safe)
-    # ------------------------
-    def get_val(series_name, default=np.nan):
-        if series_name in data.columns:
-            v = latest.get(series_name, default)
-            try:
-                return float(v) if not pd.isna(v) else np.nan
-            except Exception:
-                return np.nan
-        return np.nan
-
-    def safe_tail_mean(col, window=20):
-        if col in data.columns:
-            return pd.to_numeric(data[col].tail(window), errors="coerce").mean()
-        return np.nan
-
-    # ------------------------
-    # Market cap category & thresholds
-    # ------------------------
-    cap_cat = market_cap_category if market_cap_category in config["atr_pct_thresholds"] else "default"
-    atr_thresholds = config["atr_pct_thresholds"].get(cap_cat, config["atr_pct_thresholds"]["default"])
-    min_atr_pct = atr_thresholds["min"]
-    max_atr_pct = atr_thresholds["max"]
-
-    min_avg_vol = config["min_avg_volume"].get(cap_cat, config["min_avg_volume"]["default"])
-
-    # ------------------------
-    # Volatility & Liquidity Gates
-    # ------------------------
-    atr_pct = get_val("ATR_pct") * 100 if not pd.isna(get_val("ATR_pct")) else np.nan # If ATR_pct stored as decimal in your pipeline, adjust accordingly
-    avg_vol_20 = safe_tail_mean("Avg_Volume", 20)
-    # If your pipeline uses 'Avg_Volume' as 20-day mean, safe_tail_mean returns mean of last 20 values of Avg_Volume — that's ok.
-
-    if not np.isnan(avg_vol_20) and avg_vol_20 < min_avg_vol:
-        result["Filters"].append("Low Liquidity")
-        result["Reasons"].append(f"Avg volume {avg_vol_20:.0f} below min {min_avg_vol}")
-        result["Recommendation"] = "No Trade"
-        return result
-
-    if not np.isnan(atr_pct) and (atr_pct < min_atr_pct or atr_pct > max_atr_pct):
-        result["Filters"].append("Unfavorable Volatility")
-        result["Reasons"].append(f"ATR% {atr_pct:.2f} outside [{min_atr_pct},{max_atr_pct}]")
-        result["Recommendation"] = "No Trade"
-        return result
-
-    # ------------------------
-    # Build per-indicator signals (normalized contributions)
-    # Each indicator contributes a positive (buy) and/or negative (sell) magnitude.
-    # We'll sum all buys and sells separately.
-    # ------------------------
-    buy_sum = 0.0
-    sell_sum = 0.0
-    reasons_buy = []
-    reasons_sell = []
-    indicators_used = []
-
-    # --- RSI ---
-    rsi = get_val("RSI")
-    if not np.isnan(rsi):
-        indicators_used.append("RSI")
-        if rsi <= config["rsi_oversold"]:
-            buy_sum += weights.get("RSI", 1.0)
-            reasons_buy.append(f"RSI {rsi:.1f} <= {config['rsi_oversold']} (oversold)")
-        elif rsi >= config["rsi_overbought"]:
-            sell_sum += weights.get("RSI", 1.0)
-            reasons_sell.append(f"RSI {rsi:.1f} >= {config['rsi_overbought']} (overbought)")
-
-    # --- MACD (use MACD and MACD_signal or MACD_hist if present) ---
-    macd = get_val("MACD")
-    macd_signal = get_val("MACD_signal")
-    macd_hist = get_val("MACD_hist")
-    if not np.isnan(macd) and not np.isnan(macd_signal):
-        indicators_used.append("MACD")
-        # Bullish crossover: MACD > signal, preferably MACD_hist positive
-        if macd > macd_signal:
-            strength = 1.0
-            # boost if histogram positive
-            if not np.isnan(macd_hist) and macd_hist > 0:
-                strength += 0.5
-            buy_sum += weights.get("MACD", 1.0) * strength
-            reasons_buy.append(f"MACD > signal (hist={macd_hist:.4f})")
-        elif macd < macd_signal:
-            strength = 1.0
-            if not np.isnan(macd_hist) and macd_hist < 0:
-                strength += 0.5
-            sell_sum += weights.get("MACD", 1.0) * strength
-            reasons_sell.append(f"MACD < signal (hist={macd_hist:.4f})")
-
-    # --- EMA Cross (EMA_20 vs EMA_50) or EMA_short / EMA_long
-    ema_short = get_val("EMA_20") if "EMA_20" in data.columns else get_val("EMA_short")
-    ema_long  = get_val("EMA_50") if "EMA_50" in data.columns else get_val("EMA_long")
-    if not np.isnan(ema_short) and not np.isnan(ema_long):
-        indicators_used.append("EMA_cross")
-        if ema_short > ema_long:
-            buy_sum += weights.get("EMA_cross", 1.0)
-            reasons_buy.append("EMA short > EMA long")
-        elif ema_short < ema_long:
-            sell_sum += weights.get("EMA_cross", 1.0)
-            reasons_sell.append("EMA short < EMA long")
-
-    # --- SMA alignment (SMA_50 / SMA_200) if present ---
-    sma50 = get_val("SMA_50")
-    sma200 = get_val("SMA_200")
-    if not np.isnan(sma50) and not np.isnan(sma200):
-        indicators_used.append("SMA_alignment")
-        if sma50 > sma200:
-            buy_sum += weights.get("SMA_alignment", 1.0)
-            reasons_buy.append("SMA50 > SMA200 (bullish)")
-        elif sma50 < sma200:
-            sell_sum += weights.get("SMA_alignment", 1.0)
-            reasons_sell.append("SMA50 < SMA200 (bearish)")
-
-    # --- ADX: indicates trend strength, apply as amplifier ---
-    adx = get_val("ADX")
-    if not np.isnan(adx):
-        indicators_used.append("ADX")
-        if adx >= config["adx_strong"]:
-            # ADX strengthens whichever direction has majority: add a smaller universal boost to both sums
-            buy_sum += weights.get("ADX", 0.0) * 0.5
-            sell_sum += weights.get("ADX", 0.0) * 0.5
-            reasons_buy.append("ADX strong (trend strength)")
-            reasons_sell.append("ADX strong (trend strength)")
-
-    # --- Volume spike ---
-    volume = get_val("Volume")
-    avg_vol = get_val("Avg_Volume") if "Avg_Volume" in data.columns else safe_tail_mean("Volume", 20)
-    if not np.isnan(volume) and not np.isnan(avg_vol) and avg_vol > 0:
-        indicators_used.append("Volume_spike")
-        if volume >= config["volume_spike_multiplier"] * avg_vol:
-            # If price moved up today vs prior close, bias toward buy; otherwise to sell
-            prior_close = data['Close'].shift(1).iloc[-1] if 'Close' in data.columns and len(data) > 1 else np.nan
-            direction = None
-            if not np.isnan(prior_close) and not np.isnan(latest.get("Close")):
-                direction = "buy" if latest["Close"] > prior_close else "sell"
-            if direction == "buy":
-                buy_sum += weights.get("Volume_spike", 1.0)
-                reasons_buy.append("Volume spike with upward price")
-            elif direction == "sell":
-                sell_sum += weights.get("Volume_spike", 1.0)
-                reasons_sell.append("Volume spike with downward price")
-            else:
-                # Unknown direction treat as neutral small boost to both (liquidity interest)
-                buy_sum += weights.get("Volume_spike", 0.5)
-                sell_sum += weights.get("Volume_spike", 0.5)
-                reasons_buy.append("Volume spike (direction unknown)")
-                reasons_sell.append("Volume spike (direction unknown)")
-
-    # --- CMF (Chaikin) ---
-    cmf = get_val("CMF")
-    if not np.isnan(cmf):
-        indicators_used.append("CMF")
-        if cmf > 0.10:
-            buy_sum += weights.get("CMF", 0.8)
-            reasons_buy.append(f"CMF {cmf:.2f} positive")
-        elif cmf < -0.10:
-            sell_sum += weights.get("CMF", 0.8)
-            reasons_sell.append(f"CMF {cmf:.2f} negative")
-
-    # --- ATR_pct contribution (higher ATR -> more movement potential) ---
-    if not np.isnan(atr_pct):
-        indicators_used.append("ATR_pct")
-        # treat ATR_pct within range as small positive; extreme close to min/max handled earlier by filters
-        atr_score = ((atr_pct - min_atr_pct) / max(1e-6, (max_atr_pct - min_atr_pct)))
-        atr_score = max(min(atr_score, 1.0), 0.0)
-        # If ATR points to greater opportunity, slightly boost whichever side currently dominates
-        if buy_sum > sell_sum:
-            buy_sum += weights.get("ATR_pct", 1.0) * atr_score * 0.5
-            reasons_buy.append(f"ATR_pct supportive ({atr_pct:.2f}%)")
-        elif sell_sum > buy_sum:
-            sell_sum += weights.get("ATR_pct", 1.0) * atr_score * 0.5
-            reasons_sell.append(f"ATR_pct supportive ({atr_pct:.2f}%)")
-
-    # ------------------------
-    # Confirmation (persistence) check
-    # Require signals present via same indicator logic for last N periods (config["confirm_periods"])
-    # We implement a simple majority: count how many of last N periods gave a net buy vs net sell
-    # ------------------------
-    confirm_periods = int(config.get("confirm_periods", 2))
-    def compute_period_net(idx):
-        # compute per-row simple net: +1 if most indicators bullish, -1 if most bearish, 0 if neutral
-        row = data.iloc[idx]
-        row_buy = 0
-        row_sell = 0
-        # quick checks mirroring above but lighter
-        try:
-            r = float(row.get("RSI", np.nan))
-            if not math.isnan(r):
-                if r <= config["rsi_oversold"]: row_buy += 1
-                elif r >= config["rsi_overbought"]: row_sell += 1
-        except Exception:
-            pass
-        try:
-            m = float(row.get("MACD", np.nan)); s = float(row.get("MACD_signal", np.nan))
-            if not math.isnan(m) and not math.isnan(s):
-                if m > s: row_buy += 1
-                elif m < s: row_sell += 1
-        except Exception:
-            pass
-        try:
-            es = float(row.get("EMA_20", np.nan)); el = float(row.get("EMA_50", np.nan))
-            if not math.isnan(es) and not math.isnan(el):
-                if es > el: row_buy += 1
-                elif es < el: row_sell += 1
-        except Exception:
-            pass
-        return 1 if row_buy > row_sell else (-1 if row_sell > row_buy else 0)
-
-    recent_net_signals = []
-    if len(data) >= confirm_periods:
-        for idx in range(len(data) - confirm_periods, len(data)):
-            recent_net_signals.append(compute_period_net(idx))
-    # count positive confirmations
-    confirmations = recent_net_signals.count(1)
-    neg_confirmations = recent_net_signals.count(-1)
-    # require majority of confirm_periods to align with intended direction
-    # If current net favors buy but confirmations are low, reduce buy_sum slightly (penalty)
-    if buy_sum > sell_sum and confirmations < math.ceil(confirm_periods / 2):
-        buy_sum *= 0.7  # penalize lack of persistence
-        result["Reasons"].append("Buy signal lacks recent confirmation")
-    if sell_sum > buy_sum and neg_confirmations < math.ceil(confirm_periods / 2):
-        sell_sum *= 0.7
-        result["Reasons"].append("Sell signal lacks recent confirmation")
-
-    # ------------------------
-    # Cooldown check (per-symbol stored in st.session_state)
-    # cooldowns are counted in 'periods' (same unit as data frequency)
-    # ------------------------
-    cooldowns = st.session_state.get("strategy_cooldowns", {})  # dict: symbol -> {"last_exit_ts": pd.Timestamp, "direction": "buy/sell", "remaining": int}
-    cooldown_applied = False
-    if symbol:
-        cd = cooldowns.get(symbol, None)
-        if cd and cd.get("remaining", 0) > 0:
-            # If last exit was buy and we are about to buy, block
-            if cd.get("direction") == "buy" and buy_sum > sell_sum:
-                result["Cooldown_Applied"] = True
-                result["Cooldown_Detail"] = cd
-                result["Recommendation"] = "Hold"
-                result["Reasons"].append(f"Buy blocked by cooldown ({cd.get('remaining')} periods left)")
-                return result
-            if cd.get("direction") == "sell" and sell_sum > buy_sum:
-                result["Cooldown_Applied"] = True
-                result["Cooldown_Detail"] = cd
-                result["Recommendation"] = "Hold"
-                result["Reasons"].append(f"Sell blocked by cooldown ({cd.get('remaining')} periods left)")
-                return result
-
-    # ------------------------
-    # Conflict detection & resolution
-    # ------------------------
-    # If both sides have significant sums, compare by ratio and by difference
-    result["Buy_Score"] = float(buy_sum)
-    result["Sell_Score"] = float(sell_sum)
-
-    # Ultra-strong detection using historical_scores  (90th percentile)
-    is_ultra_strong = False
     try:
-        if historical_scores is not None and len(historical_scores) > 10:
-            hist = pd.Series(historical_scores)
-            threshold = float(hist.quantile(config["strong_percentile_override"]))
-            composite_now = buy_sum - sell_sum
-            if composite_now >= threshold:
-                is_ultra_strong = True
-                result["Meta"]["Ultra_Strong_Threshold"] = threshold
-                result["Meta"]["Composite_Now"] = composite_now
+        recommendations["Current Price"] = round(float(data['Close'].iloc[-1]), 2)
+
+        score, reason_text = compute_signal_score(data, symbol)
+        recommendations["Score"] = round(score, 2)
+
+        buy_score = 0
+        sell_score = 0
+
+        if 'RSI' in data.columns and pd.notnull(data['RSI'].iloc[-1]):
+            rsi = data['RSI'].iloc[-1]
+            if rsi <= 20: # Extremely oversold
+                buy_score += 4
+                recommendations["Mean_Reversion"] = "Strong Buy"
+            elif rsi < 30: # Oversold
+                buy_score += 2
+                recommendations["Mean_Reversion"] = "Buy"
+            elif rsi > 70: # Overbought
+                sell_score += 2
+                recommendations["Mean_Reversion"] = "Sell"
+            elif rsi > 80: # Extremely overbought
+                sell_score += 4
+                recommendations["Mean_Reversion"] = "Strong Sell"
+
+        if 'MACD' in data.columns and 'MACD_signal' in data.columns and pd.notnull(data['MACD'].iloc[-1]) and pd.notnull(data['MACD_signal'].iloc[-1]):
+            macd_diff = data['MACD'].iloc[-1] - data['MACD_signal'].iloc[-1]
+            if macd_diff > 0 and data['MACD'].iloc[-1] > 0: # Bullish crossover above zero line
+                buy_score += 3
+                recommendations["Swing"] = "Strong Buy"
+            elif macd_diff > 0: # Bullish crossover
+                buy_score += 2
+                recommendations["Swing"] = "Buy"
+            elif macd_diff < 0 and data['MACD'].iloc[-1] < 0: # Bearish crossover below zero line
+                sell_score += 3
+                recommendations["Swing"] = "Strong Sell"
+            elif macd_diff < 0: # Bearish crossover
+                sell_score += 2
+                recommendations["Swing"] = "Sell"
+
+        if all(col in data.columns and pd.notnull(data[col].iloc[-1]) for col in ['Ichimoku_Span_A', 'Ichimoku_Span_B', 'Close']):
+            close = data['Close'].iloc[-1]
+            span_a = data['Ichimoku_Span_A'].iloc[-1]
+            span_b = data['Ichimoku_Span_B'].iloc[-1]
+
+            if close > span_a and close > span_b: # Price above cloud
+                buy_score += 3
+                recommendations["Ichimoku_Trend"] = "Buy"
+            elif close < span_a and close < span_b: # Price below cloud
+                sell_score += 3
+                recommendations["Ichimoku_Trend"] = "Sell"
+
+        if 'Upper_Band' in data.columns and 'Lower_Band' in data.columns and pd.notnull(data['Upper_Band'].iloc[-1]):
+            close = data['Close'].iloc[-1]
+            if close > data['Upper_Band'].iloc[-1]: # Price breaking above upper band
+                buy_score += 2
+                recommendations["Breakout"] = "Buy"
+            elif close < data['Lower_Band'].iloc[-1]: # Price breaking below lower band
+                sell_score += 2
+                recommendations["Breakout"] = "Sell"
+
+        if 'CMF' in data.columns and pd.notnull(data['CMF'].iloc[-1]):
+            cmf = data['CMF'].iloc[-1]
+            if cmf > 0.2: # Strong buying pressure
+                buy_score += 1
+            elif cmf < -0.2: # Strong selling pressure
+                sell_score += 1
+
+        net_score = buy_score - sell_score
+
+        # Consolidate recommendations based on net score
+        if net_score >= 5:
+            recommendations["Intraday"] = "Strong Buy"
+            recommendations["Swing"] = "Strong Buy"
+            recommendations["Short-Term"] = "Strong Buy"
+            recommendations["Long-Term"] = "Strong Buy"
+        elif net_score >= 2:
+            recommendations["Intraday"] = "Buy"
+            recommendations["Swing"] = "Buy"
+            recommendations["Short-Term"] = "Buy"
+            recommendations["Long-Term"] = "Buy"
+        elif net_score <= -5:
+            recommendations["Intraday"] = "Strong Sell"
+            recommendations["Swing"] = "Strong Sell"
+            recommendations["Short-Term"] = "Strong Sell"
+            recommendations["Long-Term"] = "Strong Sell"
+        elif net_score <= -2:
+            recommendations["Intraday"] = "Sell"
+            recommendations["Swing"] = "Sell"
+            recommendations["Short-Term"] = "Sell"
+            recommendations["Long-Term"] = "Sell"
+        # Else, "Hold" remains as initialized
+
+        recommendations["Buy At"] = calculate_buy_at(data)
+        recommendations["Stop Loss"] = calculate_stop_loss(data)
+        recommendations["Target"] = calculate_target(data)
+        recommendations["Score"] = round(score, 2)
+
+        # logging.info(f"Standard recommendations for {symbol}: {recommendations}") # Too verbose
+        return recommendations
+
     except Exception as e:
-        logging.debug(f"Historical strong check failed: {e}")
-
-    # Conflict logic: if both buy_sum and sell_sum > small threshold, consider conflict
-    if buy_sum > 0 and sell_sum > 0:
-        # if one side dominates by the ratio, let it win
-        if buy_sum >= sell_sum * config["conflict_tolerance_ratio"]:
-            # buy wins
-            net = buy_sum - sell_sum
-            result["Conflict"] = False
-        elif sell_sum >= buy_sum * config["conflict_tolerance_ratio"]:
-            net = sell_sum - buy_sum
-            # But treat as sell dominance (we'll set sign negative for net)
-            net = -(sell_sum - buy_sum)
-            result["Conflict"] = False
-        else:
-            # Conflict - if ultra_strong => let it override filters; else Hold
-            result["Conflict"] = True
-            result["Reasons"].append("Conflicting signals (no clear dominance)")
-            # if ultra strong and composite is positive or negative allow action ignoring conflict (but still mark it)
-            if is_ultra_strong:
-                result["Reasons"].append("Ultra-strong score overrides conflict")
-                net = buy_sum - sell_sum
-            else:
-                result["Recommendation"] = "Hold"
-                result["Net_Score"] = float(buy_sum - sell_sum)
-                result["Score"] = float((result["Net_Score"] / config["score_scale"]) * 10)
-                result["Indicators_Used"] = indicators_used
-                result["Buy_Reasons"] = reasons_buy
-                result["Sell_Reasons"] = reasons_sell
-                return result
-    else:
-        net = buy_sum - sell_sum
-
-    result["Net_Score"] = float(net)
-
-    # ------------------------
-    # Market / sector filters (hierarchy)
-    # - If sector trend strongly against our net signal and not ultra_strong -> hold
-    # - For deep market downtrend we can block buys unless ultra_strong
-    # ------------------------
-    # Deep downtrend definition examples
-    deep_downtrend = False
-    # prefer rolling checks externally; we accept "market_trend" tags or detect heuristically
-    if market_trend == "DeepDown" or market_trend == "BearishDeep":
-        deep_downtrend = True
-
-    if deep_downtrend and net > 0 and not is_ultra_strong:
-        result["Filters"].append("Deep market downtrend blocks new buys")
-        result["Reasons"].append("Market deep downtrend")
-        result["Recommendation"] = "Hold"
-        return result
-
-    if sector_trend and sector_trend.lower() in ("bearish", "down") and net > 0 and not is_ultra_strong:
-        # allow if our net is huge (beyond configured min_score_to_act)
-        if net < config["min_score_to_act"]:
-            result["Filters"].append("Sector trend against buy")
-            result["Reasons"].append(f"Sector ({sector_trend}) conflicts with buy signal")
-            result["Recommendation"] = "Hold"
-            return result
-
-    if sector_trend and sector_trend.lower() in ("bullish", "up") and net < 0 and not is_ultra_strong:
-        if abs(net) < config["min_score_to_act"]:
-            result["Filters"].append("Sector trend against sell")
-            result["Reasons"].append(f"Sector ({sector_trend}) conflicts with sell signal")
-            result["Recommendation"] = "Hold"
-            return result
-
-    # ------------------------
-    # Final decision based on net and thresholds
-    # ------------------------
-    # Scale final score to human-friendly -10..10 (optional)
-    scaled = max(min(net, config["score_scale"]), -config["score_scale"])
-    final_score = (scaled / config["score_scale"]) * 10.0
-    result["Score"] = float(final_score)
-
-    # Determine recommendation text
-    if net >= config["min_score_to_act"]:
-        result["Recommendation"] = "Buy"
-    elif net <= -config["min_score_to_act"]:
-        result["Recommendation"] = "Sell"
-    else:
-        result["Recommendation"] = "Hold"
-
-    # Add reasons and indicators used
-    result["Indicators_Used"] = indicators_used
-    result["Buy_Reasons"] = reasons_buy
-    result["Sell_Reasons"] = reasons_sell
-
-    # ------------------------
-    # Meta for debugging
-    # ------------------------
-    result["Meta"].update({
-        "ATR_pct": atr_pct,
-        "Avg_Vol_20": avg_vol_20,
-        "is_ultra_strong": is_ultra_strong,
-        "timestamp": datetime.utcnow().isoformat()
-    })
-
-    return result
+        logging.error(f"Error generating standard recommendations for {symbol}: {str(e)}")
+        return recommendations
 
 @st.cache_data(ttl=3600)
 def backtest_stock(data, symbol, strategy="Swing", _data_hash=None):
