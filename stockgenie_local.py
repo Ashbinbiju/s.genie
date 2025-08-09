@@ -1918,8 +1918,8 @@ def analyze_stock_parallel(symbol):
                 "Stop Loss": rec.get("Stop Loss"), "Target": rec.get("Target"),
                 "Intraday": rec.get("Intraday", "Hold"), "Swing": rec.get("Swing", "Hold"),
                 "Short-Term": rec.get("Short-Term", "Hold"), "Long-Term": rec.get("Long-Term", "Hold"),
-                "Mean_Reversion": rec.get("Mean_Reversion", "Hold"), "Breakout": rec.get("Breakout", "Hold"),
-                "Ichimoku_Trend": rec.get("Ichimoku_Trend", "Hold"), "Score": rec.get("Score", 0),
+                "Mean_Reversion": None, "Breakout": None, "Ichimoku_Trend": None, # These will now be consolidated
+                "Score": rec.get("Score", 0),
                 "Reason": rec.get("Reason", "No reason provided") # Include reason for standard mode
             })
         return result_dict
@@ -2069,9 +2069,9 @@ def insert_top_picks_supabase(results_df, pick_type="daily"):
         filtered_df_pre_sort = results_df[buy_condition & results_df['Error'].isnull()]
     else:
         buy_condition = pd.Series([False] * len(results_df), index=results_df.index)
-        for col in ["Intraday", "Swing", "Short-Term", "Long-Term"]:
-            if col in results_df.columns:
-                buy_condition = buy_condition | results_df[col].astype(str).str.contains("Buy", na=False, case=False)
+        # In standard mode, we filter by the main "Intraday" recommendation which now consolidates all signals
+        if "Intraday" in results_df.columns:
+            buy_condition = results_df["Intraday"].astype(str).str.contains("Buy", na=False, case=False)
         filtered_df_pre_sort = results_df[buy_condition & results_df['Error'].isnull()]
 
     if filtered_df_pre_sort.empty:
@@ -2782,20 +2782,21 @@ def main():
 
     # Strategy parameters (sidebar inputs, relevant for Adaptive Mode)
     with st.sidebar.expander("🧠 Strategy Parameters (Adaptive Mode)"):
-        st.session_state.adx_strong_trend_threshold = st.number_input("ADX Strong Trend Threshold", min_value=15, max_value=50, value=st.session_state.adx_strong_trend_threshold, key="adx_str_thr", help="ADX value above which trend is considered strong.")
-        st.session_state.adx_no_trend_threshold = st.number_input("ADX No Trend Threshold", min_value=5, max_value=25, value=st.session_state.adx_no_trend_threshold, key="adx_no_thr", help="ADX value below which market is considered sideways.")
-        st.session_state.rsi_overbought = st.number_input("RSI Overbought Level", min_value=60, max_value=90, value=st.session_state.rsi_overbought, key="rsi_ob", help="RSI value indicating overbought conditions.")
-        st.session_state.rsi_oversold = st.number_input("RSI Oversold Level", min_value=10, max_value=40, value=st.session_state.rsi_oversold, key="rsi_os", help="RSI value indicating oversold conditions.")
-        st.session_state.macd_zero_line_confirm = st.checkbox("MACD Zero Line Confirmation", value=st.session_state.macd_zero_line_confirm, key="macd_zl_conf", help="Require MACD crossovers to be above/below zero line for stronger signals.")
-        st.session_state.cmf_buy_threshold = st.number_input("CMF Buy Threshold", min_value=0.0, max_value=0.5, value=st.session_state.cmf_buy_threshold, step=0.01, key="cmf_buy_thr", help="CMF value indicating significant buying pressure.")
-        st.session_state.cmf_sell_threshold = st.number_input("CMF Sell Threshold", min_value=-0.5, max_value=0.0, value=st.session_state.cmf_sell_threshold, step=0.01, key="cmf_sell_thr", help="CMF value indicating significant selling pressure.")
-        st.session_state.atr_buy_pullback_factor = st.number_input("ATR Buy Pullback Factor", min_value=0.1, max_value=1.0, value=st.session_state.atr_buy_pullback_factor, step=0.1, key="atr_buy_pb_fac", help="How many ATRs below current price to target for buy pullback (e.g., 0.5 means 0.5 * ATR below current price).")
-        st.session_state.atr_exit_multiplier = st.number_input("ATR Exit Multiplier", min_value=1.0, max_value=5.0, value=st.session_state.atr_exit_multiplier, step=0.1, key="atr_exit_mult", help="Multiplier for ATR to calculate initial Stop Loss / Trailing Stop distance.")
-        st.session_state.atr_low_volatility_pct = st.number_input("ATR Low Volatility (%)", min_value=0.001, max_value=0.01, value=st.session_state.atr_low_volatility_pct, step=0.001, format="%.3f", key="atr_low_vol_pct", help="Below this ATR % of Close, market is too low volatility.")
-        st.session_state.atr_high_volatility_pct = st.number_input("ATR High Volatility (%)", min_value=0.01, max_value=0.1, value=st.session_state.atr_high_volatility_pct, step=0.005, format="%.3f", key="atr_high_vol_pct", help="Above this ATR % of Close, market is too high volatility.")
-        st.session_state.risk_reward_ratio = st.number_input("Risk-Reward Ratio", min_value=1.0, max_value=5.0, value=st.session_state.risk_reward_ratio, step=0.1, key="rr_ratio", help="Target Profit = Risk * Ratio. (e.g., 2.5 means 2.5x risk for profit).")
-        st.session_state.max_position_pct = st.number_input("Max Position Size (% of Equity)", min_value=0.05, max_value=1.0, value=st.session_state.max_position_pct, step=0.05, format="%.2f", key="max_pos_pct", help="Maximum percentage of total equity to allocate to a single trade (e.g., 0.25 for 25%).")
-        st.session_state.risk_per_trade_pct = st.number_input("Risk per Trade (% of Equity)", min_value=0.5, max_value=5.0, value=st.session_state.risk_per_trade_pct, step=0.1, key="risk_per_trade_pct", help="Percentage of total equity you're willing to lose on a single trade. Used for position sizing.")
+        # Corrected pattern: removed `st.session_state.variable =` on the left-hand side
+        st.number_input("ADX Strong Trend Threshold", min_value=15, max_value=50, value=st.session_state.adx_strong_trend_threshold, key="adx_strong_trend_threshold", help="ADX value above which trend is considered strong.")
+        st.number_input("ADX No Trend Threshold", min_value=5, max_value=25, value=st.session_state.adx_no_trend_threshold, key="adx_no_trend_threshold", help="ADX value below which market is considered sideways.")
+        st.number_input("RSI Overbought Level", min_value=60, max_value=90, value=st.session_state.rsi_overbought, key="rsi_overbought", help="RSI value indicating overbought conditions.")
+        st.number_input("RSI Oversold Level", min_value=10, max_value=40, value=st.session_state.rsi_oversold, key="rsi_oversold", help="RSI value indicating oversold conditions.")
+        st.checkbox("MACD Zero Line Confirmation", value=st.session_state.macd_zero_line_confirm, key="macd_zero_line_confirm", help="Require MACD crossovers to be above/below zero line for stronger signals.")
+        st.number_input("CMF Buy Threshold", min_value=0.0, max_value=0.5, value=st.session_state.cmf_buy_threshold, step=0.01, key="cmf_buy_threshold", help="CMF value indicating significant buying pressure.")
+        st.number_input("CMF Sell Threshold", min_value=-0.5, max_value=0.0, value=st.session_state.cmf_sell_threshold, step=0.01, key="cmf_sell_threshold", help="CMF value indicating significant selling pressure.")
+        st.number_input("ATR Buy Pullback Factor", min_value=0.1, max_value=1.0, value=st.session_state.atr_buy_pullback_factor, step=0.1, key="atr_buy_pullback_factor", help="How many ATRs below current price to target for buy pullback (e.g., 0.5 means 0.5 * ATR below current price).")
+        st.number_input("ATR Exit Multiplier", min_value=1.0, max_value=5.0, value=st.session_state.atr_exit_multiplier, step=0.1, key="atr_exit_multiplier", help="Multiplier for ATR to calculate initial Stop Loss / Trailing Stop distance.")
+        st.number_input("ATR Low Volatility (%)", min_value=0.001, max_value=0.01, value=st.session_state.atr_low_volatility_pct, step=0.001, format="%.3f", key="atr_low_volatility_pct", help="Below this ATR % of Close, market is too low volatility.")
+        st.number_input("ATR High Volatility (%)", min_value=0.01, max_value=0.1, value=st.session_state.atr_high_volatility_pct, step=0.005, format="%.3f", key="atr_high_volatility_pct", help="Above this ATR % of Close, market is too high volatility.")
+        st.number_input("Risk-Reward Ratio", min_value=1.0, max_value=5.0, value=st.session_state.risk_reward_ratio, step=0.1, key="risk_reward_ratio", help="Target Profit = Risk * Ratio. (e.g., 2.5 means 2.5x risk for profit).")
+        st.number_input("Max Position Size (% of Equity)", min_value=0.05, max_value=1.0, value=st.session_state.max_position_pct, step=0.05, format="%.2f", key="max_position_pct", help="Maximum percentage of total equity to allocate to a single trade (e.g., 0.25 for 25%).")
+        st.number_input("Risk per Trade (% of Equity)", min_value=0.5, max_value=5.0, value=st.session_state.risk_per_trade_pct, step=0.1, key="risk_per_trade_pct", help="Percentage of total equity you're willing to lose on a single trade. Used for position sizing.")
 
 
     symbol = st.sidebar.selectbox(
