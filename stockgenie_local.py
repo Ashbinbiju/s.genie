@@ -6,7 +6,6 @@ from functools import lru_cache
 import streamlit as st
 from datetime import datetime, timedelta, date
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from functools import lru_cache
 import plotly.express as px
 import time
 import requests
@@ -214,9 +213,6 @@ def add_action_and_change(df):
     df['What to do now?'] = df.apply(action, axis=1)
     return df
 
-
-warnings.filterwarnings("ignore", message=".*missing ScriptRunContext.*")
-logging.getLogger("streamlit.runtime.scriptrunner").setLevel(logging.ERROR)
 
 warnings.filterwarnings("ignore", category=FutureWarning)
 warnings.filterwarnings("ignore", category=UserWarning)
@@ -1678,7 +1674,7 @@ def backtest_stock(data, symbol, strategy="Swing", _data_hash=None):
             total_growth_factor *= (1 + r)
         results["total_return"] = (total_growth_factor - 1) * 100
 
-        results["win_rate"] = len([t for t in trades if t["profit"] > 0]) / len(trades) * 100
+        results["win_rate"] = len([t for t in trades if t["profit"] > 0]) / len(trades) * 100 if trades else 0
 
         if returns:
             returns_series = pd.Series(returns)
@@ -1706,8 +1702,6 @@ def backtest_stock(data, symbol, strategy="Swing", _data_hash=None):
             results["max_drawdown"] = 0
 
     return results
-
-# --- MODIFIED FUNCTIONS START HERE ---
 
 def analyze_batch(stock_batch):
     results = []
@@ -1751,9 +1745,16 @@ def analyze_stock_parallel(symbol):
 
         # Ensure data is sufficient before proceeding
         # Minimal data for analysis is Ichimoku's 52, plus one day for current price
-        if data.empty or len(data) < INDICATOR_MIN_LENGTHS['Ichimoku'] + 1:
-            error_msg = f"Insufficient data ({len(data)} rows) for comprehensive analysis (need at least {INDICATOR_MIN_LENGTHS['Ichimoku'] + 1})."
-            logging.warning(f"No sufficient data for {symbol} after fetch: {len(data)} rows")
+        if data.empty:
+            error_msg = f"No data fetched (possibly invalid security ID or API error)."
+            logging.warning(f"Fetch failed for {symbol}: {error_msg}")
+            result_dict["Error"] = error_msg
+            return result_dict # Return with error message
+
+        required_min_length = max(INDICATOR_MIN_LENGTHS.values()) + 1
+        if len(data) < required_min_length:
+            error_msg = f"Insufficient data ({len(data)} rows) for comprehensive analysis (need at least {required_min_length})."
+            logging.warning(f"Partial data for {symbol}: {error_msg}")
             result_dict["Error"] = error_msg
             return result_dict # Return with error message
 
@@ -1854,7 +1855,7 @@ def analyze_all_stocks(stock_list, batch_size=4, progress_bar_obj=None, loading_
             loading_text_obj.text(f"Progress: {percentage}%")
 
         # Add a delay between batches to further reduce API pressure
-        time.sleep(max(2, batch_size / 5))
+        time.sleep(max(5, batch_size))
 
     results_df = pd.DataFrame(results)
     if results_df.empty:
@@ -1906,7 +1907,7 @@ def analyze_intraday_stocks(stock_list, batch_size=3, progress_bar_obj=None, loa
             loading_text_obj.text(f"Progress: {percentage}%")
 
         # Add a delay between batches to further reduce API pressure
-        time.sleep(max(10, batch_size * 2.0 / 3)) # Ensure minimum 10 seconds, or ~2 seconds per stock in batch
+        time.sleep(max(5, batch_size))  # Increased delay
 
     results_df = pd.DataFrame(results)
     if results_df.empty:
@@ -1940,24 +1941,6 @@ def analyze_intraday_stocks(stock_list, batch_size=3, progress_bar_obj=None, loa
             filtered_df = pd.DataFrame() # Return empty if column is critically missing
 
     return filtered_df.sort_values(by="Score", ascending=False).head(5), all_errors # Return errors
-
-# --- END MODIFIED FUNCTIONS ---
-
-def colored_recommendation(recommendation):
-    if recommendation is None or not isinstance(recommendation, str):
-        return "⚪ N/A"
-    if "Strong Buy" in recommendation:
-        return f"🌟 {recommendation}"
-    elif "Buy" in recommendation or "Consider Buy" in recommendation:
-        return f"🟢 {recommendation}"
-    elif "Strong Sell" in recommendation:
-        return f"💥 {recommendation}"
-    elif "Sell" in recommendation or "Consider Sell" in recommendation:
-        return f"🔴 {recommendation}"
-    else:
-        return f"⚪ {recommendation}"
-
-
 
 def insert_top_picks_supabase(results_df, pick_type="daily"):
     recommendation_mode = st.session_state.get('recommendation_mode', 'Standard')
@@ -2091,7 +2074,19 @@ def update_with_latest_prices(df):
 
     return updated_df
 
-
+def colored_recommendation(recommendation):
+    if recommendation is None or not isinstance(recommendation, str):
+        return "⚪ N/A"
+    if "Strong Buy" in recommendation:
+        return f"🌟 {recommendation}"
+    elif "Buy" in recommendation or "Consider Buy" in recommendation:
+        return f"🟢 {recommendation}"
+    elif "Strong Sell" in recommendation:
+        return f"💥 {recommendation}"
+    elif "Sell" in recommendation or "Consider Sell" in recommendation:
+        return f"🔴 {recommendation}"
+    else:
+        return f"⚪ {recommendation}"
 def display_dashboard(symbol=None, data=None, recommendations=None):
     # Initialize session state
     if 'selected_sectors' not in st.session_state:
@@ -2137,18 +2132,23 @@ def display_dashboard(symbol=None, data=None, recommendations=None):
         st.warning("⚠️ No stocks selected. Please choose at least one sector.")
         return
 
-    # Simple sector performance (not directly enhanced in this response, but kept for context)
-    # The `get_top_sectors_cached` function is not provided, so this button might not work out-of-the-box.
-    # If you have it, ensure it's robust.
-    # if st.button("🔎 Analyze Top Performing Sectors"):
-    #     with st.spinner("🔍 Crunching sector data ..."):
-    #         top_sectors = get_top_sectors_cached(rate_limit_delay=10, stocks_per_sector=10)
-    #         st.subheader("🔝 Top 3 Performing Sectors Today")
-    #         if top_sectors:
-    #             for name, score in top_sectors:
-    #                 st.markdown(f"- **{name}**: {score:.2f}/10")
-    #         else:
-    #             st.info("No sector data available or able to be processed.")
+    # Pre-filter valid stocks using the master file to skip invalid symbols upfront
+    master_df = load_dhan_instrument_master()
+    if master_df.empty:
+        st.error("⚠️ Could not load instrument master file. Analysis may fail for many stocks.")
+    valid_stocks = []
+    skipped_stocks = []
+    for stock in selected_stocks:
+        security_id = get_dhan_security_id(stock)
+        if security_id:
+            valid_stocks.append(stock)
+        else:
+            skipped_stocks.append(stock)
+
+    if skipped_stocks:
+        st.warning(f"⚠️ Skipped {len(skipped_stocks)} invalid symbols (not found in master file): {', '.join(skipped_stocks[:5])}...")
+
+    selected_stocks = valid_stocks  # Proceed with only valid ones
 
     # Placeholders for the analysis progress and status messages.
     # Initialize them to empty containers. They will be populated when buttons are clicked.
@@ -2163,6 +2163,10 @@ def display_dashboard(symbol=None, data=None, recommendations=None):
     intraday_picks_errors_container = st.empty() # New: Placeholder for intraday picks errors
 
     if st.button("🚀 Generate Daily Top Picks"):
+        if not selected_stocks:
+            st.warning("⚠️ No valid stocks to analyze after filtering.")
+            return
+
         # Create the actual progress bar and text elements, replacing the empty containers.
         daily_progress_bar = daily_picks_progress_container.progress(0)
         daily_loading_text = daily_picks_loading_text_container.empty()
@@ -2190,13 +2194,12 @@ def display_dashboard(symbol=None, data=None, recommendations=None):
                 for error_msg in batch_errors:
                     st.write(error_msg)
 
-
         if 'Position Size Shares' in results_df.columns:
-        # Replace the string 'None' with actual NaN
+            # Replace the string 'None' with actual NaN
             results_df['Position Size Shares'] = results_df['Position Size Shares'].replace('None', np.nan)
-        # Convert to numeric, coercing any non-convertible values to NaN
+            # Convert to numeric, coercing any non-convertible values to NaN
             results_df['Position Size Shares'] = pd.to_numeric(results_df['Position Size Shares'], errors='coerce')
-        # Fill any NaN values with 0.0 (or another default numeric value if appropriate)
+            # Fill any NaN values with 0.0 (or another default numeric value if appropriate)
             results_df['Position Size Shares'] = results_df['Position Size Shares'].fillna(0.0)
 
         if 'Position Size Value' in results_df.columns:
@@ -2209,17 +2212,14 @@ def display_dashboard(symbol=None, data=None, recommendations=None):
             results_df['Trailing Stop'] = pd.to_numeric(results_df['Trailing Stop'], errors='coerce')
             results_df['Trailing Stop'] = results_df['Trailing Stop'].fillna(0.0)
 
-
-    # This line MUST be unindented to be at the same level as the 'if' cleaning blocks above.
         insert_top_picks_supabase(results_df, pick_type="daily") # Pass the potentially empty results_df
 
-    # All the following display logic must also be at this unindented level.
         display_results_df = pd.DataFrame()
         recommendation_mode = st.session_state.get('recommendation_mode', 'Standard')
 
-    # NEW: Check if results_df is empty before trying to filter/sort for display
+        # NEW: Check if results_df is empty before trying to filter/sort for display
         if results_df.empty:
-            st.warning("⚠️ No valid stock data retrieved to generate Daily Top Picks.")
+            st.warning(f"⚠️ No valid stock data retrieved to generate Daily Top Picks (all {len(selected_stocks)} stocks failed analysis). Check API connection or try fewer sectors.")
         else: # Proceed only if results_df is NOT empty
             if recommendation_mode == "Adaptive":
                 # Filter out rows that explicitly have an error reported in the 'Error' column
@@ -2272,6 +2272,10 @@ def display_dashboard(symbol=None, data=None, recommendations=None):
                 st.warning("⚠️ No top picks available (or no 'Buy' recommendations) due to data issues or current market conditions.")
 
     if st.button("⚡ Generate Intraday Top 5 Picks"):
+        if not selected_stocks:
+            st.warning("⚠️ No valid stocks to analyze after filtering.")
+            return
+
         # Create the actual progress bar and text elements, replacing the empty containers.
         intraday_progress_bar = intraday_picks_progress_container.progress(0)
         intraday_loading_text = intraday_picks_loading_text_container.empty()
@@ -2304,7 +2308,7 @@ def display_dashboard(symbol=None, data=None, recommendations=None):
         filtered_df = pd.DataFrame() # Initialize filtered_df here
         # NEW: Check if intraday_results is empty before trying to filter/sort
         if intraday_results.empty:
-            st.warning("⚠️ No valid stock data retrieved to generate Intraday Top 5 Picks.")
+            st.warning(f"⚠️ No valid stock data retrieved to generate Intraday Top 5 Picks (all {len(selected_stocks)} stocks failed analysis). Check API connection or try fewer sectors.")
         else: # Proceed only if intraday_results is NOT empty
             if st.session_state.recommendation_mode == "Adaptive":
                 # Filter out rows that explicitly have an error reported in the 'Error' column
