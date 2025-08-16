@@ -2515,11 +2515,29 @@ def main():
                     st.session_state.symbol = None
     else:
         display_dashboard()
-
     if st.sidebar.button("Clear All Caches", help="Clears cached data and restarts the app."):
+        # Clear Streamlit caches and session state
+        try:
+            st.cache_data.clear()
+        except Exception as e:
+            logging.warning(f"st.cache_data.clear() failed: {e}")
+        try:
+            # In case you use resource cache elsewhere
+            st.cache_resource.clear()
+        except Exception as e:
+            logging.debug(f"st.cache_resource.clear() not available or failed: {e}")
+
+        # Reset in-memory counters/state
+        global data_api_calls
+        data_api_calls = 0
+
         st.session_state.clear()
-        st.cache_data.clear()
-        st.session_state.data = None
-        st.session_state.recommendations = None
-        st.session_state.backtest_results_swing = None
+        st.success("✅ All caches cleared. Rerunning app...")
         st.rerun()
+
+    # Optional: small debug/statistics footer in sidebar
+    st.sidebar.caption(f"API calls used (approx): {data_api_calls}")
+
+if __name__ == "__main__":
+    main()
+```
