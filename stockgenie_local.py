@@ -1878,6 +1878,76 @@ def colored_recommendation(recommendation):
     else:
         return f"⚪ {recommendation}"
 
+# --- Resumable bulk job helpers  ---
+
+def start_bulk_job(symbols, mode="daily", chunk_size=10):
+    """Initialize a resumable bulk analysis job."""
+    st.session_state[f"{mode}_job"] = {
+        "symbols": symbols,
+        "index": 0,           # next symbol index to process
+        "results": [],        # collected results
+        "errors": [],         # collected errors
+        "mode": mode,
+        "chunk_size": chunk_size,
+        "started_at": time.time(),
+        "done": False
+    }
+
+def process_bulk_step(mode="daily"):
+    """Process a single chunk for the job stored in session_state."""
+    job = st.session_state.get(f"{mode}_job")
+    if not job or job.get("done"):
+        return True  # nothing to do or already done
+
+    symbols = job["symbols"]
+    idx = job["index"]
+    chunk_size = job.get("chunk_size", 10)
+
+    if idx >= len(symbols):
+        job["done"] = True
+        st.session_state[f"{mode}_job"] = job
+        return True
+
+    end = min(idx + chunk_size, len(symbols))
+    batch_symbols = symbols[idx:end]
+
+    # Use your existing serial analyzer (already conservative/rate-limited)
+    batch_results, batch_errors = analyze_batch(batch_symbols)
+
+    # Accumulate results
+    job["results"].extend([r for r in batch_results if r is not None])
+    job["errors"].extend(batch_errors)
+    job["index"] = end
+    st.session_state[f"{mode}_job"] = job
+
+    return end >= len(symbols)
+
+def job_results_to_df(mode="daily"):
+    """Convert stored job results to a DataFrame."""
+    job = st.session_state.get(f"{mode}_job")
+    if not job:
+        return pd.DataFrame(), []
+
+    results = job.get("results", [])
+    errors = job.get("errors", [])
+    results_df = pd.DataFrame(results)
+
+    if results_df.empty:
+        return pd.DataFrame(), errors
+
+    # Ensure expected columns exist
+    expected_cols = [
+        "Symbol", "Current Price", "Buy At", "Stop Loss", "Target", "Score",
+        "Recommendation", "Regime", "Position Size Shares", "Position Size Value",
+        "Trailing Stop", "Reason", "Intraday", "Swing", "Short-Term", "Long-Term",
+        "Mean_Reversion", "Breakout", "Ichimoku_Trend", "Error"
+    ]
+    for col in expected_cols:
+        if col not in results_df.columns:
+            results_df[col] = np.nan
+
+    return results_df, errors
+
 def display_dashboard(symbol=None, data=None, recommendations=None):
     # Initialize session state
     if 'selected_sectors' not in st.session_state:
@@ -1943,44 +2013,41 @@ def display_dashboard(symbol=None, data=None, recommendations=None):
 
     selected_stocks = valid_stocks  # Proceed with only valid ones
 
-    # Placeholders for the analysis progress and status messages.
-    daily_picks_progress_container = st.empty()
-    daily_picks_loading_text_container = st.empty()
-    daily_picks_status_text_container = st.empty()
-    daily_picks_errors_container = st.empty()  # errors expander
+    # Placeholders for the analysis errors
+    daily_picks_errors_container = st.empty()
+    intraday_picks_errors_container = st.empty()
 
-    intraday_picks_progress_container = st.empty()
-    intraday_picks_loading_text_container = st.empty()
-    intraday_picks_status_text_container = st.empty()
-    intraday_picks_errors_container = st.empty()  # errors expander
-
-    # Daily Top Picks
+    # --- Resumable Daily Top Picks job ---
+    # Start job
     if st.button("🚀 Generate Daily Top Picks"):
         if not selected_stocks:
             st.warning("⚠️ No valid stocks to analyze after filtering.")
             return
+        # Start/Reset resumable job (tweak chunk_size if needed)
+        start_bulk_job(selected_stocks, mode="daily", chunk_size=10)
+        st.rerun()
 
-        daily_progress_bar = daily_picks_progress_container.progress(0)
-        daily_loading_text = daily_picks_loading_text_container.empty()
-        daily_status_text = daily_picks_status_text_container.empty()
-        daily_picks_errors_container.empty()
+    # If a Daily job is in progress, process a chunk and rerun until completion
+    daily_job = st.session_state.get("daily_job")
+    if daily_job and not daily_job.get("done", False):
+        total = len(daily_job["symbols"])
+        processed = daily_job["index"]
+        chunk_size = daily_job.get("chunk_size", 10)
+        # Progress + status
+        st.info(f"⏳ Daily analysis in progress: {processed}/{total} processed (chunk size: {chunk_size})")
+        progress_ratio = processed / total if total else 0
+        st.progress(progress_ratio)
+        # Process one chunk this run
+        done = process_bulk_step(mode="daily")
+        # Auto-rerun until done
+        time.sleep(0.5)
+        st.rerun()
 
-        daily_status_text.text(f"📊 Analyzing {len(selected_stocks)} stocks for Daily Picks...")
+    # If Daily job finished, show results
+    if daily_job and daily_job.get("done", False):
+        results_df, batch_errors = job_results_to_df(mode="daily")
 
-        # Serial processing with conservative rate limiting
-        results_df, batch_errors = analyze_all_stocks(
-            selected_stocks,
-            batch_size=1,
-            progress_bar_obj=daily_progress_bar,
-            loading_text_obj=daily_loading_text,
-            status_text_obj=daily_status_text
-        )
-
-        daily_picks_progress_container.empty()
-        daily_picks_loading_text_container.empty()
-        daily_picks_status_text_container.empty()
-
-        # Display batch errors if any
+        # Show any errors
         if batch_errors:
             with daily_picks_errors_container.expander(f"⚠️ {len(batch_errors)} stocks encountered errors during analysis"):
                 for error_msg in batch_errors:
@@ -2003,7 +2070,7 @@ def display_dashboard(symbol=None, data=None, recommendations=None):
         recommendation_mode = st.session_state.get('recommendation_mode', 'Standard')
 
         if results_df.empty:
-            st.warning(f"⚠️ No valid stock data retrieved to generate Daily Top Picks (all {len(selected_stocks)} stocks failed analysis). Check API connection or try fewer sectors.")
+            st.warning("⚠️ No valid stock data retrieved to generate Daily Top Picks. Check API connection or try fewer sectors.")
         else:
             if recommendation_mode == "Adaptive":
                 display_results_df = results_df[
@@ -2056,30 +2123,19 @@ def display_dashboard(symbol=None, data=None, recommendations=None):
             else:
                 st.warning("⚠️ No top picks available (or no 'Buy' recommendations) due to data issues or current market conditions.")
 
-    # Intraday Top Picks
+    # --- Intraday Top 5 (non-resumable, conservative) ---
     if st.button("⚡ Generate Intraday Top 5 Picks"):
         if not selected_stocks:
             st.warning("⚠️ No valid stocks to analyze after filtering.")
             return
 
-        intraday_progress_bar = intraday_picks_progress_container.progress(0)
-        intraday_loading_text = intraday_picks_loading_text_container.empty()
-        intraday_status_text = intraday_picks_status_text_container.empty()
-        intraday_picks_errors_container.empty()
-
-        intraday_status_text.text(f"📊 Analyzing {len(selected_stocks)} stocks for Intraday Picks...")
-
         intraday_results, batch_errors = analyze_intraday_stocks(
             selected_stocks,
             batch_size=1,
-            progress_bar_obj=intraday_progress_bar,
-            loading_text_obj=intraday_loading_text,
-            status_text_obj=intraday_status_text
+            progress_bar_obj=None,
+            loading_text_obj=None,
+            status_text_obj=None
         )
-
-        intraday_picks_progress_container.empty()
-        intraday_picks_loading_text_container.empty()
-        intraday_picks_status_text_container.empty()
 
         if batch_errors:
             with intraday_picks_errors_container.expander(f"⚠️ {len(batch_errors)} stocks encountered errors during analysis"):
@@ -2090,7 +2146,7 @@ def display_dashboard(symbol=None, data=None, recommendations=None):
 
         filtered_df = pd.DataFrame()
         if intraday_results.empty:
-            st.warning(f"⚠️ No valid stock data retrieved to generate Intraday Top 5 Picks (all {len(selected_stocks)} stocks failed analysis). Check API connection or try fewer sectors.")
+            st.warning(f"⚠️ No valid stock data retrieved to generate Intraday Top 5 Picks (all {len(selected_stocks)} stocks failed analysis).")
         else:
             if st.session_state.recommendation_mode == "Adaptive":
                 filtered_df = intraday_results[
@@ -2136,8 +2192,6 @@ def display_dashboard(symbol=None, data=None, recommendations=None):
                             Target: {target}
                             Intraday: {colored_recommendation(row.get('Intraday', 'N/A'))}
                             """)
-            else:
-                st.warning("⚠️ No intraday picks available (or no 'Buy' recommendations) due to data issues.")
 
     # Historical Picks section
     if st.button("📜 View Historical Picks"):
@@ -2216,7 +2270,7 @@ def display_dashboard(symbol=None, data=None, recommendations=None):
             st.error(f"Error fetching historical picks: {e}")
             logging.error(f"Error fetching historical picks: {e}")
 
-    # Display analysis for the currently selected stock (if any)
+    # Display analysis for the currently selected stock (full section)
     if st.session_state.symbol and st.session_state.data is not None and st.session_state.recommendations is not None:
         symbol = st.session_state.symbol
         data = st.session_state.data
@@ -2258,7 +2312,6 @@ def display_dashboard(symbol=None, data=None, recommendations=None):
                 st.write(f"**Trailing Stop**: ₹{recommendations.get('Trailing Stop', 'N/A')}")
                 st.write(f"**Volatility**: {assess_risk(data)}")
             st.write(f"**Reason**: {recommendations.get('Reason', 'N/A')}")
-
         else:
             col1, col2, col3 = st.columns(3)
             with col1:
@@ -2274,7 +2327,7 @@ def display_dashboard(symbol=None, data=None, recommendations=None):
             st.write(f"**{tooltip('Score', TOOLTIPS['Score'])}**: {recommendations.get('Score', 'N/A')}/10")
             st.write(f"**Volatility**: {assess_risk(data)}")
 
-        # Backtest form
+        # Backtest form and logic
         backtest_spinner_placeholder = st.empty()
         with st.form(key="backtest_form"):
             col1, col2 = st.columns(2)
@@ -2322,8 +2375,8 @@ def display_dashboard(symbol=None, data=None, recommendations=None):
                                  f"Exit: {trade['exit_date']} @ ₹{trade['exit_price']:.2f}, "
                                  f"Profit: ₹{profit:.2f} ({trade['reason']})")
 
+                # Price with Buy/Sell signals
                 fig = px.line(data, x=data.index, y='Close', title=f"{normalize_symbol_dhan(symbol)} Price with Signals")
-
                 epoch_plot_threshold = pd.Timestamp('1970-01-02')
 
                 if backtest_results["buy_signals"]:
@@ -2443,7 +2496,6 @@ def display_dashboard(symbol=None, data=None, recommendations=None):
             st.plotly_chart(fig_vol, use_container_width=True)
         else:
             st.info("Volume data not available.")
-
 
 def main():
     if st.sidebar.button("Test Dhan Connection"):
