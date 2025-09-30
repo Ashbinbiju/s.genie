@@ -8,15 +8,11 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from functools import lru_cache, wraps
 from tqdm import tqdm
 import plotly.express as px
+import plotly.graph_objects as go
 import time
 import requests
 import io
 import random
-import spacy
-from pytrends.request import TrendReq
-import numpy as np
-import itertools
-from arch import arch_model
 import warnings
 import sqlite3
 from diskcache import Cache
@@ -28,17 +24,29 @@ from scipy.stats.mstats import winsorize
 from streamlit import cache_data
 from itertools import cycle
 from collections import deque
-from typing import Dict, List, Optional, Tuple, Any
+from typing import Dict, List, Optional, Tuple, Any, Union
 import hashlib
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from enum import Enum
+import threading
+from queue import Queue, Empty
+import json
+from pydantic import BaseModel, validator, Field
+from pydantic.dataclasses import dataclass as pydantic_dataclass
+from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
+from numba import jit
+import asyncio
+import aiohttp
+from datetime import timezone
 
 load_dotenv()
+warnings.filterwarnings("ignore")
 
-# ========================= CONFIGURATION =========================
+# ========================= ENHANCED CONFIGURATION =========================
 
 @dataclass
 class TradingConfig:
-    """Trading configuration parameters"""
+    """Enhanced trading configuration with validation"""
     DEFAULT_RISK_PER_TRADE: float = 0.02
     MAX_POSITION_SIZE_PCT: float = 0.25
     DEFAULT_STOP_LOSS_ATR_MULT: float = 2.0
@@ -48,34 +56,80 @@ class TradingConfig:
     INITIAL_CAPITAL: float = 30000
     COMMISSION: float = 0.001
     
+    # Rate limiting configuration
+    RATE_LIMIT_CALLS: int = 5
+    RATE_LIMIT_PERIOD: int = 60
+    MAX_RETRIES: int = 3
+    RETRY_MIN_WAIT: int = 4
+    RETRY_MAX_WAIT: int = 60
+    
+    # Alert configuration
+    ALERT_CHECK_INTERVAL: int = 60  # seconds
+    MAX_ALERTS_PER_SYMBOL: int = 5
+    
+    # Performance configuration
+    USE_NUMBA: bool = True
+    VECTORIZE_OPERATIONS: bool = True
+    MAX_CACHE_SIZE: int = 1000000000  # 1GB
+
 config = TradingConfig()
 
-# ========================= LOGGING SETUP =========================
+# ========================= ENHANCED LOGGING =========================
 
-def setup_logging():
-    """Setup comprehensive logging with rotation"""
-    logger = logging.getLogger(__name__)
-    logger.setLevel(logging.INFO)
+class ColoredFormatter(logging.Formatter):
+    """Custom colored formatter for better log visibility"""
     
-    # Console handler
+    COLORS = {
+        'DEBUG': '\033[36m',    # Cyan
+        'INFO': '\033[32m',     # Green
+        'WARNING': '\033[33m',  # Yellow
+        'ERROR': '\033[31m',    # Red
+        'CRITICAL': '\033[35m', # Magenta
+    }
+    RESET = '\033[0m'
+    
+    def format(self, record):
+        log_color = self.COLORS.get(record.levelname, self.RESET)
+        record.levelname = f"{log_color}{record.levelname}{self.RESET}"
+        return super().format(record)
+
+def setup_logging(level=logging.INFO):
+    """Enhanced logging setup with colored output and file rotation"""
+    logger = logging.getLogger(__name__)
+    logger.setLevel(level)
+    
+    # Console handler with colors
     console_handler = logging.StreamHandler()
     console_handler.setLevel(logging.WARNING)
-    
-    # Format
-    formatter = logging.Formatter(
+    console_formatter = ColoredFormatter(
         '%(asctime)s - %(name)s - %(levelname)s - %(message)s'
     )
-    console_handler.setFormatter(formatter)
+    console_handler.setFormatter(console_formatter)
+    
+    # File handler for detailed logs
+    from logging.handlers import RotatingFileHandler
+    file_handler = RotatingFileHandler(
+        'stockgenie.log',
+        maxBytes=10485760,  # 10MB
+        backupCount=5
+    )
+    file_handler.setLevel(logging.DEBUG)
+    file_formatter = logging.Formatter(
+        '%(asctime)s - %(name)s - %(levelname)s - %(funcName)s:%(lineno)d - %(message)s'
+    )
+    file_handler.setFormatter(file_formatter)
     
     logger.addHandler(console_handler)
+    logger.addHandler(file_handler)
+    
     return logger
 
 logger = setup_logging()
 
-# ========================= CUSTOM EXCEPTIONS =========================
+# ========================= ENHANCED EXCEPTIONS =========================
 
 class StockAnalysisError(Exception):
-    """Custom exception for stock analysis errors"""
+    """Base exception for stock analysis errors"""
     pass
 
 class DataFetchError(StockAnalysisError):
@@ -86,139 +140,551 @@ class ValidationError(StockAnalysisError):
     """Exception for data validation errors"""
     pass
 
-# ========================= RATE LIMITER =========================
+class RateLimitError(StockAnalysisError):
+    """Exception for rate limit errors"""
+    pass
 
-class RateLimiter:
-    """Thread-safe rate limiter"""
+class APIError(StockAnalysisError):
+    """Exception for API errors"""
+    pass
+
+# ========================= DATA VALIDATION MODELS =========================
+
+class PriceLevel(str, Enum):
+    """Price level types"""
+    SUPPORT = "support"
+    RESISTANCE = "resistance"
+    PIVOT = "pivot"
+
+class SignalStrength(str, Enum):
+    """Signal strength levels"""
+    STRONG_BUY = "strong_buy"
+    BUY = "buy"
+    NEUTRAL = "neutral"
+    SELL = "sell"
+    STRONG_SELL = "strong_sell"
+
+class StockDataValidator(BaseModel):
+    """Pydantic model for stock data validation"""
+    symbol: str = Field(..., min_length=1, max_length=20)
+    open: float = Field(..., gt=0)
+    high: float = Field(..., gt=0)
+    low: float = Field(..., gt=0)
+    close: float = Field(..., gt=0)
+    volume: int = Field(..., ge=0)
+    date: datetime
+    
+    @validator('high')
+    def high_must_be_highest(cls, v, values):
+        if 'low' in values and v < values['low']:
+            raise ValueError('High must be >= Low')
+        return v
+    
+    @validator('close')
+    def close_within_range(cls, v, values):
+        if 'high' in values and 'low' in values:
+            if not values['low'] <= v <= values['high']:
+                raise ValueError('Close must be between Low and High')
+        return v
+
+class TechnicalIndicators(BaseModel):
+    """Validated technical indicators"""
+    rsi: Optional[float] = Field(None, ge=0, le=100)
+    macd: Optional[float] = None
+    macd_signal: Optional[float] = None
+    adx: Optional[float] = Field(None, ge=0, le=100)
+    atr: Optional[float] = Field(None, ge=0)
+    bollinger_upper: Optional[float] = Field(None, gt=0)
+    bollinger_lower: Optional[float] = Field(None, gt=0)
+    volume_ratio: Optional[float] = Field(None, ge=0)
+    
+    @validator('rsi')
+    def validate_rsi(cls, v):
+        if v is not None and (v < 0 or v > 100):
+            raise ValueError('RSI must be between 0 and 100')
+        return v
+
+class AlertCondition(BaseModel):
+    """Alert condition model"""
+    symbol: str
+    condition_type: str = Field(..., pattern="^(above|below|crossover|divergence)$")
+    price: Optional[float] = Field(None, gt=0)
+    indicator: Optional[str] = None
+    indicator_value: Optional[float] = None
+    message: str
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    triggered: bool = False
+    triggered_at: Optional[datetime] = None
+
+# ========================= THREAD-SAFE COMPONENTS =========================
+
+class ThreadSafeCache:
+    """Thread-safe caching implementation"""
+    
+    def __init__(self, max_size: int = 1000):
+        self._cache = {}
+        self._lock = threading.RLock()
+        self._max_size = max_size
+        self._access_count = {}
+        
+    def get(self, key: str) -> Optional[Any]:
+        """Thread-safe get operation"""
+        with self._lock:
+            if key in self._cache:
+                self._access_count[key] = self._access_count.get(key, 0) + 1
+                return self._cache[key]
+            return None
+    
+    def set(self, key: str, value: Any, ttl: Optional[int] = None) -> None:
+        """Thread-safe set operation with TTL support"""
+        with self._lock:
+            # Implement LRU eviction if cache is full
+            if len(self._cache) >= self._max_size:
+                # Remove least recently used item
+                lru_key = min(self._access_count, key=self._access_count.get)
+                del self._cache[lru_key]
+                del self._access_count[lru_key]
+            
+            self._cache[key] = {
+                'value': value,
+                'expires_at': time.time() + ttl if ttl else None
+            }
+            self._access_count[key] = 0
+    
+    def delete(self, key: str) -> None:
+        """Thread-safe delete operation"""
+        with self._lock:
+            if key in self._cache:
+                del self._cache[key]
+            if key in self._access_count:
+                del self._access_count[key]
+    
+    def clear(self) -> None:
+        """Clear all cache entries"""
+        with self._lock:
+            self._cache.clear()
+            self._access_count.clear()
+    
+    def _cleanup_expired(self) -> None:
+        """Remove expired entries"""
+        with self._lock:
+            current_time = time.time()
+            expired_keys = [
+                key for key, value in self._cache.items()
+                if value.get('expires_at') and value['expires_at'] < current_time
+            ]
+            for key in expired_keys:
+                self.delete(key)
+
+class ThreadSafeRateLimiter:
+    """Enhanced thread-safe rate limiter with exponential backoff"""
+    
     def __init__(self, calls: int = 10, period: int = 60):
         self.calls = calls
         self.period = period
         self.call_times = deque()
-        self._lock = None
+        self._lock = threading.RLock()
+        self._backoff_until = {}
+        
+    def acquire(self, identifier: str = "default") -> bool:
+        """Try to acquire permission to make a call"""
+        with self._lock:
+            now = time.time()
+            
+            # Check if in backoff period
+            if identifier in self._backoff_until:
+                if now < self._backoff_until[identifier]:
+                    return False
+                else:
+                    del self._backoff_until[identifier]
+            
+            # Remove old calls
+            while self.call_times and self.call_times[0] < now - self.period:
+                self.call_times.popleft()
+            
+            # Check rate limit
+            if len(self.call_times) >= self.calls:
+                # Calculate backoff
+                backoff_time = self.period - (now - self.call_times[0]) + 1
+                self._backoff_until[identifier] = now + backoff_time
+                return False
+            
+            self.call_times.append(now)
+            return True
     
-    def __call__(self, func):
-        @wraps(func)
-        def wrapper(*args, **kwargs):
-            import threading
-            if self._lock is None:
-                self._lock = threading.Lock()
-            
-            with self._lock:
-                now = time.time()
-                
-                # Remove old calls
-                while self.call_times and self.call_times[0] < now - self.period:
-                    self.call_times.popleft()
-                
-                if len(self.call_times) >= self.calls:
-                    sleep_time = self.period - (now - self.call_times[0]) + 0.1
-                    if sleep_time > 0:
-                        time.sleep(sleep_time)
-                
-                self.call_times.append(now)
-            
+    def wait_if_needed(self, identifier: str = "default") -> None:
+        """Wait if rate limited"""
+        while not self.acquire(identifier):
+            time.sleep(0.1)
+
+# Global instances
+cache = ThreadSafeCache(max_size=10000)
+rate_limiter = ThreadSafeRateLimiter(calls=config.RATE_LIMIT_CALLS, period=config.RATE_LIMIT_PERIOD)
+
+# ========================= ENHANCED ERROR HANDLING =========================
+
+def handle_api_errors(func):
+    """Decorator for comprehensive API error handling"""
+    @wraps(func)
+    def wrapper(*args, **kwargs):
+        try:
             return func(*args, **kwargs)
-        return wrapper
+        except requests.exceptions.HTTPError as e:
+            if e.response.status_code == 429:
+                raise RateLimitError(f"Rate limit exceeded: {e}")
+            elif e.response.status_code == 401:
+                raise APIError(f"Authentication failed: {e}")
+            elif e.response.status_code >= 500:
+                raise APIError(f"Server error: {e}")
+            else:
+                raise APIError(f"HTTP error: {e}")
+        except requests.exceptions.ConnectionError as e:
+            raise DataFetchError(f"Connection error: {e}")
+        except requests.exceptions.Timeout as e:
+            raise DataFetchError(f"Request timeout: {e}")
+        except Exception as e:
+            logger.error(f"Unexpected error in {func.__name__}: {e}")
+            raise StockAnalysisError(f"Unexpected error: {e}")
+    return wrapper
 
-# ========================= CONSTANTS =========================
+@retry(
+    stop=stop_after_attempt(config.MAX_RETRIES),
+    wait=wait_exponential(multiplier=1, min=config.RETRY_MIN_WAIT, max=config.RETRY_MAX_WAIT),
+    retry=retry_if_exception_type((RateLimitError, DataFetchError)),
+    reraise=True
+)
+@handle_api_errors
+def fetch_with_retry(url: str, headers: Optional[Dict] = None, params: Optional[Dict] = None) -> requests.Response:
+    """Fetch data with retry logic and error handling"""
+    
+    # Wait for rate limit
+    rate_limiter.wait_if_needed(url)
+    
+    # Set default headers
+    if headers is None:
+        headers = {"User-Agent": random.choice(USER_AGENTS)}
+    
+    # Make request
+    response = requests.get(url, headers=headers, params=params, timeout=30)
+    response.raise_for_status()
+    
+    return response
 
+# ========================= PERFORMANCE OPTIMIZATIONS =========================
+
+@jit(nopython=True)
+def calculate_rsi_optimized(prices: np.ndarray, period: int = 14) -> np.ndarray:
+    """Numba-optimized RSI calculation"""
+    if len(prices) < period + 1:
+        return np.full(len(prices), np.nan)
+    
+    deltas = np.diff(prices)
+    rsi = np.full(len(prices), np.nan)
+    
+    gains = np.where(deltas > 0, deltas, 0)
+    losses = np.where(deltas < 0, -deltas, 0)
+    
+    avg_gain = np.mean(gains[:period])
+    avg_loss = np.mean(losses[:period])
+    
+    if avg_loss == 0:
+        rsi[period] = 100 if avg_gain > 0 else 50
+    else:
+        rs = avg_gain / avg_loss
+        rsi[period] = 100 - (100 / (1 + rs))
+    
+    for i in range(period + 1, len(prices)):
+        gain = gains[i - 1]
+        loss = losses[i - 1]
+        
+        avg_gain = (avg_gain * (period - 1) + gain) / period
+        avg_loss = (avg_loss * (period - 1) + loss) / period
+        
+        if avg_loss == 0:
+            rsi[i] = 100 if avg_gain > 0 else 50
+        else:
+            rs = avg_gain / avg_loss
+            rsi[i] = 100 - (100 / (1 + rs))
+    
+    return rsi
+
+@jit(nopython=True)
+def calculate_ema_optimized(prices: np.ndarray, period: int) -> np.ndarray:
+    """Numba-optimized EMA calculation"""
+    ema = np.full(len(prices), np.nan)
+    if len(prices) < period:
+        return ema
+    
+    ema[period - 1] = np.mean(prices[:period])
+    multiplier = 2 / (period + 1)
+    
+    for i in range(period, len(prices)):
+        ema[i] = (prices[i] - ema[i - 1]) * multiplier + ema[i - 1]
+    
+    return ema
+
+def vectorized_bollinger_bands(prices: pd.Series, window: int = 20, num_std: float = 2) -> Tuple[pd.Series, pd.Series, pd.Series]:
+    """Vectorized Bollinger Bands calculation"""
+    middle = prices.rolling(window=window, min_periods=1).mean()
+    std = prices.rolling(window=window, min_periods=1).std()
+    upper = middle + (std * num_std)
+    lower = middle - (std * num_std)
+    return upper, middle, lower
+
+def vectorized_multiple_smas(prices: pd.Series, windows: List[int]) -> pd.DataFrame:
+    """Vectorized calculation of multiple SMAs"""
+    result = pd.DataFrame(index=prices.index)
+    for window in windows:
+        result[f'SMA_{window}'] = prices.rolling(window=window, min_periods=1).mean()
+    return result
+
+# ========================= MONITORING & ALERTS SYSTEM =========================
+
+class AlertType(Enum):
+    """Alert types enumeration"""
+    PRICE_ABOVE = "price_above"
+    PRICE_BELOW = "price_below"
+    RSI_OVERSOLD = "rsi_oversold"
+    RSI_OVERBOUGHT = "rsi_overbought"
+    VOLUME_SPIKE = "volume_spike"
+    BREAKOUT = "breakout"
+    DIVERGENCE = "divergence"
+    STOP_LOSS_HIT = "stop_loss_hit"
+    TARGET_REACHED = "target_reached"
+
+class Alert:
+    """Individual alert class"""
+    
+    def __init__(self, symbol: str, alert_type: AlertType, threshold: float, 
+                 message: str, callback: Optional[callable] = None):
+        self.id = hashlib.md5(f"{symbol}{alert_type}{threshold}{time.time()}".encode()).hexdigest()[:8]
+        self.symbol = symbol
+        self.alert_type = alert_type
+        self.threshold = threshold
+        self.message = message
+        self.callback = callback
+        self.created_at = datetime.now()
+        self.triggered = False
+        self.triggered_at = None
+        self.trigger_count = 0
+        
+    def check_condition(self, current_value: float) -> bool:
+        """Check if alert condition is met"""
+        if self.alert_type == AlertType.PRICE_ABOVE:
+            return current_value > self.threshold
+        elif self.alert_type == AlertType.PRICE_BELOW:
+            return current_value < self.threshold
+        elif self.alert_type == AlertType.RSI_OVERSOLD:
+            return current_value < self.threshold
+        elif self.alert_type == AlertType.RSI_OVERBOUGHT:
+            return current_value > self.threshold
+        return False
+    
+    def trigger(self, current_value: float) -> None:
+        """Trigger the alert"""
+        self.triggered = True
+        self.triggered_at = datetime.now()
+        self.trigger_count += 1
+        
+        alert_message = f"🔔 ALERT: {self.symbol} - {self.message} (Current: {current_value:.2f}, Threshold: {self.threshold:.2f})"
+        logger.info(alert_message)
+        
+        if self.callback:
+            self.callback(self, current_value)
+        
+        # Store in session state for UI display
+        if 'alerts_triggered' not in st.session_state:
+            st.session_state.alerts_triggered = []
+        st.session_state.alerts_triggered.append({
+            'time': self.triggered_at,
+            'symbol': self.symbol,
+            'message': alert_message,
+            'type': self.alert_type.value
+        })
+
+class AlertMonitor:
+    """Alert monitoring system"""
+    
+    def __init__(self):
+        self.alerts: Dict[str, List[Alert]] = {}
+        self._lock = threading.RLock()
+        self._monitoring = False
+        self._monitor_thread = None
+        self._stop_event = threading.Event()
+        
+    def add_alert(self, alert: Alert) -> str:
+        """Add new alert"""
+        with self._lock:
+            if alert.symbol not in self.alerts:
+                self.alerts[alert.symbol] = []
+            
+            # Check max alerts per symbol
+            if len(self.alerts[alert.symbol]) >= config.MAX_ALERTS_PER_SYMBOL:
+                # Remove oldest alert
+                self.alerts[alert.symbol].pop(0)
+            
+            self.alerts[alert.symbol].append(alert)
+            logger.info(f"Alert added for {alert.symbol}: {alert.message}")
+            return alert.id
+    
+    def remove_alert(self, alert_id: str) -> bool:
+        """Remove alert by ID"""
+        with self._lock:
+            for symbol, alerts in self.alerts.items():
+                for alert in alerts:
+                    if alert.id == alert_id:
+                        alerts.remove(alert)
+                        logger.info(f"Alert removed: {alert_id}")
+                        return True
+            return False
+    
+    def get_alerts(self, symbol: Optional[str] = None) -> List[Alert]:
+        """Get alerts for symbol or all alerts"""
+        with self._lock:
+            if symbol:
+                return self.alerts.get(symbol, []).copy()
+            else:
+                all_alerts = []
+                for alerts in self.alerts.values():
+                    all_alerts.extend(alerts)
+                return all_alerts
+    
+    def check_alerts(self, symbol: str, data: pd.DataFrame) -> List[Alert]:
+        """Check alerts for a symbol"""
+        triggered_alerts = []
+        
+        with self._lock:
+            if symbol not in self.alerts:
+                return triggered_alerts
+            
+            current_price = data['Close'].iloc[-1] if not data.empty else None
+            current_rsi = data['RSI'].iloc[-1] if 'RSI' in data.columns and not data.empty else None
+            current_volume = data['Volume'].iloc[-1] if 'Volume' in data.columns and not data.empty else None
+            avg_volume = data['Volume'].rolling(20).mean().iloc[-1] if 'Volume' in data.columns and len(data) >= 20 else None
+            
+            for alert in self.alerts[symbol]:
+                if alert.triggered and alert.trigger_count >= 3:
+                    continue  # Skip if already triggered multiple times
+                
+                should_trigger = False
+                current_value = None
+                
+                if alert.alert_type in [AlertType.PRICE_ABOVE, AlertType.PRICE_BELOW] and current_price:
+                    current_value = current_price
+                    should_trigger = alert.check_condition(current_price)
+                
+                elif alert.alert_type in [AlertType.RSI_OVERSOLD, AlertType.RSI_OVERBOUGHT] and current_rsi:
+                    current_value = current_rsi
+                    should_trigger = alert.check_condition(current_rsi)
+                
+                elif alert.alert_type == AlertType.VOLUME_SPIKE and current_volume and avg_volume:
+                    volume_ratio = current_volume / avg_volume
+                    current_value = volume_ratio
+                    should_trigger = volume_ratio > alert.threshold
+                
+                if should_trigger and current_value is not None:
+                    alert.trigger(current_value)
+                    triggered_alerts.append(alert)
+        
+        return triggered_alerts
+    
+    def start_monitoring(self, check_interval: int = 60):
+        """Start background monitoring"""
+        if self._monitoring:
+            return
+        
+        self._monitoring = True
+        self._stop_event.clear()
+        self._monitor_thread = threading.Thread(target=self._monitor_loop, args=(check_interval,))
+        self._monitor_thread.daemon = True
+        self._monitor_thread.start()
+        logger.info("Alert monitoring started")
+    
+    def stop_monitoring(self):
+        """Stop background monitoring"""
+        if not self._monitoring:
+            return
+        
+        self._monitoring = False
+        self._stop_event.set()
+        if self._monitor_thread:
+            self._monitor_thread.join(timeout=5)
+        logger.info("Alert monitoring stopped")
+    
+    def _monitor_loop(self, check_interval: int):
+        """Background monitoring loop"""
+        while not self._stop_event.is_set():
+            try:
+                symbols_to_check = list(self.alerts.keys())
+                
+                for symbol in symbols_to_check:
+                    if self._stop_event.is_set():
+                        break
+                    
+                    try:
+                        # Fetch latest data
+                        data = fetch_stock_data_with_validation(symbol, period="1d", interval="5m")
+                        if not data.empty:
+                            self.check_alerts(symbol, data)
+                    except Exception as e:
+                        logger.error(f"Error checking alerts for {symbol}: {e}")
+                
+                # Wait for next check
+                self._stop_event.wait(check_interval)
+                
+            except Exception as e:
+                logger.error(f"Error in monitor loop: {e}")
+
+# Global alert monitor instance
+alert_monitor = AlertMonitor()
+
+# ========================= ENHANCED DATA FETCHING =========================
+
+# API Configuration
 CLIENT_ID = os.getenv("CLIENT_ID")
 PASSWORD = os.getenv("PASSWORD")
 TOTP_SECRET = os.getenv("TOTP_SECRET")
 API_KEYS = {
-    "Historical": "c3C0tMGn",
+    "Historical": os.getenv("HISTORICAL_API_KEY", "c3C0tMGn"),
     "Trading": os.getenv("TRADING_API_KEY"),
     "Market": os.getenv("MARKET_API_KEY")
 }
 
 USER_AGENTS = [
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36",
-    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36",
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:127.0) Gecko/20100101 Firefox/127.0",
 ]
 
-# Initialize cache with better key generation
-cache = Cache("stock_data_cache", size_limit=int(1e9))  # 1GB cache limit
-
-TOOLTIPS = {
-    "RSI": "Relative Strength Index (30=Oversold, 70=Overbought)",
-    "ATR": "Average True Range - Measures market volatility",
-    "MACD": "Moving Average Convergence Divergence - Trend following",
-    "ADX": "Average Directional Index (25+ = Strong Trend)",
-    "Bollinger": "Price volatility bands around moving average",
-    "Stop Loss": "Risk management price level based on ATR",
-    "VWAP": "Volume Weighted Average Price - Intraday trend indicator",
-    "Ichimoku": "Ichimoku Cloud - Comprehensive trend indicator",
-    "CMF": "Chaikin Money Flow - Buying/selling pressure",
-    "Donchian": "Donchian Channels - Breakout detection",
-    "Score": "Composite signal strength (-10 to +10). Higher = stronger buy signal."
-}
-
-SECTORS = {
-    "Bank": [
-        "HDFCBANK.NS", "ICICIBANK.NS", "SBIN.NS", "KOTAKBANK.NS", "AXISBANK.NS",
-        "INDUSINDBK.NS", "PNB.NS", "BANKBARODA.NS", "CANBK.NS", "UNIONBANK.NS"
-    ],
-    "Software & IT Services": [
-        "TCS.NS", "INFY.NS", "HCLTECH.NS", "WIPRO.NS", "TECHM.NS", "LTIM.NS",
-        "MPHASIS.NS", "COFORGE.NS", "PERSISTENT.NS", "CYIENT.NS"
-    ],
-    "Finance": [
-        "BAJFINANCE.NS", "BAJAJFINSV.NS", "SHRIRAMFIN.NS", "CHOLAFIN.NS",
-        "SBICARD.NS", "M&MFIN.NS", "MUTHOOTFIN.NS", "LICHSGFIN.NS"
-    ],
-    "Automobile & Ancillaries": [
-        "MARUTI.NS", "TATAMOTORS.NS", "M&M.NS", "BAJAJ-AUTO.NS", "HEROMOTOCO.NS",
-        "EICHERMOT.NS", "TVSMOTOR.NS", "ASHOKLEY.NS", "MRF.NS", "BALKRISIND.NS"
-    ],
-    "Healthcare": [
-        "SUNPHARMA.NS", "CIPLA.NS", "DRREDDY.NS", "APOLLOHOSP.NS", "LUPIN.NS",
-        "DIVISLAB.NS", "AUROPHARMA.NS", "ALKEM.NS", "TORNTPHARM.NS", "ZYDUSLIFE.NS"
-    ],
-    "Metals & Mining": [
-        "TATASTEEL.NS", "JSWSTEEL.NS", "HINDALCO.NS", "VEDL.NS", "SAIL.NS",
-        "NMDC.NS", "HINDZINC.NS", "NALCO.NS", "JINDALSTEL.NS", "COALINDIA.NS"
-    ],
-    "FMCG": [
-        "HINDUNILVR.NS", "ITC.NS", "NESTLEIND.NS", "BRITANNIA.NS",
-        "GODREJCP.NS", "DABUR.NS", "COLPAL.NS", "MARICO.NS", "PGHH.NS"
-    ],
-    "Power": [
-        "NTPC.NS", "POWERGRID.NS", "ADANIPOWER.NS", "TATAPOWER.NS", "JSWENERGY.NS",
-        "NHPC.NS", "SJVN.NS", "TORNTPOWER.NS", "CESC.NS", "ADANIENSOL.NS"
-    ],
-    "Oil & Gas": [
-        "RELIANCE.NS", "ONGC.NS", "IOC.NS", "BPCL.NS", "HPCL.NS", "GAIL.NS",
-        "PETRONET.NS", "OIL.NS", "IGL.NS", "MGL.NS"
-    ],
-    "Real Estate": [
-        "DLF.NS", "GODREJPROP.NS", "OBEROIRLTY.NS", "PHOENIXLTD.NS", "PRESTIGE.NS",
-        "BRIGADE.NS", "SOBHA.NS", "SUNTECK.NS", "MAHLIFE.NS"
-    ]
-}
-
-# ========================= DATA FETCHING =========================
-
 @st.cache_data(ttl=86400)
 def load_symbol_token_map() -> Dict[str, str]:
-    """Load symbol to token mapping with enhanced error handling"""
+    """Load symbol to token mapping with retry logic"""
     try:
         url = "https://margincalculator.angelbroking.com/OpenAPI_File/files/OpenAPIScripMaster.json"
-        response = requests.get(url, timeout=30)
-        response.raise_for_status()
+        response = fetch_with_retry(url)
         data = response.json()
-        return {entry["symbol"]: entry["token"] for entry in data if "symbol" in entry and "token" in entry}
-    except requests.RequestException as e:
-        logger.error(f"Failed to load symbol token map: {e}")
-        st.warning(f"⚠️ Failed to load instrument list: {str(e)}")
-        return {}
+        
+        symbol_map = {}
+        for entry in data:
+            if "symbol" in entry and "token" in entry:
+                symbol_map[entry["symbol"]] = entry["token"]
+        
+        logger.info(f"Loaded {len(symbol_map)} symbol-token mappings")
+        return symbol_map
+        
     except Exception as e:
-        logger.error(f"Unexpected error loading symbol token map: {e}")
+        logger.error(f"Failed to load symbol token map: {e}")
+        st.error(f"⚠️ Failed to load instrument list: {str(e)}")
         return {}
 
 def init_smartapi_client() -> Optional[SmartConnect]:
-    """Initialize SmartAPI client with comprehensive error handling"""
-    try:
+    """Initialize SmartAPI client with retry logic"""
+    
+    @retry(
+        stop=stop_after_attempt(3),
+        wait=wait_exponential(multiplier=1, min=4, max=10)
+    )
+    def _init_client():
         smart_api = SmartConnect(api_key=API_KEYS["Historical"])
         totp = pyotp.TOTP(TOTP_SECRET)
         data = smart_api.generateSession(CLIENT_ID, PASSWORD, totp.now())
@@ -227,68 +693,98 @@ def init_smartapi_client() -> Optional[SmartConnect]:
             logger.info("SmartAPI client initialized successfully")
             return smart_api
         else:
-            error_msg = f"SmartAPI authentication failed: {data.get('message', 'Unknown error')}"
-            logger.error(error_msg)
-            st.error(f"⚠️ {error_msg}")
-            return None
+            raise APIError(f"SmartAPI authentication failed: {data.get('message', 'Unknown error')}")
+    
+    try:
+        return _init_client()
     except Exception as e:
-        error_msg = f"Error initializing SmartAPI: {str(e)}"
-        logger.error(error_msg)
-        st.error(f"⚠️ {error_msg}")
+        logger.error(f"Failed to initialize SmartAPI after retries: {e}")
+        st.error(f"⚠️ Authentication failed: {str(e)}")
         return None
 
-def generate_cache_key(symbol: str, period: str, interval: str) -> str:
-    """Generate a unique cache key using hashing for better performance"""
-    key_string = f"{symbol}_{period}_{interval}_{datetime.now().date()}"
-    return hashlib.md5(key_string.encode()).hexdigest()
-
-@RateLimiter(calls=5, period=60)
-def fetch_nse_stock_list() -> List[str]:
-    """Fetch NSE stock list with rate limiting"""
-    url = "https://archives.nseindia.com/content/equities/EQUITY_L.csv"
-    try:
-        session = requests.Session()
-        session.headers.update({"User-Agent": random.choice(USER_AGENTS)})
-        response = session.get(url, timeout=10)
-        response.raise_for_status()
-        nse_data = pd.read_csv(io.StringIO(response.text))
-        stock_list = [f"{symbol}-EQ" for symbol in nse_data['SYMBOL']]
-        logger.info(f"Fetched {len(stock_list)} stocks from NSE")
-        return stock_list
-    except Exception as e:
-        logger.warning(f"Failed to fetch NSE stock list: {e}, using fallback")
-        return list(set([stock for sector in SECTORS.values() for stock in sector]))
-
-@RateLimiter(calls=5, period=60)
-def fetch_stock_data_with_auth(symbol: str, period: str = "2y", interval: str = "1d") -> pd.DataFrame:
-    """Fetch stock data with enhanced caching and error handling"""
-    cache_key = generate_cache_key(symbol, period, interval)
+def validate_ohlc_data(df: pd.DataFrame) -> pd.DataFrame:
+    """Validate and clean OHLC data"""
+    if df.empty:
+        raise ValidationError("Empty dataframe")
     
-    # Try to get from cache
-    cached_data = cache.get(cache_key)
-    if cached_data is not None:
-        logger.debug(f"Cache hit for {symbol}")
-        return pd.read_pickle(io.BytesIO(cached_data))
+    required_columns = ['Open', 'High', 'Low', 'Close', 'Volume']
+    missing_columns = [col for col in required_columns if col not in df.columns]
+    if missing_columns:
+        raise ValidationError(f"Missing columns: {missing_columns}")
+    
+    # Validate each row
+    invalid_rows = []
+    for idx, row in df.iterrows():
+        try:
+            validator = StockDataValidator(
+                symbol="TEMP",
+                open=row['Open'],
+                high=row['High'],
+                low=row['Low'],
+                close=row['Close'],
+                volume=int(row['Volume']),
+                date=idx if isinstance(idx, datetime) else datetime.now()
+            )
+        except Exception as e:
+            invalid_rows.append(idx)
+            logger.warning(f"Invalid row at {idx}: {e}")
+    
+    # Remove invalid rows
+    if invalid_rows:
+        df = df.drop(invalid_rows)
+        logger.info(f"Removed {len(invalid_rows)} invalid rows")
+    
+    # Handle outliers
+    for col in ['Open', 'High', 'Low', 'Close']:
+        if col in df.columns:
+            df[col] = winsorize(df[col], limits=[0.001, 0.001])
+    
+    return df
 
+@retry(
+    stop=stop_after_attempt(config.MAX_RETRIES),
+    wait=wait_exponential(multiplier=1, min=config.RETRY_MIN_WAIT, max=config.RETRY_MAX_WAIT),
+    retry=retry_if_exception_type((RateLimitError, DataFetchError))
+)
+def fetch_stock_data_with_validation(symbol: str, period: str = "2y", 
+                                    interval: str = "1d") -> pd.DataFrame:
+    """Fetch stock data with validation and retry logic"""
+    
+    # Check cache first
+    cache_key = f"{symbol}_{period}_{interval}_{datetime.now().date()}"
+    cached_data = cache.get(cache_key)
+    
+    if cached_data and isinstance(cached_data, dict):
+        data = cached_data.get('value')
+        if isinstance(data, pd.DataFrame) and not data.empty:
+            logger.debug(f"Cache hit for {symbol}")
+            return data
+    
+    # Rate limit check
+    if not rate_limiter.acquire(f"fetch_{symbol}"):
+        logger.warning(f"Rate limited for {symbol}, waiting...")
+        rate_limiter.wait_if_needed(f"fetch_{symbol}")
+    
     try:
         # Ensure symbol format
         if "-EQ" not in symbol:
             symbol = f"{symbol.split('.')[0]}-EQ"
-
+        
         smart_api = init_smartapi_client()
         if not smart_api:
-            raise DataFetchError("SmartAPI client initialization failed")
-
+            raise APIError("SmartAPI client initialization failed")
+        
         # Calculate date range
         end_date = datetime.now()
         period_map = {
-            "2y": timedelta(days=2 * 365),
+            "2y": timedelta(days=730),
             "1y": timedelta(days=365),
             "1mo": timedelta(days=30),
-            "1w": timedelta(days=7)
+            "1w": timedelta(days=7),
+            "1d": timedelta(days=1)
         }
         start_date = end_date - period_map.get(period, timedelta(days=365))
-
+        
         # Map intervals
         interval_map = {
             "1d": "ONE_DAY",
@@ -298,14 +794,15 @@ def fetch_stock_data_with_auth(symbol: str, period: str = "2y", interval: str = 
             "30m": "THIRTY_MINUTE"
         }
         api_interval = interval_map.get(interval, "ONE_DAY")
-
+        
         # Get symbol token
         symbol_token_map = load_symbol_token_map()
         symboltoken = symbol_token_map.get(symbol)
+        
         if not symboltoken:
             logger.warning(f"Token not found for symbol: {symbol}")
-            return pd.DataFrame()
-
+            raise ValidationError(f"Invalid symbol: {symbol}")
+        
         # Fetch historical data
         historical_data = smart_api.getCandleData({
             "exchange": "NSE",
@@ -314,1819 +811,965 @@ def fetch_stock_data_with_auth(symbol: str, period: str = "2y", interval: str = 
             "fromdate": start_date.strftime("%Y-%m-%d %H:%M"),
             "todate": end_date.strftime("%Y-%m-%d %H:%M")
         })
-
+        
         if historical_data['status'] and historical_data['data']:
             data = pd.DataFrame(
-                historical_data['data'], 
+                historical_data['data'],
                 columns=['Date', 'Open', 'High', 'Low', 'Close', 'Volume']
             )
             data['Date'] = pd.to_datetime(data['Date'])
             data.set_index('Date', inplace=True)
             
-            # Validate data quality
-            is_valid, issues = validate_data_quality(data)
-            if not is_valid:
-                logger.warning(f"Data quality issues for {symbol}: {issues}")
+            # Validate data
+            data = validate_ohlc_data(data)
             
-            # Cache the data
-            buffer = io.BytesIO()
-            data.to_pickle(buffer)
-            cache.set(cache_key, buffer.getvalue(), expire=config.CACHE_TTL)
+            # Cache the validated data
+            cache.set(cache_key, data, ttl=config.CACHE_TTL)
             
-            logger.info(f"Successfully fetched data for {symbol}: {len(data)} rows")
+            logger.info(f"Successfully fetched and validated data for {symbol}: {len(data)} rows")
             return data
         else:
-            error_msg = historical_data.get('message', 'Unknown error')
-            raise DataFetchError(f"No data found for {symbol}: {error_msg}")
-
-    except requests.exceptions.HTTPError as e:
-        if e.response.status_code == 429:
-            logger.warning(f"Rate limit exceeded for {symbol}")
-            st.warning(f"⚠️ Rate limit exceeded for {symbol}. Please wait before retrying.")
-        else:
-            logger.error(f"HTTP error for {symbol}: {e}")
-        return pd.DataFrame()
+            error_msg = historical_data.get('message', 'No data received')
+            raise DataFetchError(f"No data for {symbol}: {error_msg}")
+            
     except Exception as e:
         logger.error(f"Error fetching data for {symbol}: {str(e)}")
-        st.warning(f"⚠️ Error fetching data for {symbol}: {str(e)}")
-        return pd.DataFrame()
+        raise
 
-@lru_cache(maxsize=1000)
-def fetch_stock_data_cached(symbol: str, period: str = "2y", interval: str = "1d") -> pd.DataFrame:
-    """LRU cached wrapper for stock data fetching"""
-    return fetch_stock_data_with_auth(symbol, period, interval)
+# ========================= OPTIMIZED TECHNICAL INDICATORS =========================
 
-# ========================= DATA VALIDATION =========================
-
-def validate_data_quality(data: pd.DataFrame) -> Tuple[bool, List[str]]:
-    """Enhanced data validation with detailed issue reporting"""
-    issues = []
+def compute_indicators_optimized(df: pd.DataFrame, symbol: Optional[str] = None) -> pd.DataFrame:
+    """Optimized indicator computation with performance enhancements"""
     
-    if data is None or data.empty:
-        issues.append("Empty dataframe")
-        return False, issues
-    
-    # Check for required columns
-    required_columns = ['Open', 'High', 'Low', 'Close', 'Volume']
-    missing_columns = [col for col in required_columns if col not in data.columns]
-    if missing_columns:
-        issues.append(f"Missing columns: {missing_columns}")
-    
-    # Check for null values
-    null_counts = data[required_columns].isnull().sum()
-    if null_counts.any():
-        issues.append(f"Null values found: {null_counts[null_counts > 0].to_dict()}")
-    
-    # Check for data anomalies
-    if 'High' in data.columns and 'Low' in data.columns:
-        invalid_hl = (data['High'] < data['Low']).sum()
-        if invalid_hl > 0:
-            issues.append(f"High < Low in {invalid_hl} rows")
-    
-    # Check for negative prices
-    price_columns = ['Open', 'High', 'Low', 'Close']
-    for col in price_columns:
-        if col in data.columns:
-            negative_count = (data[col] < 0).sum()
-            if negative_count > 0:
-                issues.append(f"Negative values in {col}: {negative_count} rows")
-    
-    # Check for extreme outliers
-    if 'Close' in data.columns:
-        returns = data['Close'].pct_change().dropna()
-        extreme_returns = returns[abs(returns) > 0.5]  # 50% daily move
-        if len(extreme_returns) > 0:
-            issues.append(f"Extreme price moves detected: {len(extreme_returns)} instances")
-    
-    # Check for data gaps
-    if isinstance(data.index, pd.DatetimeIndex):
-        time_diff = data.index.to_series().diff()
-        max_gap = time_diff.max()
-        if max_gap > pd.Timedelta(days=5):
-            issues.append(f"Large time gap detected: {max_gap}")
-    
-    return len(issues) == 0, issues
-
-# ========================= TECHNICAL INDICATORS =========================
-
-_indicator_cache = {}
-
-def compute_indicators(df: pd.DataFrame, symbol: Optional[str] = None) -> pd.DataFrame:
-    """Optimized indicator computation with caching"""
     if df.empty or 'Close' not in df.columns:
         return df
-    
-    # Generate cache key
-    cache_key = f"{symbol}_{len(df)}_{df.index[-1] if not df.empty else 'empty'}"
-    if cache_key in _indicator_cache:
-        return _indicator_cache[cache_key]
     
     df = df.copy()
     
     try:
-        # Trend indicators - Vectorized operations
-        windows = [20, 50, 200]
-        for w in windows:
-            if len(df) >= w:
-                df[f'SMA_{w}'] = df['Close'].rolling(w, min_periods=1).mean()
-            else:
-                df[f'SMA_{w}'] = np.nan
+        close_prices = df['Close'].values
+        high_prices = df['High'].values
+        low_prices = df['Low'].values
         
-        # RSI with optimized window
-        if len(df) >= 14:
-            optimal_rsi_window = optimize_rsi_window(df)
-            df['RSI'] = ta.momentum.RSIIndicator(df['Close'], window=optimal_rsi_window).rsi()
+        # Use optimized functions when available
+        if config.USE_NUMBA and len(close_prices) >= 14:
+            # Optimized RSI
+            df['RSI'] = calculate_rsi_optimized(close_prices, 14)
+            
+            # Optimized EMAs for MACD
+            if len(close_prices) >= 26:
+                ema_12 = calculate_ema_optimized(close_prices, 12)
+                ema_26 = calculate_ema_optimized(close_prices, 26)
+                macd_line = ema_12 - ema_26
+                macd_signal = calculate_ema_optimized(macd_line[~np.isnan(macd_line)], 9)
+                
+                df['MACD'] = macd_line
+                df['MACD_signal'] = np.nan
+                df.loc[df.index[26+8:], 'MACD_signal'] = macd_signal
+        else:
+            # Fallback to pandas/ta
+            if len(df) >= 14:
+                df['RSI'] = ta.momentum.RSIIndicator(df['Close'], window=14).rsi()
+            
+            if len(df) >= 26:
+                macd = ta.trend.MACD(df['Close'])
+                df['MACD'] = macd.macd()
+                df['MACD_signal'] = macd.macd_signal()
         
-        # MACD
-        if len(df) >= 26:
-            macd = ta.trend.MACD(df['Close'])
-            df['MACD'] = macd.macd()
-            df['MACD_signal'] = macd.macd_signal()
+        # Vectorized operations for multiple indicators
+        if config.VECTORIZE_OPERATIONS:
+            # Multiple SMAs at once
+            sma_windows = [20, 50, 200]
+            sma_df = vectorized_multiple_smas(df['Close'], sma_windows)
+            for col in sma_df.columns:
+                df[col] = sma_df[col]
+            
+            # Bollinger Bands
+            if len(df) >= 20:
+                upper, middle, lower = vectorized_bollinger_bands(df['Close'], 20, 2)
+                df['Upper_Band'] = upper
+                df['Middle_Band'] = middle
+                df['Lower_Band'] = lower
+        else:
+            # Standard calculation
+            for window in [20, 50, 200]:
+                if len(df) >= window:
+                    df[f'SMA_{window}'] = df['Close'].rolling(window).mean()
+            
+            if len(df) >= 20:
+                bb = ta.volatility.BollingerBands(df['Close'], window=20, window_dev=2)
+                df['Upper_Band'] = bb.bollinger_hband()
+                df['Middle_Band'] = bb.bollinger_mavg()
+                df['Lower_Band'] = bb.bollinger_lband()
         
-        # Ichimoku - only if enough data
-        if len(df) >= 52:
-            ichimoku = ta.trend.IchimokuIndicator(df['High'], df['Low'])
-            df['Ichimoku_Span_A'] = ichimoku.ichimoku_a()
-            df['Ichimoku_Span_B'] = ichimoku.ichimoku_b()
-            df['Ichimoku_Tenkan'] = ichimoku.ichimoku_conversion_line()
-            df['Ichimoku_Kijun'] = ichimoku.ichimoku_base_line()
-            df['Ichimoku_Chikou'] = df['Close'].shift(-26)
-        
-        # Volume indicators
-        if 'Volume' in df.columns and len(df) >= 20:
-            df['CMF'] = ta.volume.ChaikinMoneyFlowIndicator(
-                df['High'], df['Low'], df['Close'], df['Volume'], window=20
-            ).chaikin_money_flow()
-            df['Avg_Volume'] = df['Volume'].rolling(20).mean()
-            df['Volume_Spike'] = df['Volume'] > (df['Avg_Volume'] * 1.5)
-        
-        # Volatility indicators
+        # ATR and ADX
         if len(df) >= 14:
             df['ATR'] = ta.volatility.AverageTrueRange(
                 df['High'], df['Low'], df['Close'], window=14
             ).average_true_range()
+            
             df['ADX'] = ta.trend.ADXIndicator(
                 df['High'], df['Low'], df['Close'], window=14
             ).adx()
         
-        # Donchian Channels
-        if len(df) >= 20:
-            donchian = ta.volatility.DonchianChannel(df['High'], df['Low'], df['Close'], window=20)
-            df['Donchian_Upper'] = donchian.donchian_channel_hband()
-            df['Donchian_Lower'] = donchian.donchian_channel_lband()
-            df['Donchian_Middle'] = donchian.donchian_channel_mband()
+        # Volume indicators
+        if 'Volume' in df.columns and len(df) >= 20:
+            df['Volume_SMA'] = df['Volume'].rolling(20).mean()
+            df['Volume_Ratio'] = df['Volume'] / df['Volume_SMA']
+            df['CMF'] = ta.volume.ChaikinMoneyFlowIndicator(
+                df['High'], df['Low'], df['Close'], df['Volume'], window=20
+            ).chaikin_money_flow()
         
-        # Bollinger Bands
-        if len(df) >= 20:
-            bb = ta.volatility.BollingerBands(close=df['Close'], window=20, window_dev=2)
-            df['Upper_Band'] = bb.bollinger_hband()
-            df['Middle_Band'] = bb.bollinger_mavg()
-            df['Lower_Band'] = bb.bollinger_lband()
-        
-        # Stochastic Oscillator
+        # Stochastic
         if len(df) >= 14:
             stoch = ta.momentum.StochasticOscillator(df['High'], df['Low'], df['Close'])
-            df['SlowK'] = stoch.stoch()
-            df['SlowD'] = stoch.stoch_signal()
-            df['Stoch_K'] = df['SlowK']  # Alias for compatibility
-            df['Stoch_D'] = df['SlowD']
+            df['Stoch_K'] = stoch.stoch()
+            df['Stoch_D'] = stoch.stoch_signal()
         
-        # VWAP calculation
+        # VWAP
         if 'Volume' in df.columns:
-            df['Typical_Price'] = (df['High'] + df['Low'] + df['Close']) / 3
-            df['VWAP'] = (df['Typical_Price'] * df['Volume']).cumsum() / df['Volume'].cumsum()
+            df['VWAP'] = (df['Volume'] * (df['High'] + df['Low'] + df['Close']) / 3).cumsum() / df['Volume'].cumsum()
         
-        # Williams %R for additional momentum
-        if len(df) >= 14:
-            df['WilliamsR'] = ta.momentum.WilliamsRIndicator(
-                df['High'], df['Low'], df['Close'], lbp=14
-            ).williams_r()
-        
-        # Cache the result
-        _indicator_cache[cache_key] = df
+        logger.debug(f"Computed indicators for {symbol if symbol else 'unknown'}")
         
     except Exception as e:
         logger.error(f"Error computing indicators: {e}")
     
     return df
 
-def optimize_rsi_window(data: pd.DataFrame, windows: range = range(5, 15), 
-                        risk_free_rate: float = 0.025) -> int:
-    """Optimize RSI window using Sharpe ratio with better error handling"""
-    best_window, best_sharpe = 9, -float('inf')
-    
-    if data is None or data.empty or 'Close' not in data.columns:
-        return best_window
-    
-    if len(data) < max(windows) + 20:
-        return best_window
-    
-    try:
-        returns = data['Close'].pct_change().dropna()
-        
-        for window in windows:
-            if len(data) < window + 10:
-                continue
-                
-            rsi = ta.momentum.RSIIndicator(data['Close'], window=window).rsi()
-            
-            # Generate signals
-            signals = pd.Series(0, index=rsi.index)
-            signals[rsi < 30] = 1  # Buy signal
-            signals[rsi > 70] = -1  # Sell signal
-            
-            # Calculate positions
-            positions = signals.replace(0, np.nan).ffill().fillna(0).shift(1)
-            
-            # Calculate strategy returns
-            aligned_index = returns.index.intersection(positions.index)
-            if len(aligned_index) < 20:
-                continue
-                
-            strategy_returns = returns.loc[aligned_index] * positions.loc[aligned_index]
-            strategy_returns = strategy_returns.dropna()
-            
-            if len(strategy_returns) > 0 and strategy_returns.std() != 0:
-                sharpe = ((strategy_returns.mean() - risk_free_rate / 252) / 
-                         strategy_returns.std()) * np.sqrt(252)
-                
-                if sharpe > best_sharpe:
-                    best_sharpe, best_window = sharpe, window
-    
-    except Exception as e:
-        logger.warning(f"Error optimizing RSI window: {e}")
-    
-    return best_window
+# ========================= RECOMMENDATION ENGINE WITH ALERTS =========================
 
-# ========================= MARKET ANALYSIS =========================
-
-def classify_market_regime(df: pd.DataFrame) -> str:
-    """Enhanced market regime classification"""
-    try:
-        if len(df) < 50:
-            return "Insufficient Data"
-        
-        sma20 = df['SMA_20'].iloc[-1] if 'SMA_20' in df.columns else df['Close'].rolling(20).mean().iloc[-1]
-        sma50 = df['SMA_50'].iloc[-1] if 'SMA_50' in df.columns else df['Close'].rolling(50).mean().iloc[-1]
-        sma200 = df['SMA_200'].iloc[-1] if 'SMA_200' in df.columns and len(df) >= 200 else None
-        close = df['Close'].iloc[-1]
-        atr = df['ATR'].iloc[-1] if 'ATR' in df.columns else None
-        
-        # Calculate trend slope
-        slope_period = min(5, len(df) - 1)
-        slope = (sma20 - df['SMA_20'].iloc[-slope_period] if 'SMA_20' in df.columns else 0) / slope_period
-        
-        # Volatility assessment
-        atr_pct = (atr / close) if atr and close else 0
-        
-        # ADX for trend strength
-        adx = df['ADX'].iloc[-1] if 'ADX' in df.columns else None
-        
-        # Regime classification with multiple factors
-        if atr_pct > 0.04:
-            return "High Volatility"
-        elif adx and adx > 40:
-            if sma20 > sma50:
-                return "Strong Uptrend"
-            else:
-                return "Strong Downtrend"
-        elif sma200 and sma20 > sma50 > sma200 and slope > 0.001:
-            return "Bullish"
-        elif sma200 and sma20 < sma50 < sma200 and slope < -0.001:
-            return "Bearish"
-        elif abs(slope) < 0.0005:
-            return "Ranging"
-        elif sma20 > sma50:
-            return "Mild Bullish"
-        elif sma20 < sma50:
-            return "Mild Bearish"
-        else:
-            return "Neutral"
-            
-    except Exception as e:
-        logger.error(f"Error classifying market regime: {e}")
-        return "Unknown"
-
-def detect_divergence(data: pd.DataFrame, window: int = 14, 
-                     rsi_threshold: float = 5) -> str:
-    """Enhanced divergence detection with better validation"""
-    try:
-        if 'RSI' not in data.columns or 'Close' not in data.columns:
-            return "Insufficient Data"
-        
-        price = data['Close']
-        rsi = data['RSI']
-        
-        if len(price) < window or len(rsi) < window:
-            return "Insufficient Data"
-        
-        # Find recent peaks and troughs
-        price_window = price.iloc[-window:]
-        rsi_window = rsi.iloc[-window:]
-        
-        # Price extremes
-        price_peaks = price_window[price_window == price_window.rolling(3, center=True).max()]
-        price_troughs = price_window[price_window == price_window.rolling(3, center=True).min()]
-        
-        # RSI extremes
-        rsi_peaks = rsi_window[rsi_window == rsi_window.rolling(3, center=True).max()]
-        rsi_troughs = rsi_window[rsi_window == rsi_window.rolling(3, center=True).min()]
-        
-        # Check for bullish divergence (price lower low, RSI higher low)
-        if len(price_troughs) >= 2 and len(rsi_troughs) >= 2:
-            if (price_troughs.iloc[-1] < price_troughs.iloc[-2] and 
-                rsi_troughs.iloc[-1] > rsi_troughs.iloc[-2] and
-                abs(rsi_troughs.iloc[-1] - rsi_troughs.iloc[-2]) > rsi_threshold):
-                return "Bullish Divergence"
-        
-        # Check for bearish divergence (price higher high, RSI lower high)
-        if len(price_peaks) >= 2 and len(rsi_peaks) >= 2:
-            if (price_peaks.iloc[-1] > price_peaks.iloc[-2] and 
-                rsi_peaks.iloc[-1] < rsi_peaks.iloc[-2] and
-                abs(rsi_peaks.iloc[-1] - rsi_peaks.iloc[-2]) > rsi_threshold):
-                return "Bearish Divergence"
-        
-        return "No Divergence"
-        
-    except Exception as e:
-        logger.error(f"Error detecting divergence: {e}")
-        return "Error"
-
-# ========================= SIGNAL SCORING =========================
-
-def compute_signal_score(df: pd.DataFrame, regime: str) -> float:
-    """Enhanced signal scoring with regime-specific weights"""
+def generate_signals_with_alerts(df: pd.DataFrame, symbol: str) -> Dict[str, Any]:
+    """Generate trading signals and check for alert conditions"""
     
-    # Dynamic weights based on regime
-    regime_weights = {
-        "Strong Uptrend": {"trend": 2.0, "momentum": 1.5, "volatility": 0.5},
-        "Bullish": {"trend": 1.5, "momentum": 1.5, "volatility": 0.8},
-        "Neutral": {"trend": 0.8, "momentum": 1.2, "volatility": 1.0},
-        "Ranging": {"trend": 0.5, "momentum": 1.0, "volatility": 1.5},
-        "Bearish": {"trend": 1.5, "momentum": 1.5, "volatility": 0.8},
-        "Strong Downtrend": {"trend": 2.0, "momentum": 1.5, "volatility": 0.5},
-        "High Volatility": {"trend": 0.5, "momentum": 0.8, "volatility": 2.0}
+    signals = {
+        "buy_signals": [],
+        "sell_signals": [],
+        "alerts": []
     }
     
-    weights = regime_weights.get(regime, {"trend": 1.0, "momentum": 1.0, "volatility": 1.0})
-    
-    score = 0
-    signals_count = 0
+    if df.empty or len(df) < 20:
+        return signals
     
     try:
-        close = df['Close'].iloc[-1]
+        current_price = df['Close'].iloc[-1]
         
-        # RSI Signal (Momentum)
+        # Price action signals
+        if 'Lower_Band' in df.columns and current_price <= df['Lower_Band'].iloc[-1]:
+            signals["buy_signals"].append("Bollinger Band Oversold")
+            signals["alerts"].append(Alert(
+                symbol, AlertType.PRICE_BELOW, 
+                df['Lower_Band'].iloc[-1],
+                "Price below Bollinger Lower Band"
+            ))
+        
+        if 'Upper_Band' in df.columns and current_price >= df['Upper_Band'].iloc[-1]:
+            signals["sell_signals"].append("Bollinger Band Overbought")
+            signals["alerts"].append(Alert(
+                symbol, AlertType.PRICE_ABOVE,
+                df['Upper_Band'].iloc[-1],
+                "Price above Bollinger Upper Band"
+            ))
+        
+        # RSI signals
         if 'RSI' in df.columns and pd.notna(df['RSI'].iloc[-1]):
             rsi = df['RSI'].iloc[-1]
-            signals_count += 1
-            
             if rsi < 30:
-                score += 2.0 * weights["momentum"]
-            elif rsi < 40:
-                score += 1.0 * weights["momentum"]
+                signals["buy_signals"].append("RSI Oversold")
+                signals["alerts"].append(Alert(
+                    symbol, AlertType.RSI_OVERSOLD, 30,
+                    f"RSI oversold at {rsi:.1f}"
+                ))
             elif rsi > 70:
-                score -= 2.0 * weights["momentum"]
-            elif rsi > 60:
-                score -= 1.0 * weights["momentum"]
+                signals["sell_signals"].append("RSI Overbought")
+                signals["alerts"].append(Alert(
+                    symbol, AlertType.RSI_OVERBOUGHT, 70,
+                    f"RSI overbought at {rsi:.1f}"
+                ))
         
-        # MACD Signal (Trend)
+        # Volume spike
+        if 'Volume_Ratio' in df.columns and pd.notna(df['Volume_Ratio'].iloc[-1]):
+            if df['Volume_Ratio'].iloc[-1] > 2.0:
+                signals["alerts"].append(Alert(
+                    symbol, AlertType.VOLUME_SPIKE, 2.0,
+                    f"Volume spike detected ({df['Volume_Ratio'].iloc[-1]:.1f}x average)"
+                ))
+        
+        # MACD crossover
         if 'MACD' in df.columns and 'MACD_signal' in df.columns:
             macd = df['MACD'].iloc[-1]
-            macd_signal = df['MACD_signal'].iloc[-1]
+            signal = df['MACD_signal'].iloc[-1]
+            prev_macd = df['MACD'].iloc[-2] if len(df) > 1 else macd
+            prev_signal = df['MACD_signal'].iloc[-2] if len(df) > 1 else signal
             
-            if pd.notna(macd) and pd.notna(macd_signal):
-                signals_count += 1
-                macd_diff = macd - macd_signal
-                
-                # Check for crossover
-                prev_macd = df['MACD'].iloc[-2]
-                prev_signal = df['MACD_signal'].iloc[-2]
-                
-                if macd > macd_signal and prev_macd <= prev_signal:
-                    score += 2.5 * weights["trend"]  # Bullish crossover
-                elif macd < macd_signal and prev_macd >= prev_signal:
-                    score -= 2.5 * weights["trend"]  # Bearish crossover
-                elif macd_diff > 0:
-                    score += 1.0 * weights["trend"]
-                else:
-                    score -= 1.0 * weights["trend"]
+            if pd.notna(macd) and pd.notna(signal):
+                if macd > signal and prev_macd <= prev_signal:
+                    signals["buy_signals"].append("MACD Bullish Crossover")
+                elif macd < signal and prev_macd >= prev_signal:
+                    signals["sell_signals"].append("MACD Bearish Crossover")
         
-        # Ichimoku Cloud (Trend)
-        if 'Ichimoku_Span_A' in df.columns and 'Ichimoku_Span_B' in df.columns:
-            span_a = df['Ichimoku_Span_A'].iloc[-1]
-            span_b = df['Ichimoku_Span_B'].iloc[-1]
+        # Breakout detection
+        if len(df) >= 20:
+            recent_high = df['High'].iloc[-20:-1].max()
+            recent_low = df['Low'].iloc[-20:-1].min()
             
-            if pd.notna(span_a) and pd.notna(span_b):
-                signals_count += 1
-                cloud_top = max(span_a, span_b)
-                cloud_bottom = min(span_a, span_b)
-                
-                if close > cloud_top:
-                    score += 2.0 * weights["trend"]
-                elif close < cloud_bottom:
-                    score -= 2.0 * weights["trend"]
-                else:
-                    score += 0.5 * weights["trend"]  # Inside cloud
-        
-        # Bollinger Bands (Volatility)
-        if 'Upper_Band' in df.columns and 'Lower_Band' in df.columns:
-            upper = df['Upper_Band'].iloc[-1]
-            lower = df['Lower_Band'].iloc[-1]
-            
-            if pd.notna(upper) and pd.notna(lower):
-                signals_count += 1
-                band_width = (upper - lower) / close
-                
-                if close < lower:
-                    score += 1.5 * weights["volatility"]  # Oversold
-                elif close > upper:
-                    score -= 1.5 * weights["volatility"]  # Overbought
-                
-                # Band squeeze detection
-                if band_width < 0.05:
-                    score += 0.5  # Potential breakout
-        
-        # Volume Analysis
-        if 'Volume' in df.columns and 'Avg_Volume' in df.columns:
-            volume = df['Volume'].iloc[-1]
-            avg_volume = df['Avg_Volume'].iloc[-1]
-            
-            if pd.notna(volume) and pd.notna(avg_volume) and avg_volume > 0:
-                signals_count += 1
-                volume_ratio = volume / avg_volume
-                
-                if volume_ratio > 1.5 and close > df['Close'].iloc[-2]:
-                    score += 1.0  # High volume with price increase
-                elif volume_ratio > 1.5 and close < df['Close'].iloc[-2]:
-                    score -= 1.0  # High volume with price decrease
-        
-        # ADX for trend strength
-        if 'ADX' in df.columns and pd.notna(df['ADX'].iloc[-1]):
-            adx = df['ADX'].iloc[-1]
-            signals_count += 1
-            
-            if adx > 25:
-                score += 0.5 * weights["trend"]  # Strong trend
-            elif adx < 15:
-                score -= 0.5 * weights["trend"]  # Weak trend
-        
-        # Stochastic Oscillator
-        if 'SlowK' in df.columns and 'SlowD' in df.columns:
-            k = df['SlowK'].iloc[-1]
-            d = df['SlowD'].iloc[-1]
-            
-            if pd.notna(k) and pd.notna(d):
-                signals_count += 1
-                
-                if k < 20 and k > d:
-                    score += 1.0 * weights["momentum"]  # Oversold with bullish crossover
-                elif k > 80 and k < d:
-                    score -= 1.0 * weights["momentum"]  # Overbought with bearish crossover
-        
-        # Normalize score based on number of signals
-        if signals_count > 0:
-            score = score / signals_count * 3  # Scale to reasonable range
+            if current_price > recent_high:
+                signals["buy_signals"].append("Breakout Above Resistance")
+                signals["alerts"].append(Alert(
+                    symbol, AlertType.BREAKOUT, recent_high,
+                    f"Breakout above {recent_high:.2f}"
+                ))
+            elif current_price < recent_low:
+                signals["sell_signals"].append("Breakdown Below Support")
         
     except Exception as e:
-        logger.error(f"Error computing signal score: {e}")
-        return 0
+        logger.error(f"Error generating signals for {symbol}: {e}")
     
-    return round(np.clip(score, -10, 10), 2)
+    return signals
 
-# ========================= POSITION SIZING =========================
-
-def calculate_position_size(account_size: float, risk_per_trade: float, 
-                           entry_price: float, stop_loss: float,
-                           max_position_pct: float = 0.25,
-                           volatility_adjustment: bool = True,
-                           atr: Optional[float] = None) -> int:
-    """
-    Enhanced position sizing with Kelly Criterion and volatility adjustment
-    """
+def adaptive_recommendation_with_monitoring(df: pd.DataFrame, symbol: str, 
+                                           account_size: float = 30000) -> Dict[str, Any]:
+    """Enhanced adaptive recommendation with alert monitoring"""
+    
     try:
-        # Basic position sizing based on risk
-        risk_amount = account_size * risk_per_trade
-        price_risk = abs(entry_price - stop_loss)
-        
-        if price_risk == 0:
-            return 0
-        
-        shares_by_risk = risk_amount / price_risk
-        
-        # Max position constraint
-        max_position_value = account_size * max_position_pct
-        shares_by_max = max_position_value / entry_price
-        
-        # Volatility adjustment
-        if volatility_adjustment and atr:
-            atr_pct = atr / entry_price
-            if atr_pct > 0.03:  # High volatility
-                shares_by_risk *= 0.7  # Reduce position size
-            elif atr_pct < 0.01:  # Low volatility
-                shares_by_risk *= 1.2  # Increase position size
-        
-        # Return integer number of shares
-        return int(min(shares_by_risk, shares_by_max))
-        
-    except Exception as e:
-        logger.error(f"Error calculating position size: {e}")
-        return 0
-
-# ========================= RECOMMENDATION ENGINE =========================
-
-def adaptive_recommendation(df: pd.DataFrame, symbol: Optional[str] = None,
-                           account_size: float = 30000,
-                           max_position_size: int = 100) -> Dict[str, Any]:
-    """Enhanced adaptive recommendation system"""
-    try:
-        # Compute indicators
-        df = compute_indicators(df, symbol)
+        # Compute optimized indicators
+        df = compute_indicators_optimized(df, symbol)
         
         if len(df) < 50:
-            return {"Recommendation": "Hold", "Reason": "Insufficient data"}
+            return {
+                "Recommendation": "Hold",
+                "Reason": "Insufficient data",
+                "Alerts": []
+            }
         
-        close = df['Close'].iloc[-1]
-        atr = df['ATR'].iloc[-1] if 'ATR' in df.columns else None
-        volume = df['Volume'].iloc[-1] if 'Volume' in df.columns else None
-        avg_vol = df['Avg_Volume'].iloc[-1] if 'Avg_Volume' in df.columns else None
+        # Get current values
+        current_price = df['Close'].iloc[-1]
         
-        # Classify market regime
-        regime = classify_market_regime(df)
+        # Generate signals and alerts
+        signals = generate_signals_with_alerts(df, symbol)
         
-        # Compute signal score
-        score = compute_signal_score(df, regime)
+        # Check existing alerts
+        triggered_alerts = alert_monitor.check_alerts(symbol, df)
         
-        # Check for divergence
-        divergence = detect_divergence(df)
-        
-        # Adjust score based on divergence
-        if divergence == "Bullish Divergence":
-            score += 1.5
-        elif divergence == "Bearish Divergence":
-            score -= 1.5
-        
-        # Dynamic thresholds based on regime
-        thresholds = {
-            'High Volatility': 2.0,
-            'Strong Uptrend': 0.5,
-            'Bullish': 1.0,
-            'Neutral': 1.5,
-            'Ranging': 2.0,
-            'Bearish': 1.0,
-            'Strong Downtrend': 0.5
-        }
-        threshold = thresholds.get(regime, 1.5)
+        # Calculate scores
+        buy_score = len(signals["buy_signals"])
+        sell_score = len(signals["sell_signals"])
+        net_score = buy_score - sell_score
         
         # Generate recommendation
-        if score > threshold:
-            rec = "Buy"
-            reason = f"Strong buy signals (score: {score:.1f})"
-        elif score < -threshold:
-            rec = "Sell"
-            reason = f"Strong sell signals (score: {score:.1f})"
+        if net_score >= 2:
+            recommendation = "Buy"
+            confidence = min(100, net_score * 20)
+        elif net_score <= -2:
+            recommendation = "Sell"
+            confidence = min(100, abs(net_score) * 20)
         else:
-            rec = "Hold"
-            reason = f"Neutral signals (score: {score:.1f})"
+            recommendation = "Hold"
+            confidence = 50
         
-        # Calculate entry, stop loss, and target
-        if rec == "Buy":
-            buy_at = close * 1.002  # Slight premium for entry
+        # Calculate position sizing and risk levels
+        atr = df['ATR'].iloc[-1] if 'ATR' in df.columns else current_price * 0.02
+        
+        if recommendation == "Buy":
+            entry_price = current_price * 1.002
+            stop_loss = current_price - (atr * 2)
+            target = current_price + (atr * 6)
             
-            # Dynamic stop loss based on ATR and regime
-            if atr:
-                atr_multiplier = 2.0 if regime == "High Volatility" else 1.5
-                stop_loss = close - (atr * atr_multiplier)
-            else:
-                stop_loss = close * 0.95
+            # Add stop loss and target alerts
+            stop_alert = Alert(
+                symbol, AlertType.STOP_LOSS_HIT, stop_loss,
+                f"Stop loss alert at {stop_loss:.2f}"
+            )
+            target_alert = Alert(
+                symbol, AlertType.TARGET_REACHED, target,
+                f"Target reached at {target:.2f}"
+            )
             
-            # Target based on risk-reward ratio
-            risk = close - stop_loss
-            target = close + (risk * 3)  # 3:1 risk-reward
+            alert_monitor.add_alert(stop_alert)
+            alert_monitor.add_alert(target_alert)
             
-        elif rec == "Sell":
-            buy_at = None
-            stop_loss = close * 1.05
-            target = close * 0.95
+        elif recommendation == "Sell":
+            entry_price = current_price * 0.998
+            stop_loss = current_price + (atr * 2)
+            target = current_price - (atr * 6)
         else:
-            buy_at = None
+            entry_price = None
             stop_loss = None
             target = None
         
-        # Calculate position size
-        if rec in ["Buy", "Sell"] and stop_loss:
-            position_size = calculate_position_size(
-                account_size, 
-                config.DEFAULT_RISK_PER_TRADE,
-                close, 
-                stop_loss,
-                config.MAX_POSITION_SIZE_PCT,
-                True,
-                atr
-            )
+        # Position sizing
+        if stop_loss:
+            risk_per_share = abs(current_price - stop_loss)
+            position_size = int((account_size * 0.02) / risk_per_share) if risk_per_share > 0 else 0
         else:
             position_size = 0
         
-        # Calculate trailing stop
-        if rec == "Buy" and atr:
-            trailing_stop = close - (atr * 2.5)
-        elif rec == "Sell" and atr:
-            trailing_stop = close + (atr * 2.5)
-        else:
-            trailing_stop = None
+        # Add new alerts from signals
+        for alert in signals.get("alerts", []):
+            alert_monitor.add_alert(alert)
         
         return {
-            "Current Price": round(close, 2),
-            "Buy At": round(buy_at, 2) if buy_at else None,
+            "Symbol": symbol,
+            "Current Price": round(current_price, 2),
+            "Entry Price": round(entry_price, 2) if entry_price else None,
             "Stop Loss": round(stop_loss, 2) if stop_loss else None,
             "Target": round(target, 2) if target else None,
-            "Recommendation": rec,
-            "Score": score,
-            "Regime": regime,
-            "Divergence": divergence,
+            "Recommendation": recommendation,
+            "Confidence": confidence,
+            "Score": net_score,
+            "Buy Signals": signals["buy_signals"],
+            "Sell Signals": signals["sell_signals"],
             "Position Size": position_size,
-            "Trailing Stop": round(trailing_stop, 2) if trailing_stop else None,
-            "Reason": reason,
-            "Confidence": min(100, abs(score) * 10)  # Confidence percentage
+            "Risk Per Share": round(risk_per_share, 2) if stop_loss else None,
+            "Triggered Alerts": [a.message for a in triggered_alerts],
+            "Active Alerts": len(alert_monitor.get_alerts(symbol))
         }
         
     except Exception as e:
-        logger.error(f"Error in adaptive recommendation: {e}")
-        return {"Recommendation": "Hold", "Reason": f"Error: {str(e)}"}
+        logger.error(f"Error in adaptive recommendation for {symbol}: {e}")
+        return {
+            "Recommendation": "Hold",
+            "Reason": f"Error: {str(e)}",
+            "Alerts": []
+        }
 
-def generate_recommendations(data: pd.DataFrame, symbol: Optional[str] = None) -> Dict[str, Any]:
-    """Standard recommendation generation with multiple timeframes"""
-    recommendations = {
-        "Intraday": "Hold", "Swing": "Hold",
-        "Short-Term": "Hold", "Long-Term": "Hold",
-        "Mean_Reversion": "Hold", "Breakout": "Hold",
-        "Ichimoku_Trend": "Hold",
-        "Current Price": None, "Buy At": None,
-        "Stop Loss": None, "Target": None, "Score": 0
-    }
-    
-    if data.empty or len(data) < 27:
-        return recommendations
-    
+# ========================= BATCH PROCESSING WITH ERROR HANDLING =========================
+
+async def analyze_stock_async(session: aiohttp.ClientSession, symbol: str) -> Optional[Dict[str, Any]]:
+    """Async stock analysis for better performance"""
     try:
-        # Ensure indicators are computed
-        data = compute_indicators(data, symbol)
-        
-        recommendations["Current Price"] = float(data['Close'].iloc[-1])
-        
-        buy_score = 0
-        sell_score = 0
-        
-        # RSI Analysis
-        if 'RSI' in data.columns and pd.notna(data['RSI'].iloc[-1]):
-            rsi = data['RSI'].iloc[-1]
-            if rsi < 25:
-                buy_score += 3
-            elif rsi < 30:
-                buy_score += 2
-            elif rsi < 40:
-                buy_score += 1
-            elif rsi > 75:
-                sell_score += 3
-            elif rsi > 70:
-                sell_score += 2
-            elif rsi > 60:
-                sell_score += 1
-        
-        # MACD Analysis
-        if 'MACD' in data.columns and 'MACD_signal' in data.columns:
-            macd = data['MACD'].iloc[-1]
-            macd_sig = data['MACD_signal'].iloc[-1]
-            
-            if pd.notna(macd) and pd.notna(macd_sig):
-                # Check for crossover
-                prev_macd = data['MACD'].iloc[-2] if len(data) > 1 else macd
-                prev_signal = data['MACD_signal'].iloc[-2] if len(data) > 1 else macd_sig
-                
-                if macd > macd_sig and prev_macd <= prev_signal:
-                    buy_score += 2  # Bullish crossover
-                elif macd < macd_sig and prev_macd >= prev_signal:
-                    sell_score += 2  # Bearish crossover
-                elif macd > macd_sig:
-                    buy_score += 1
-                else:
-                    sell_score += 1
-        
-        # Bollinger Bands
-        if all(col in data.columns for col in ['Close', 'Lower_Band', 'Upper_Band']):
-            close = data['Close'].iloc[-1]
-            lower = data['Lower_Band'].iloc[-1]
-            upper = data['Upper_Band'].iloc[-1]
-            
-            if pd.notna(lower) and pd.notna(upper):
-                if close < lower:
-                    buy_score += 2
-                    recommendations["Mean_Reversion"] = "Buy"
-                elif close > upper:
-                    sell_score += 2
-                    recommendations["Mean_Reversion"] = "Sell"
-        
-        # Volume Analysis
-        if 'Volume' in data.columns and 'Avg_Volume' in data.columns:
-            volume = data['Volume'].iloc[-1]
-            avg_vol = data['Avg_Volume'].iloc[-1]
-            
-            if pd.notna(volume) and pd.notna(avg_vol) and avg_vol > 0:
-                volume_ratio = volume / avg_vol
-                close = data['Close'].iloc[-1]
-                prev_close = data['Close'].iloc[-2]
-                
-                if volume_ratio > 1.5:
-                    if close > prev_close:
-                        buy_score += 2
-                    else:
-                        sell_score += 2
-        
-        # Ichimoku Analysis
-        if 'Ichimoku_Span_A' in data.columns and 'Ichimoku_Span_B' in data.columns:
-            span_a = data['Ichimoku_Span_A'].iloc[-1]
-            span_b = data['Ichimoku_Span_B'].iloc[-1]
-            close = data['Close'].iloc[-1]
-            
-            if pd.notna(span_a) and pd.notna(span_b):
-                if close > max(span_a, span_b):
-                    buy_score += 2
-                    recommendations["Ichimoku_Trend"] = "Buy"
-                elif close < min(span_a, span_b):
-                    sell_score += 2
-                    recommendations["Ichimoku_Trend"] = "Sell"
-        
-        # Donchian Breakout
-        if 'Donchian_Upper' in data.columns and 'Donchian_Lower' in data.columns:
-            upper = data['Donchian_Upper'].iloc[-1]
-            lower = data['Donchian_Lower'].iloc[-1]
-            close = data['Close'].iloc[-1]
-            
-            if pd.notna(upper) and pd.notna(lower):
-                if close > upper:
-                    buy_score += 2
-                    recommendations["Breakout"] = "Buy"
-                elif close < lower:
-                    sell_score += 2
-                    recommendations["Breakout"] = "Sell"
-        
-        # ADX for trend strength
-        if 'ADX' in data.columns and pd.notna(data['ADX'].iloc[-1]):
-            adx = data['ADX'].iloc[-1]
-            if adx > 25:
-                # Strong trend - enhance existing signals
-                if buy_score > sell_score:
-                    buy_score += 1
-                elif sell_score > buy_score:
-                    sell_score += 1
-        
-        # Generate timeframe recommendations
-        net_score = buy_score - sell_score
-        
-        # Intraday (most sensitive)
-        if net_score >= 3:
-            recommendations["Intraday"] = "Strong Buy"
-        elif net_score >= 2:
-            recommendations["Intraday"] = "Buy"
-        elif net_score <= -3:
-            recommendations["Intraday"] = "Strong Sell"
-        elif net_score <= -2:
-            recommendations["Intraday"] = "Sell"
-        
-        # Swing (medium sensitivity)
-        if net_score >= 4:
-            recommendations["Swing"] = "Strong Buy"
-        elif net_score >= 3:
-            recommendations["Swing"] = "Buy"
-        elif net_score <= -4:
-            recommendations["Swing"] = "Strong Sell"
-        elif net_score <= -3:
-            recommendations["Swing"] = "Sell"
-        
-        # Short-term
-        if net_score >= 5:
-            recommendations["Short-Term"] = "Buy"
-        elif net_score <= -5:
-            recommendations["Short-Term"] = "Sell"
-        
-        # Long-term (least sensitive)
-        if net_score >= 6:
-            recommendations["Long-Term"] = "Buy"
-        elif net_score <= -6:
-            recommendations["Long-Term"] = "Sell"
-        
-        # Calculate entry, stop loss, and target
-        recommendations["Buy At"] = calculate_buy_at(data)
-        recommendations["Stop Loss"] = calculate_stop_loss(data)
-        recommendations["Target"] = calculate_target(data)
-        recommendations["Score"] = min(max(net_score, -10), 10)
-        
-    except Exception as e:
-        logger.error(f"Error generating recommendations: {e}")
-    
-    return recommendations
-
-# ========================= PRICE CALCULATIONS =========================
-
-def calculate_buy_at(data: pd.DataFrame) -> Optional[float]:
-    """Calculate optimal entry price"""
-    try:
-        if data.empty or 'Close' not in data.columns:
-            return None
-        
-        last_close = data['Close'].iloc[-1]
-        
-        # Check RSI for entry timing
-        if 'RSI' in data.columns and pd.notna(data['RSI'].iloc[-1]):
-            rsi = data['RSI'].iloc[-1]
-            if rsi < 30:
-                # Oversold - can afford slight discount
-                return round(last_close * 0.995, 2)
-        
-        # Check for support levels
-        if 'Lower_Band' in data.columns and pd.notna(data['Lower_Band'].iloc[-1]):
-            lower_band = data['Lower_Band'].iloc[-1]
-            if last_close < lower_band * 1.02:
-                # Near support - good entry
-                return round(last_close, 2)
-        
-        # Default: slight premium for momentum
-        return round(last_close * 1.002, 2)
-        
-    except Exception as e:
-        logger.error(f"Error calculating buy price: {e}")
-        return None
-
-def calculate_stop_loss(data: pd.DataFrame) -> Optional[float]:
-    """Calculate stop loss with multiple methods"""
-    try:
-        if data.empty or 'Close' not in data.columns:
-            return None
-        
-        last_close = data['Close'].iloc[-1]
-        stop_loss = last_close * 0.95  # Default 5% stop
-        
-        # ATR-based stop loss (preferred)
-        if 'ATR' in data.columns and pd.notna(data['ATR'].iloc[-1]):
-            atr = data['ATR'].iloc[-1]
-            
-            # Adjust multiplier based on ADX
-            multiplier = config.DEFAULT_STOP_LOSS_ATR_MULT
-            if 'ADX' in data.columns and pd.notna(data['ADX'].iloc[-1]):
-                adx = data['ADX'].iloc[-1]
-                if adx > 30:
-                    multiplier = 2.5  # Wider stop for strong trends
-                elif adx < 20:
-                    multiplier = 1.5  # Tighter stop for weak trends
-            
-            stop_loss = last_close - (atr * multiplier)
-        
-        # Support-based stop loss
-        if 'Lower_Band' in data.columns and pd.notna(data['Lower_Band'].iloc[-1]):
-            lower_band = data['Lower_Band'].iloc[-1]
-            stop_loss = max(stop_loss, lower_band * 0.98)
-        
-        # Recent swing low
-        if len(data) >= 20:
-            recent_low = data['Low'].iloc[-20:].min()
-            stop_loss = max(stop_loss, recent_low * 0.99)
-        
-        # Ensure stop loss is not too tight
-        min_stop = last_close * 0.9  # Maximum 10% stop
-        stop_loss = max(stop_loss, min_stop)
-        
-        return round(stop_loss, 2)
-        
-    except Exception as e:
-        logger.error(f"Error calculating stop loss: {e}")
-        return None
-
-def calculate_target(data: pd.DataFrame, risk_reward_ratio: float = 3.0) -> Optional[float]:
-    """Calculate profit target with dynamic risk-reward"""
-    try:
-        stop_loss = calculate_stop_loss(data)
-        if stop_loss is None:
-            return None
-        
-        last_close = data['Close'].iloc[-1]
-        risk = last_close - stop_loss
-        
-        # Adjust risk-reward based on market conditions
-        if 'ADX' in data.columns and pd.notna(data['ADX'].iloc[-1]):
-            adx = data['ADX'].iloc[-1]
-            if adx > 30:
-                risk_reward_ratio = 4.0  # Higher targets in strong trends
-            elif adx < 20:
-                risk_reward_ratio = 2.0  # Lower targets in weak trends
-        
-        # Resistance-based target
-        target = last_close + (risk * risk_reward_ratio)
-        
-        if 'Upper_Band' in data.columns and pd.notna(data['Upper_Band'].iloc[-1]):
-            upper_band = data['Upper_Band'].iloc[-1]
-            # If calculated target is beyond upper band, adjust
-            if target > upper_band * 1.05:
-                target = upper_band * 1.02
-        
-        # Recent swing high as resistance
-        if len(data) >= 20:
-            recent_high = data['High'].iloc[-20:].max()
-            if target > recent_high * 1.1:
-                target = recent_high * 1.05
-        
-        # Cap at reasonable levels
-        max_target = last_close * 1.2  # Maximum 20% target
-        target = min(target, max_target)
-        
-        return round(target, 2)
-        
-    except Exception as e:
-        logger.error(f"Error calculating target: {e}")
-        return None
-
-# ========================= BACKTESTING =========================
-
-@st.cache_data(ttl=3600)
-def backtest_stock(data: pd.DataFrame, symbol: str, strategy: str = "Swing", 
-                   _data_hash: Optional[int] = None) -> Dict[str, Any]:
-    """Enhanced backtesting with proper position management"""
-    
-    INITIAL_CAPITAL = config.INITIAL_CAPITAL
-    commission = config.COMMISSION
-    position_size_pct = st.session_state.get('position_size', 1.0)
-    
-    results = {
-        "total_return": 0,
-        "annual_return": 0,
-        "sharpe_ratio": 0,
-        "max_drawdown": 0,
-        "trades": 0,
-        "win_rate": 0,
-        "profit_factor": 0,
-        "average_win": 0,
-        "average_loss": 0,
-        "buy_signals": [],
-        "sell_signals": [],
-        "trade_details": [],
-        "equity_curve": []
-    }
-    
-    try:
-        recommendation_mode = st.session_state.get('recommendation_mode', 'Standard')
-        
-        portfolio_value = INITIAL_CAPITAL
-        cash = INITIAL_CAPITAL
-        position = None
-        entry_price = 0
-        entry_date = None
-        trade_qty = 0
-        trades = []
-        returns = []
-        equity_curve = []
-        
-        for i in range(50, len(data)):  # Start after enough data for indicators
-            sliced_data = data.iloc[:i+1]
-            current_price = data['Close'].iloc[i]
-            current_date = data.index[i]
-            
-            # Get recommendation
-            if recommendation_mode == "Adaptive":
-                rec = adaptive_recommendation(sliced_data, symbol)
-                signal = rec.get("Recommendation", "Hold")
-            else:
-                rec = generate_recommendations(sliced_data, symbol)
-                signal = rec.get(strategy, "Hold")
-            
-            # Simplified signal interpretation
-            if "Buy" in str(signal) and position is None:
-                # Execute buy
-                entry_price = current_price
-                entry_date = current_date
-                allocation = cash * position_size_pct
-                trade_qty = int(allocation // current_price)
-                
-                if trade_qty > 0:
-                    cost = trade_qty * current_price * (1 + commission)
-                    if cost <= cash:
-                        cash -= cost
-                        position = "Long"
-                        results["buy_signals"].append((current_date, current_price))
-            
-            elif "Sell" in str(signal) and position == "Long":
-                # Execute sell
-                proceeds = trade_qty * current_price * (1 - commission)
-                cash += proceeds
-                
-                # Calculate profit
-                entry_cost = trade_qty * entry_price * (1 + commission)
-                exit_proceeds = proceeds
-                profit = exit_proceeds - entry_cost
-                pct_return = profit / entry_cost if entry_cost > 0 else 0
-                
-                trades.append({
-                    "entry_date": entry_date,
-                    "entry_price": entry_price,
-                    "exit_date": current_date,
-                    "exit_price": current_price,
-                    "quantity": trade_qty,
-                    "profit": profit,
-                    "return": pct_return
-                })
-                
-                returns.append(pct_return)
-                results["sell_signals"].append((current_date, current_price))
-                
-                # Reset position
-                position = None
-                entry_price = 0
-                entry_date = None
-                trade_qty = 0
-            
-            # Update portfolio value
-            if position == "Long":
-                portfolio_value = cash + (trade_qty * current_price)
-            else:
-                portfolio_value = cash
-            
-            equity_curve.append((current_date, portfolio_value))
-        
-        # Close any open position
-        if position == "Long" and trade_qty > 0:
-            current_price = data['Close'].iloc[-1]
-            current_date = data.index[-1]
-            
-            proceeds = trade_qty * current_price * (1 - commission)
-            cash += proceeds
-            
-            entry_cost = trade_qty * entry_price * (1 + commission)
-            profit = proceeds - entry_cost
-            pct_return = profit / entry_cost if entry_cost > 0 else 0
-            
-            trades.append({
-                "entry_date": entry_date,
-                "entry_price": entry_price,
-                "exit_date": current_date,
-                "exit_price": current_price,
-                "quantity": trade_qty,
-                "profit": profit,
-                "return": pct_return
-            })
-            
-            returns.append(pct_return)
-            results["sell_signals"].append((current_date, current_price))
-            portfolio_value = cash
-            equity_curve.append((current_date, portfolio_value))
-        
-        # Calculate performance metrics
-        if trades:
-            results["trade_details"] = trades
-            results["trades"] = len(trades)
-            results["total_return"] = ((portfolio_value - INITIAL_CAPITAL) / INITIAL_CAPITAL) * 100
-            
-            # Win rate
-            winning_trades = [t for t in trades if t["profit"] > 0]
-            losing_trades = [t for t in trades if t["profit"] <= 0]
-            results["win_rate"] = (len(winning_trades) / len(trades)) * 100 if trades else 0
-            
-            # Profit factor
-            total_wins = sum(t["profit"] for t in winning_trades) if winning_trades else 0
-            total_losses = abs(sum(t["profit"] for t in losing_trades)) if losing_trades else 1
-            results["profit_factor"] = total_wins / total_losses if total_losses > 0 else 0
-            
-            # Average win/loss
-            results["average_win"] = np.mean([t["return"] for t in winning_trades]) * 100 if winning_trades else 0
-            results["average_loss"] = np.mean([t["return"] for t in losing_trades]) * 100 if losing_trades else 0
-            
-            # Annual return
-            if len(data) > 0:
-                days = (data.index[-1] - data.index[0]).days
-                years = days / 365.25
-                if years > 0:
-                    results["annual_return"] = ((portfolio_value / INITIAL_CAPITAL) ** (1/years) - 1) * 100
-            
-            # Sharpe ratio
-            if returns:
-                returns_array = np.array(returns)
-                if len(returns_array) > 1 and returns_array.std() > 0:
-                    results["sharpe_ratio"] = (returns_array.mean() / returns_array.std()) * np.sqrt(252)
-        
-        # Max drawdown
-        if equity_curve:
-            equity_df = pd.DataFrame(equity_curve, columns=["Date", "Equity"])
-            equity_df["RunningMax"] = equity_df["Equity"].cummax()
-            equity_df["Drawdown"] = ((equity_df["Equity"] - equity_df["RunningMax"]) / 
-                                     equity_df["RunningMax"]) * 100
-            results["max_drawdown"] = equity_df["Drawdown"].min()
-            results["equity_curve"] = equity_df
-            
-    except Exception as e:
-        logger.error(f"Error in backtesting: {e}")
-        st.error(f"Backtesting error: {str(e)}")
-    
-    return results
-
-# ========================= STOCK ANALYSIS =========================
-
-def analyze_stock(data: pd.DataFrame) -> pd.DataFrame:
-    """Comprehensive stock analysis with all indicators"""
-    
-    if data is None or data.empty or len(data) < 14:
-        logger.warning("Insufficient data for analysis")
-        return data if data is not None else pd.DataFrame()
-    
-    try:
-        # Compute all indicators
-        data = compute_indicators(data)
-        
-        # Add divergence detection
-        data['Divergence'] = detect_divergence(data)
-        
-        # Add market regime
-        data['Regime'] = classify_market_regime(data)
-        
-        # Ensure all expected columns exist
-        expected_columns = [
-            'RSI', 'MACD', 'MACD_signal', 'MACD_hist',
-            'ATR', 'ADX', 'CMF',
-            'Upper_Band', 'Middle_Band', 'Lower_Band',
-            'SlowK', 'SlowD',
-            'Donchian_Upper', 'Donchian_Lower', 'Donchian_Middle',
-            'Ichimoku_Tenkan', 'Ichimoku_Kijun',
-            'Ichimoku_Span_A', 'Ichimoku_Span_B', 'Ichimoku_Chikou',
-            'Volume_Spike', 'Avg_Volume'
-        ]
-        
-        for col in expected_columns:
-            if col not in data.columns:
-                data[col] = np.nan
-        
-    except Exception as e:
-        logger.error(f"Error in analyze_stock: {e}")
-    
-    return data
-
-def analyze_stock_parallel(symbol: str) -> Optional[Dict[str, Any]]:
-    """Parallel stock analysis for batch processing"""
-    try:
-        logger.info(f"Analyzing {symbol}")
-        
         # Fetch data
-        data = fetch_stock_data_cached(symbol)
+        data = fetch_stock_data_with_validation(symbol, period="1y", interval="1d")
         
         if data.empty or len(data) < 50:
-            logger.warning(f"Insufficient data for {symbol}: {len(data)} rows")
+            logger.warning(f"Insufficient data for {symbol}")
             return None
         
-        # Analyze
-        data = analyze_stock(data)
+        # Analyze with monitoring
+        result = adaptive_recommendation_with_monitoring(data, symbol)
         
-        # Get recommendation
-        recommendation_mode = st.session_state.get('recommendation_mode', 'Standard')
+        return result
         
-        if recommendation_mode == "Adaptive":
-            rec = adaptive_recommendation(data, symbol)
-            return {
-                "Symbol": symbol,
-                "Current Price": rec.get("Current Price"),
-                "Buy At": rec.get("Buy At"),
-                "Stop Loss": rec.get("Stop Loss"),
-                "Target": rec.get("Target"),
-                "Recommendation": rec.get("Recommendation", "Hold"),
-                "Score": rec.get("Score", 0),
-                "Regime": rec.get("Regime"),
-                "Position Size": rec.get("Position Size"),
-                "Trailing Stop": rec.get("Trailing Stop"),
-                "Reason": rec.get("Reason"),
-                "Confidence": rec.get("Confidence", 0)
-            }
-        else:
-            rec = generate_recommendations(data, symbol)
-            return {
-                "Symbol": symbol,
-                "Current Price": rec.get("Current Price"),
-                "Buy At": rec.get("Buy At"),
-                "Stop Loss": rec.get("Stop Loss"),
-                "Target": rec.get("Target"),
-                "Intraday": rec.get("Intraday", "Hold"),
-                "Swing": rec.get("Swing", "Hold"),
-                "Short-Term": rec.get("Short-Term", "Hold"),
-                "Long-Term": rec.get("Long-Term", "Hold"),
-                "Mean_Reversion": rec.get("Mean_Reversion", "Hold"),
-                "Breakout": rec.get("Breakout", "Hold"),
-                "Ichimoku_Trend": rec.get("Ichimoku_Trend", "Hold"),
-                "Score": rec.get("Score", 0)
-            }
-            
     except Exception as e:
         logger.error(f"Error analyzing {symbol}: {e}")
         return None
 
-# ========================= BATCH PROCESSING =========================
-
-def analyze_batch(stock_batch: List[str]) -> List[Dict[str, Any]]:
-    """Analyze a batch of stocks with proper error handling"""
-    results = []
-    errors = []
-    
-    with ThreadPoolExecutor(max_workers=config.MAX_WORKERS) as executor:
-        futures = {executor.submit(analyze_stock_parallel, symbol): symbol 
-                  for symbol in stock_batch}
+async def analyze_batch_async(symbols: List[str]) -> List[Dict[str, Any]]:
+    """Analyze batch of stocks asynchronously"""
+    async with aiohttp.ClientSession() as session:
+        tasks = [analyze_stock_async(session, symbol) for symbol in symbols]
+        results = await asyncio.gather(*tasks, return_exceptions=True)
         
-        for future in as_completed(futures):
-            symbol = futures[future]
-            try:
-                result = future.result(timeout=30)
-                if result:
-                    results.append(result)
-            except Exception as e:
-                error_msg = f"Error processing {symbol}: {str(e)}"
-                errors.append(error_msg)
-                logger.error(error_msg)
-    
-    if errors:
-        logger.warning(f"Batch processing completed with {len(errors)} errors")
-    
-    return results
+        valid_results = []
+        for result in results:
+            if isinstance(result, dict) and result:
+                valid_results.append(result)
+            elif isinstance(result, Exception):
+                logger.error(f"Batch processing error: {result}")
+        
+        return valid_results
 
-def analyze_all_stocks(stock_list: List[str], batch_size: int = 10, 
-                       progress_callback: Optional[callable] = None) -> pd.DataFrame:
-    """Analyze all stocks in batches"""
-    results = []
+def analyze_all_stocks_enhanced(stock_list: List[str], batch_size: int = 10,
+                              progress_callback: Optional[callable] = None) -> pd.DataFrame:
+    """Enhanced batch analysis with async processing"""
     
-    for i in range(0, len(stock_list), batch_size):
+    all_results = []
+    total_stocks = len(stock_list)
+    
+    for i in range(0, total_stocks, batch_size):
         batch = stock_list[i:i + batch_size]
-        batch_results = analyze_batch(batch)
-        results.extend(batch_results)
         
+        try:
+            # Use async processing for better performance
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+            batch_results = loop.run_until_complete(analyze_batch_async(batch))
+            loop.close()
+            
+            all_results.extend(batch_results)
+            
+        except Exception as e:
+            logger.error(f"Error processing batch: {e}")
+        
+        # Update progress
         if progress_callback:
-            progress = min(1.0, (i + len(batch)) / len(stock_list))
+            progress = min(1.0, (i + len(batch)) / total_stocks)
             progress_callback(progress)
         
         # Rate limiting between batches
-        if i + batch_size < len(stock_list):
-            time.sleep(2)
+        if i + batch_size < total_stocks:
+            time.sleep(1)
     
-    if not results:
+    if not all_results:
         return pd.DataFrame()
     
-    results_df = pd.DataFrame(results)
-    
-    # Filter and sort
-    recommendation_mode = st.session_state.get('recommendation_mode', 'Standard')
-    
-    if recommendation_mode == "Adaptive":
-        if "Recommendation" in results_df.columns:
-            results_df = results_df[results_df["Recommendation"].isin(["Buy", "Sell"])]
-    else:
-        if "Intraday" in results_df.columns:
-            buy_conditions = results_df["Intraday"].str.contains("Buy", case=False, na=False)
-            results_df = results_df[buy_conditions]
+    # Convert to DataFrame and sort by score
+    results_df = pd.DataFrame(all_results)
     
     if "Score" in results_df.columns:
         results_df = results_df.sort_values(by="Score", ascending=False)
     
-    return results_df.head(5)
-
-# ========================= DATABASE OPERATIONS =========================
-
-def init_database():
-    """Initialize SQLite database for storing picks"""
-    try:
-        conn = sqlite3.connect('stock_picks.db')
-        conn.execute('''
-            CREATE TABLE IF NOT EXISTS daily_picks (
-                date TEXT,
-                symbol TEXT,
-                score REAL,
-                current_price REAL,
-                buy_at REAL,
-                stop_loss REAL,
-                target REAL,
-                intraday TEXT,
-                swing TEXT,
-                short_term TEXT,
-                long_term TEXT,
-                mean_reversion TEXT,
-                breakout TEXT,
-                ichimoku_trend TEXT,
-                recommendation TEXT,
-                regime TEXT,
-                position_size REAL,
-                trailing_stop REAL,
-                reason TEXT,
-                confidence REAL,
-                pick_type TEXT,
-                PRIMARY KEY (date, symbol, pick_type)
-            )
-        ''')
-        conn.commit()
-        conn.close()
-        logger.info("Database initialized successfully")
-    except Exception as e:
-        logger.error(f"Error initializing database: {e}")
-
-def insert_top_picks(results_df: pd.DataFrame, pick_type: str = "daily"):
-    """Insert top picks into database"""
-    try:
-        conn = sqlite3.connect('stock_picks.db')
-        
-        for _, row in results_df.head(5).iterrows():
-            conn.execute('''
-                INSERT OR REPLACE INTO daily_picks (
-                    date, symbol, score, current_price, buy_at, stop_loss, target,
-                    intraday, swing, short_term, long_term, mean_reversion, breakout,
-                    ichimoku_trend, recommendation, regime, position_size, trailing_stop,
-                    reason, confidence, pick_type
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            ''', (
-                datetime.now().strftime('%Y-%m-%d'),
-                row.get('Symbol'),
-                row.get('Score', 0),
-                row.get('Current Price'),
-                row.get('Buy At'),
-                row.get('Stop Loss'),
-                row.get('Target'),
-                row.get('Intraday'),
-                row.get('Swing'),
-                row.get('Short-Term'),
-                row.get('Long-Term'),
-                row.get('Mean_Reversion'),
-                row.get('Breakout'),
-                row.get('Ichimoku_Trend'),
-                row.get('Recommendation'),
-                row.get('Regime'),
-                row.get('Position Size'),
-                row.get('Trailing Stop'),
-                row.get('Reason'),
-                row.get('Confidence', 0),
-                pick_type
-            ))
-        
-        conn.commit()
-        conn.close()
-        logger.info(f"Inserted {len(results_df.head(5))} picks of type {pick_type}")
-        
-    except Exception as e:
-        logger.error(f"Error inserting picks: {e}")
-
-# ========================= UI COMPONENTS =========================
-
-def colored_recommendation(recommendation: Optional[str]) -> str:
-    """Color code recommendations for better visualization"""
-    if recommendation is None or not isinstance(recommendation, str):
-        return "⚪ N/A"
+    # Filter for actionable recommendations
+    if "Recommendation" in results_df.columns:
+        actionable = results_df[results_df["Recommendation"].isin(["Buy", "Sell"])]
+        if not actionable.empty:
+            return actionable.head(10)
     
-    recommendation_lower = recommendation.lower()
+    return results_df.head(10)
+
+# ========================= SECTORS CONFIGURATION =========================
+
+SECTORS = {
+    "Bank": [
+        "HDFCBANK.NS", "ICICIBANK.NS", "SBIN.NS", "KOTAKBANK.NS", "AXISBANK.NS"
+    ],
+    "IT": [
+        "TCS.NS", "INFY.NS", "HCLTECH.NS", "WIPRO.NS", "TECHM.NS"
+    ],
+    "Pharma": [
+        "SUNPHARMA.NS", "CIPLA.NS", "DRREDDY.NS", "LUPIN.NS", "DIVISLAB.NS"
+    ],
+    "Auto": [
+        "MARUTI.NS", "TATAMOTORS.NS", "M&M.NS", "BAJAJ-AUTO.NS", "HEROMOTOCO.NS"
+    ],
+    "FMCG": [
+        "HINDUNILVR.NS", "ITC.NS", "NESTLEIND.NS", "BRITANNIA.NS", "DABUR.NS"
+    ],
+    "Metal": [
+        "TATASTEEL.NS", "JSWSTEEL.NS", "HINDALCO.NS", "VEDL.NS", "SAIL.NS"
+    ],
+    "Oil & Gas": [
+        "RELIANCE.NS", "ONGC.NS", "IOC.NS", "BPCL.NS", "GAIL.NS"
+    ],
+    "Power": [
+        "NTPC.NS", "POWERGRID.NS", "ADANIPOWER.NS", "TATAPOWER.NS"
+    ]
+}
+
+# ========================= ENHANCED UI COMPONENTS =========================
+
+def display_alerts_panel():
+    """Display alerts panel in the UI"""
+    st.sidebar.markdown("---")
+    st.sidebar.subheader("🔔 Alert Manager")
     
-    if "strong buy" in recommendation_lower:
-        return f"🟢🟢 {recommendation}"
-    elif "buy" in recommendation_lower:
-        return f"🟢 {recommendation}"
-    elif "strong sell" in recommendation_lower:
-        return f"🔴🔴 {recommendation}"
-    elif "sell" in recommendation_lower:
-        return f"🔴 {recommendation}"
+    # Get all active alerts
+    all_alerts = alert_monitor.get_alerts()
+    
+    if all_alerts:
+        st.sidebar.info(f"Active Alerts: {len(all_alerts)}")
+        
+        # Display recent triggered alerts
+        if 'alerts_triggered' in st.session_state:
+            recent_alerts = st.session_state.alerts_triggered[-5:]
+            if recent_alerts:
+                st.sidebar.markdown("**Recent Alerts:**")
+                for alert in recent_alerts:
+                    st.sidebar.warning(f"• {alert['symbol']}: {alert['message'][:50]}...")
     else:
-        return f"⚪ {recommendation}"
+        st.sidebar.info("No active alerts")
+    
+    # Add new alert form
+    with st.sidebar.expander("➕ Add Alert"):
+        alert_symbol = st.text_input("Symbol", key="alert_symbol")
+        alert_type = st.selectbox(
+            "Alert Type",
+            ["Price Above", "Price Below", "RSI Oversold", "RSI Overbought", "Volume Spike"],
+            key="alert_type"
+        )
+        alert_threshold = st.number_input("Threshold", min_value=0.0, key="alert_threshold")
+        
+        if st.button("Add Alert", key="add_alert_btn"):
+            if alert_symbol and alert_threshold > 0:
+                alert_type_map = {
+                    "Price Above": AlertType.PRICE_ABOVE,
+                    "Price Below": AlertType.PRICE_BELOW,
+                    "RSI Oversold": AlertType.RSI_OVERSOLD,
+                    "RSI Overbought": AlertType.RSI_OVERBOUGHT,
+                    "Volume Spike": AlertType.VOLUME_SPIKE
+                }
+                
+                new_alert = Alert(
+                    alert_symbol,
+                    alert_type_map[alert_type],
+                    alert_threshold,
+                    f"{alert_type} alert at {alert_threshold}"
+                )
+                
+                alert_id = alert_monitor.add_alert(new_alert)
+                st.sidebar.success(f"Alert added: {alert_id}")
 
-def tooltip(label: str, explanation: str) -> str:
-    """Create tooltip for UI elements"""
-    return f"{label} ℹ️ ({explanation})"
-
-def update_progress(progress_bar, loading_text, progress_value, loading_messages):
-    """Update progress bar with messages"""
-    progress_bar.progress(progress_value)
+def display_risk_metrics(recommendations: Dict[str, Any]):
+    """Display risk management metrics"""
+    st.subheader("📊 Risk Management")
     
-    try:
-        loading_message = next(loading_messages)
-    except StopIteration:
-        loading_message = "Processing..."
-    
-    dots = "." * (int(progress_value * 10) % 4)
-    current_step = int(progress_value * 20)
-    
-    if not hasattr(update_progress, '_last_text_update'):
-        update_progress._last_text_update = -1
-    
-    if current_step != update_progress._last_text_update:
-        loading_text.text(f"{loading_message}{dots}")
-        update_progress._last_text_update = current_step
-
-# ========================= MAIN UI =========================
-
-def display_dashboard(symbol: Optional[str] = None, 
-                     data: Optional[pd.DataFrame] = None,
-                     recommendations: Optional[Dict[str, Any]] = None):
-    """Main dashboard display"""
-    
-    # Initialize session state
-    if 'selected_sectors' not in st.session_state:
-        st.session_state.selected_sectors = ["Bank"]
-    if 'symbol' not in st.session_state:
-        st.session_state.symbol = None
-    if 'data' not in st.session_state:
-        st.session_state.data = None
-    if 'recommendations' not in st.session_state:
-        st.session_state.recommendations = None
-    if 'recommendation_mode' not in st.session_state:
-        st.session_state.recommendation_mode = "Standard"
-    
-    # Update session state if new data provided
-    if symbol and data is not None and recommendations is not None:
-        st.session_state.symbol = symbol
-        st.session_state.data = data
-        st.session_state.recommendations = recommendations
-    
-    st.title("📊 StockGenie Pro - Advanced NSE Analysis")
-    st.subheader(f"📅 Market Analysis for {datetime.now().strftime('%d %B %Y')}")
-    
-    # Sector selection
-    st.sidebar.subheader("📂 Sector Selection")
-    sector_options = ["All"] + list(SECTORS.keys())
-    st.session_state.selected_sectors = st.sidebar.multiselect(
-        "Select Sectors",
-        options=sector_options,
-        default=st.session_state.selected_sectors,
-        help="Choose sectors to analyze. Select 'All' for comprehensive analysis."
-    )
-    
-    if "All" in st.session_state.selected_sectors:
-        selected_stocks = list(set([stock for sector in SECTORS.values() for stock in sector]))
-    else:
-        selected_stocks = list(set([stock for sector in st.session_state.selected_sectors 
-                                   for stock in SECTORS.get(sector, [])]))
-    
-    if not selected_stocks:
-        st.warning("⚠️ No stocks selected. Please choose at least one sector.")
-        return
-    
-    # Analysis buttons
-    col1, col2, col3 = st.columns(3)
+    col1, col2, col3, col4 = st.columns(4)
     
     with col1:
-        if st.button("🚀 Generate Daily Top Picks", use_container_width=True):
+        position_size = recommendations.get("Position Size", 0)
+        st.metric("Position Size", f"{position_size} shares")
+    
+    with col2:
+        risk_per_share = recommendations.get("Risk Per Share", 0)
+        st.metric("Risk/Share", f"₹{risk_per_share:.2f}" if risk_per_share else "N/A")
+    
+    with col3:
+        total_risk = position_size * risk_per_share if position_size and risk_per_share else 0
+        st.metric("Total Risk", f"₹{total_risk:.2f}")
+    
+    with col4:
+        confidence = recommendations.get("Confidence", 0)
+        st.metric("Confidence", f"{confidence}%")
+
+def display_signal_details(recommendations: Dict[str, Any]):
+    """Display detailed signal information"""
+    st.subheader("📈 Signal Analysis")
+    
+    col1, col2 = st.columns(2)
+    
+    with col1:
+        st.markdown("**Buy Signals:**")
+        buy_signals = recommendations.get("Buy Signals", [])
+        if buy_signals:
+            for signal in buy_signals:
+                st.success(f"✓ {signal}")
+        else:
+            st.info("No buy signals")
+    
+    with col2:
+        st.markdown("**Sell Signals:**")
+        sell_signals = recommendations.get("Sell Signals", [])
+        if sell_signals:
+            for signal in sell_signals:
+                st.error(f"✗ {signal}")
+        else:
+            st.info("No sell signals")
+
+def display_performance_chart(data: pd.DataFrame, symbol: str):
+    """Display enhanced performance chart with indicators"""
+    fig = go.Figure()
+    
+    # Candlestick chart
+    fig.add_trace(go.Candlestick(
+        x=data.index,
+        open=data['Open'],
+        high=data['High'],
+        low=data['Low'],
+        close=data['Close'],
+        name='OHLC'
+    ))
+    
+    # Add Bollinger Bands
+    if 'Upper_Band' in data.columns:
+        fig.add_trace(go.Scatter(
+            x=data.index, y=data['Upper_Band'],
+            name='Upper BB', line=dict(color='gray', dash='dash')
+        ))
+        fig.add_trace(go.Scatter(
+            x=data.index, y=data['Lower_Band'],
+            name='Lower BB', line=dict(color='gray', dash='dash')
+        ))
+    
+    # Add moving averages
+    for ma in ['SMA_20', 'SMA_50', 'SMA_200']:
+        if ma in data.columns:
+            color = {'SMA_20': 'orange', 'SMA_50': 'blue', 'SMA_200': 'green'}.get(ma)
+            fig.add_trace(go.Scatter(
+                x=data.index, y=data[ma],
+                name=ma, line=dict(color=color)
+            ))
+    
+    fig.update_layout(
+        title=f"{symbol} - Price Chart with Indicators",
+        yaxis_title="Price (₹)",
+        xaxis_title="Date",
+        height=600,
+        template="plotly_dark",
+        hovermode='x unified'
+    )
+    
+    return fig
+
+# ========================= MAIN APPLICATION =========================
+
+def main():
+    """Enhanced main application with monitoring and alerts"""
+    
+    st.set_page_config(
+        page_title="StockGenie Pro 2.0",
+        page_icon="📈",
+        layout="wide",
+        initial_sidebar_state="expanded"
+    )
+    
+    # Initialize session state
+    if 'alert_monitor_started' not in st.session_state:
+        alert_monitor.start_monitoring(check_interval=60)
+        st.session_state.alert_monitor_started = True
+    
+    st.title("📊 StockGenie Pro 2.0 - Advanced Trading System")
+    st.caption(f"Real-time Analysis | {datetime.now().strftime('%d %B %Y, %H:%M:%S')}")
+    
+    # Sidebar
+    st.sidebar.title("⚙️ Configuration")
+    
+    # Display alerts panel
+    display_alerts_panel()
+    
+    # Stock selection
+    st.sidebar.markdown("---")
+    st.sidebar.subheader("📌 Stock Selection")
+    
+    analysis_mode = st.sidebar.radio(
+        "Analysis Mode",
+        ["Sector Analysis", "Individual Stock", "Watchlist"],
+        help="Choose analysis mode"
+    )
+    
+    if analysis_mode == "Sector Analysis":
+        selected_sectors = st.sidebar.multiselect(
+            "Select Sectors",
+            options=list(SECTORS.keys()),
+            default=["Bank", "IT"],
+            help="Choose sectors to analyze"
+        )
+        
+        stocks_to_analyze = []
+        for sector in selected_sectors:
+            stocks_to_analyze.extend(SECTORS.get(sector, []))
+        
+    elif analysis_mode == "Individual Stock":
+        symbol = st.sidebar.text_input(
+            "Enter Symbol",
+            value="RELIANCE.NS",
+            help="Enter NSE symbol (e.g., RELIANCE.NS)"
+        )
+        stocks_to_analyze = [symbol] if symbol else []
+        
+    else:  # Watchlist
+        watchlist = st.sidebar.text_area(
+            "Enter Symbols (one per line)",
+            value="RELIANCE.NS\nTCS.NS\nHDFCBANK.NS",
+            help="Enter NSE symbols, one per line"
+        )
+        stocks_to_analyze = [s.strip() for s in watchlist.split('\n') if s.strip()]
+    
+    # Analysis settings
+    st.sidebar.markdown("---")
+    st.sidebar.subheader("📊 Analysis Settings")
+    
+    timeframe = st.sidebar.selectbox(
+        "Timeframe",
+        ["1d", "1w", "1mo", "1y", "2y"],
+        index=3,
+        help="Select analysis timeframe"
+    )
+    
+    interval = st.sidebar.selectbox(
+        "Interval",
+        ["5m", "15m", "30m", "1h", "1d"],
+        index=4,
+        help="Select data interval"
+    )
+    
+    # Risk settings
+    st.sidebar.markdown("---")
+    st.sidebar.subheader("💰 Risk Management")
+    
+    account_size = st.sidebar.number_input(
+        "Account Size (₹)",
+        min_value=10000,
+        max_value=10000000,
+        value=100000,
+        step=10000,
+        help="Your trading account size"
+    )
+    
+    risk_per_trade = st.sidebar.slider(
+        "Risk Per Trade (%)",
+        min_value=0.5,
+        max_value=5.0,
+        value=2.0,
+        step=0.5,
+        help="Maximum risk per trade as % of account"
+    )
+    
+    # Main content area
+    tab1, tab2, tab3, tab4 = st.tabs(["📈 Analysis", "🔍 Scanner", "📊 Backtest", "📉 Risk Dashboard"])
+    
+    with tab1:
+        if st.button("🚀 Run Analysis", use_container_width=True):
+            if not stocks_to_analyze:
+                st.warning("Please select stocks to analyze")
+                return
+            
             progress_bar = st.progress(0)
-            loading_text = st.empty()
-            loading_messages = itertools.cycle([
-                "Analyzing market trends", "Evaluating indicators", 
-                "Computing signals", "Ranking stocks", "Finalizing picks"
-            ])
+            status_text = st.empty()
             
-            results_df = analyze_all_stocks(
-                selected_stocks,
-                batch_size=config.BATCH_SIZE,
-                progress_callback=lambda x: update_progress(progress_bar, loading_text, x, loading_messages)
-            )
-            
-            progress_bar.empty()
-            loading_text.empty()
-            
-            if not results_df.empty:
-                insert_top_picks(results_df, pick_type="daily")
-                st.success("✅ Analysis Complete!")
+            with st.spinner("Analyzing stocks..."):
+                results_df = analyze_all_stocks_enhanced(
+                    stocks_to_analyze,
+                    batch_size=5,
+                    progress_callback=lambda p: progress_bar.progress(p)
+                )
                 
-                st.subheader("🏆 Today's Top 5 Stock Picks")
+                progress_bar.empty()
+                status_text.empty()
                 
-                for idx, row in results_df.iterrows():
-                    score_color = "🟢" if row['Score'] > 3 else "🟡" if row['Score'] > 0 else "🔴"
+                if not results_df.empty:
+                    st.success(f"✅ Analysis complete! Found {len(results_df)} opportunities")
                     
-                    with st.expander(f"{score_color} {row['Symbol']} - Score: {row['Score']:.1f}/10"):
+                    # Display results
+                    for idx, row in results_df.iterrows():
+                        with st.expander(f"📊 {row['Symbol']} - Score: {row.get('Score', 0)}/10"):
+                            col1, col2, col3 = st.columns(3)
+                            
+                            with col1:
+                                st.metric("Current Price", f"₹{row.get('Current Price', 'N/A')}")
+                                st.metric("Recommendation", row.get('Recommendation', 'N/A'))
+                            
+                            with col2:
+                                st.metric("Entry Price", f"₹{row.get('Entry Price', 'N/A')}")
+                                st.metric("Stop Loss", f"₹{row.get('Stop Loss', 'N/A')}")
+                            
+                            with col3:
+                                st.metric("Target", f"₹{row.get('Target', 'N/A')}")
+                                st.metric("Position Size", f"{row.get('Position Size', 0)} shares")
+                            
+                            # Display signals
+                            display_signal_details(row)
+                            
+                            # Display risk metrics
+                            display_risk_metrics(row)
+                            
+                            # Chart button
+                            if st.button(f"View Chart for {row['Symbol']}", key=f"chart_{idx}"):
+                                chart_data = fetch_stock_data_with_validation(
+                                    row['Symbol'], period=timeframe, interval=interval
+                                )
+                                if not chart_data.empty:
+                                    chart_data = compute_indicators_optimized(chart_data, row['Symbol'])
+                                    fig = display_performance_chart(chart_data, row['Symbol'])
+                                    st.plotly_chart(fig, use_container_width=True)
+                else:
+                    st.warning("No trading opportunities found with current criteria")
+    
+    with tab2:
+        st.subheader("🔍 Real-time Stock Scanner")
+        
+        scan_type = st.selectbox(
+            "Scan Type",
+            ["Breakout Stocks", "Oversold Bounce", "Volume Surge", "Trend Reversal"]
+        )
+        
+        if st.button("Start Scan", use_container_width=True):
+            with st.spinner(f"Scanning for {scan_type}..."):
+                # Implement specific scans based on type
+                scan_results = []
+                
+                for symbol in stocks_to_analyze[:20]:  # Limit for performance
+                    try:
+                        data = fetch_stock_data_with_validation(symbol, "1mo", "1d")
+                        if not data.empty:
+                            data = compute_indicators_optimized(data, symbol)
+                            
+                            # Check scan criteria
+                            if scan_type == "Breakout Stocks":
+                                if len(data) >= 20:
+                                    recent_high = data['High'].iloc[-20:-1].max()
+                                    if data['Close'].iloc[-1] > recent_high:
+                                        scan_results.append({
+                                            "Symbol": symbol,
+                                            "Price": data['Close'].iloc[-1],
+                                            "Breakout Level": recent_high,
+                                            "Volume Ratio": data.get('Volume_Ratio', pd.Series([1])).iloc[-1]
+                                        })
+                            
+                            elif scan_type == "Oversold Bounce":
+                                if 'RSI' in data.columns:
+                                    rsi = data['RSI'].iloc[-1]
+                                    if pd.notna(rsi) and rsi < 35:
+                                        scan_results.append({
+                                            "Symbol": symbol,
+                                            "Price": data['Close'].iloc[-1],
+                                            "RSI": rsi,
+                                            "Distance from SMA20": (data['Close'].iloc[-1] / data.get('SMA_20', pd.Series([data['Close'].iloc[-1]])).iloc[-1] - 1) * 100
+                                        })
+                    
+                    except Exception as e:
+                        logger.error(f"Scan error for {symbol}: {e}")
+                
+                if scan_results:
+                    scan_df = pd.DataFrame(scan_results)
+                    st.dataframe(scan_df, use_container_width=True)
+                else:
+                    st.info(f"No stocks found matching {scan_type} criteria")
+    
+    with tab3:
+        st.subheader("📊 Strategy Backtesting")
+        
+        if stocks_to_analyze:
+            selected_stock = st.selectbox("Select Stock for Backtest", stocks_to_analyze)
+            
+            col1, col2 = st.columns(2)
+            
+            with col1:
+                strategy_type = st.selectbox(
+                    "Strategy",
+                    ["RSI Mean Reversion", "MACD Crossover", "Bollinger Breakout", "Moving Average Cross"]
+                )
+            
+            with col2:
+                backtest_period = st.selectbox(
+                    "Backtest Period",
+                    ["1mo", "3mo", "6mo", "1y", "2y"],
+                    index=3
+                )
+            
+            if st.button("Run Backtest", use_container_width=True):
+                with st.spinner("Running backtest..."):
+                    # Fetch data for backtest
+                    backtest_data = fetch_stock_data_with_validation(
+                        selected_stock, period=backtest_period, interval="1d"
+                    )
+                    
+                    if not backtest_data.empty:
+                        backtest_data = compute_indicators_optimized(backtest_data, selected_stock)
+                        
+                        # Simple backtest logic (can be expanded)
+                        initial_capital = 100000
+                        position = 0
+                        cash = initial_capital
+                        trades = []
+                        
+                        for i in range(20, len(backtest_data)):
+                            current_price = backtest_data['Close'].iloc[i]
+                            
+                            # Strategy logic
+                            if strategy_type == "RSI Mean Reversion":
+                                rsi = backtest_data['RSI'].iloc[i] if 'RSI' in backtest_data.columns else 50
+                                
+                                if pd.notna(rsi):
+                                    if rsi < 30 and position == 0:
+                                        # Buy signal
+                                        shares = int(cash * 0.95 / current_price)
+                                        if shares > 0:
+                                            position = shares
+                                            cash -= shares * current_price * 1.001  # Commission
+                                            trades.append({
+                                                "Date": backtest_data.index[i],
+                                                "Type": "Buy",
+                                                "Price": current_price,
+                                                "Shares": shares
+                                            })
+                                    
+                                    elif rsi > 70 and position > 0:
+                                        # Sell signal
+                                        cash += position * current_price * 0.999  # Commission
+                                        trades.append({
+                                            "Date": backtest_data.index[i],
+                                            "Type": "Sell",
+                                            "Price": current_price,
+                                            "Shares": position
+                                        })
+                                        position = 0
+                        
+                        # Calculate final portfolio value
+                        final_value = cash + (position * backtest_data['Close'].iloc[-1] if position > 0 else 0)
+                        total_return = ((final_value - initial_capital) / initial_capital) * 100
+                        
+                        # Display results
                         col1, col2, col3 = st.columns(3)
                         
                         with col1:
-                            st.metric("Current Price", f"₹{row.get('Current Price', 'N/A')}")
-                            st.metric("Buy At", f"₹{row.get('Buy At', 'N/A')}")
+                            st.metric("Total Return", f"{total_return:.2f}%")
                         
                         with col2:
-                            st.metric("Stop Loss", f"₹{row.get('Stop Loss', 'N/A')}")
-                            st.metric("Target", f"₹{row.get('Target', 'N/A')}")
+                            st.metric("Total Trades", len(trades))
                         
                         with col3:
-                            if st.session_state.recommendation_mode == "Adaptive":
-                                st.metric("Signal", row.get('Recommendation', 'N/A'))
-                                st.metric("Confidence", f"{row.get('Confidence', 0):.0f}%")
-                            else:
-                                st.metric("Intraday", row.get('Intraday', 'N/A'))
-                                st.metric("Swing", row.get('Swing', 'N/A'))
+                            st.metric("Final Value", f"₹{final_value:,.2f}")
                         
-                        if st.session_state.recommendation_mode == "Adaptive":
-                            st.info(f"**Market Regime:** {row.get('Regime', 'N/A')}")
-                            st.info(f"**Position Size:** {row.get('Position Size', 'N/A')} shares")
-                            st.info(f"**Reason:** {row.get('Reason', 'N/A')}")
-            else:
-                st.warning("⚠️ No suitable picks found. Try different sectors or parameters.")
+                        if trades:
+                            st.subheader("Trade History")
+                            trades_df = pd.DataFrame(trades)
+                            st.dataframe(trades_df, use_container_width=True)
     
-    with col2:
-        if st.button("⚡ Intraday Quick Picks", use_container_width=True):
-            with st.spinner("Scanning for intraday opportunities..."):
-                # Focus on high liquidity stocks for intraday
-                intraday_stocks = selected_stocks[:20]  # Top 20 most liquid
-                
-                intraday_results = []
-                for symbol in intraday_stocks:
-                    data = fetch_stock_data_cached(symbol, period="1mo", interval="1d")
-                    if not data.empty:
-                        data = analyze_stock(data)
-                        rec = adaptive_recommendation(data, symbol) if st.session_state.recommendation_mode == "Adaptive" else generate_recommendations(data, symbol)
-                        
-                        if st.session_state.recommendation_mode == "Adaptive":
-                            if rec.get("Recommendation") == "Buy" and rec.get("Score", 0) > 2:
-                                intraday_results.append({
-                                    "Symbol": symbol,
-                                    "Score": rec.get("Score"),
-                                    "Current Price": rec.get("Current Price"),
-                                    "Target": rec.get("Target"),
-                                    "Stop Loss": rec.get("Stop Loss")
-                                })
-                        else:
-                            if "Buy" in rec.get("Intraday", ""):
-                                intraday_results.append({
-                                    "Symbol": symbol,
-                                    "Score": rec.get("Score"),
-                                    "Current Price": rec.get("Current Price"),
-                                    "Target": rec.get("Target"),
-                                    "Stop Loss": rec.get("Stop Loss")
-                                })
-                
-                if intraday_results:
-                    intraday_df = pd.DataFrame(intraday_results).sort_values("Score", ascending=False).head(3)
-                    st.success("✅ Found intraday opportunities!")
-                    
-                    for _, row in intraday_df.iterrows():
-                        st.info(f"**{row['Symbol']}** - Entry: ₹{row['Current Price']:.2f}, "
-                               f"Target: ₹{row['Target']:.2f}, SL: ₹{row['Stop Loss']:.2f}")
-                else:
-                    st.warning("No strong intraday setups found currently.")
-    
-    with col3:
-        if st.button("📜 View Historical Performance", use_container_width=True):
-            conn = sqlite3.connect('stock_picks.db')
-            history_df = pd.read_sql_query(
-                "SELECT * FROM daily_picks ORDER BY date DESC LIMIT 50", 
-                conn
-            )
-            conn.close()
-            
-            if not history_df.empty:
-                st.subheader("📊 Recent Pick Performance")
-                
-                # Performance summary
-                total_picks = len(history_df)
-                buy_picks = history_df[history_df['recommendation'] == 'Buy'] if 'recommendation' in history_df else pd.DataFrame()
-                
-                col1, col2, col3 = st.columns(3)
-                with col1:
-                    st.metric("Total Picks", total_picks)
-                with col2:
-                    st.metric("Buy Signals", len(buy_picks))
-                with col3:
-                    avg_score = history_df['score'].mean() if 'score' in history_df else 0
-                    st.metric("Avg Score", f"{avg_score:.1f}")
-                
-                # Show recent picks
-                st.dataframe(
-                    history_df[['date', 'symbol', 'score', 'recommendation', 'current_price', 'target']].head(10),
-                    use_container_width=True
-                )
-            else:
-                st.info("No historical data available yet.")
-    
-    # Individual Stock Analysis Section
-    if st.session_state.symbol and st.session_state.data is not None:
-        st.markdown("---")
-        st.header(f"📈 Detailed Analysis: {st.session_state.symbol}")
+    with tab4:
+        st.subheader("📉 Risk Management Dashboard")
         
-        data = st.session_state.data
-        recommendations = st.session_state.recommendations
-        
-        # Key Metrics
+        # Portfolio risk metrics
         col1, col2, col3, col4 = st.columns(4)
         
         with col1:
-            current = recommendations.get('Current Price', 0)
-            prev_close = data['Close'].iloc[-2] if len(data) > 1 else current
-            change = ((current - prev_close) / prev_close * 100) if prev_close else 0
-            st.metric(
-                "Current Price",
-                f"₹{current:.2f}",
-                f"{change:+.2f}%"
-            )
+            st.metric("Account Size", f"₹{account_size:,}")
         
         with col2:
-            st.metric("Buy At", f"₹{recommendations.get('Buy At', 'N/A')}")
+            max_risk = account_size * (risk_per_trade / 100)
+            st.metric("Max Risk/Trade", f"₹{max_risk:,.2f}")
         
         with col3:
-            st.metric("Stop Loss", f"₹{recommendations.get('Stop Loss', 'N/A')}")
+            max_positions = min(10, int(100 / risk_per_trade))
+            st.metric("Max Positions", max_positions)
         
         with col4:
-            st.metric("Target", f"₹{recommendations.get('Target', 'N/A')}")
+            total_exposure = min(account_size, max_positions * max_risk * 5)
+            st.metric("Max Exposure", f"₹{total_exposure:,}")
         
-        # Technical Indicators
-        st.subheader("📊 Technical Indicators")
+        # Risk allocation chart
+        risk_data = {
+            "Category": ["Available", "At Risk", "Reserved"],
+            "Amount": [
+                account_size * 0.5,
+                account_size * 0.3,
+                account_size * 0.2
+            ]
+        }
         
-        indicators_data = []
+        fig = px.pie(
+            risk_data,
+            values="Amount",
+            names="Category",
+            title="Risk Allocation",
+            color_discrete_map={
+                "Available": "#00cc44",
+                "At Risk": "#ff9900",
+                "Reserved": "#0066cc"
+            }
+        )
         
-        # Collect indicator values
-        indicator_list = [
-            ("RSI", data['RSI'].iloc[-1] if 'RSI' in data.columns else None, 30, 70),
-            ("MACD", data['MACD'].iloc[-1] if 'MACD' in data.columns else None, None, None),
-            ("ADX", data['ADX'].iloc[-1] if 'ADX' in data.columns else None, 25, None),
-            ("ATR", data['ATR'].iloc[-1] if 'ATR' in data.columns else None, None, None),
-            ("CMF", data['CMF'].iloc[-1] if 'CMF' in data.columns else None, -0.1, 0.1)
-        ]
-        
-        col1, col2, col3, col4, col5 = st.columns(5)
-        
-        for idx, (name, value, low_thresh, high_thresh) in enumerate(indicator_list):
-            if value is not None and pd.notna(value):
-                value = float(value)
-                
-                # Determine status
-                if low_thresh and high_thresh:
-                    if value < low_thresh:
-                        status = "🟢 Oversold"
-                    elif value > high_thresh:
-                        status = "🔴 Overbought"
-                    else:
-                        status = "⚪ Neutral"
-                elif low_thresh:
-                    status = "🟢 Strong" if value > low_thresh else "🔴 Weak"
-                else:
-                    status = ""
-                
-                with [col1, col2, col3, col4, col5][idx]:
-                    st.metric(
-                        tooltip(name, TOOLTIPS.get(name, "")),
-                        f"{value:.2f}",
-                        status
-                    )
-        
-        # Chart
-        st.subheader("📈 Price Chart with Signals")
-        
-        fig = px.line(data.reset_index(), x='Date', y='Close', 
-                     title=f"{st.session_state.symbol} - Price Movement")
-        
-        # Add Bollinger Bands
-        if 'Upper_Band' in data.columns:
-            fig.add_scatter(x=data.index, y=data['Upper_Band'], 
-                          name='Upper BB', line=dict(dash='dash', color='gray'))
-            fig.add_scatter(x=data.index, y=data['Lower_Band'], 
-                          name='Lower BB', line=dict(dash='dash', color='gray'))
-        
-        # Add moving averages
-        if 'SMA_20' in data.columns:
-            fig.add_scatter(x=data.index, y=data['SMA_20'], 
-                          name='SMA 20', line=dict(color='orange'))
-        if 'SMA_50' in data.columns:
-            fig.add_scatter(x=data.index, y=data['SMA_50'], 
-                          name='SMA 50', line=dict(color='blue'))
-        
-        fig.update_layout(height=500, hovermode='x unified')
         st.plotly_chart(fig, use_container_width=True)
         
-        # Backtest Section
-        st.subheader("🔬 Backtest Results")
+        # Active alerts summary
+        st.subheader("🔔 Active Alerts Summary")
         
-        col1, col2 = st.columns(2)
-        
-        with col1:
-            if st.button("Run Swing Trading Backtest", use_container_width=True):
-                with st.spinner("Running backtest..."):
-                    backtest_results = backtest_stock(data, st.session_state.symbol, "Swing")
-                    st.session_state.backtest_swing = backtest_results
-        
-        with col2:
-            if st.button("Run Intraday Backtest", use_container_width=True):
-                with st.spinner("Running backtest..."):
-                    backtest_results = backtest_stock(data, st.session_state.symbol, "Intraday")
-                    st.session_state.backtest_intraday = backtest_results
-        
-        # Display backtest results
-        for strategy in ["swing", "intraday"]:
-            if f"backtest_{strategy}" in st.session_state:
-                results = st.session_state[f"backtest_{strategy}"]
-                
-                st.markdown(f"**{strategy.capitalize()} Strategy Results:**")
-                
-                col1, col2, col3, col4 = st.columns(4)
-                
-                with col1:
-                    st.metric("Total Return", f"{results['total_return']:.2f}%")
-                    st.metric("Annual Return", f"{results['annual_return']:.2f}%")
-                
-                with col2:
-                    st.metric("Sharpe Ratio", f"{results['sharpe_ratio']:.2f}")
-                    st.metric("Max Drawdown", f"{results['max_drawdown']:.2f}%")
-                
-                with col3:
-                    st.metric("Total Trades", results['trades'])
-                    st.metric("Win Rate", f"{results['win_rate']:.1f}%")
-                
-                with col4:
-                    st.metric("Profit Factor", f"{results.get('profit_factor', 0):.2f}")
-                    st.metric("Avg Win", f"{results.get('average_win', 0):.2f}%")
-                
-                # Equity curve
-                if 'equity_curve' in results and not results['equity_curve'].empty:
-                    fig_equity = px.line(results['equity_curve'], x='Date', y='Equity',
-                                        title=f"Equity Curve - {strategy.capitalize()}")
-                    fig_equity.update_layout(height=300)
-                    st.plotly_chart(fig_equity, use_container_width=True)
-
-def main():
-    """Main application entry point"""
-    
-    # Setup
-    warnings.filterwarnings("ignore")
-    init_database()
-    
-    # Sidebar configuration
-    st.sidebar.title("🔍 StockGenie Pro")
-    st.sidebar.markdown("---")
-    
-    # Fetch stock list
-    with st.spinner("Loading stock data..."):
-        stock_list = fetch_nse_stock_list()
-    
-    if not stock_list:
-        st.error("❌ Could not fetch stock list. Please check your connection.")
-        return
-    
-    # Stock selection
-    st.sidebar.subheader("📌 Individual Stock Analysis")
-    
-    selected_symbol = st.sidebar.selectbox(
-        "Select Stock",
-        stock_list,
-        index=0,
-        help="Choose a stock for detailed analysis"
-    )
-    
-    # Analysis mode
-    st.sidebar.subheader("⚙️ Settings")
-    
-    recommendation_mode = st.sidebar.radio(
-        "Analysis Mode",
-        ["Standard", "Adaptive"],
-        index=0 if st.session_state.get('recommendation_mode', 'Standard') == "Standard" else 1,
-        help="Standard: Traditional indicators | Adaptive: AI-enhanced with regime detection"
-    )
-    st.session_state.recommendation_mode = recommendation_mode
-    
-    # Position sizing
-    position_size = st.sidebar.slider(
-        "Position Size (%)",
-        min_value=10,
-        max_value=100,
-        value=50,
-        step=10,
-        help="Percentage of capital to allocate per trade"
-    )
-    st.session_state.position_size = position_size / 100
-    
-    # Analyze button
-    if st.sidebar.button("📊 Analyze Stock", use_container_width=True):
-        with st.spinner(f"Analyzing {selected_symbol}..."):
-            try:
-                # Fetch and analyze data
-                data = fetch_stock_data_with_auth(selected_symbol)
-                
-                if not data.empty:
-                    analyzed_data = analyze_stock(data)
-                    
-                    if recommendation_mode == "Adaptive":
-                        recommendations = adaptive_recommendation(analyzed_data, selected_symbol)
-                    else:
-                        recommendations = generate_recommendations(analyzed_data, selected_symbol)
-                    
-                    # Update session state
-                    st.session_state.symbol = selected_symbol
-                    st.session_state.data = analyzed_data
-                    st.session_state.recommendations = recommendations
-                    
-                    st.success(f"✅ Analysis complete for {selected_symbol}")
-                else:
-                    st.warning(f"⚠️ No data available for {selected_symbol}")
-                    
-            except Exception as e:
-                st.error(f"❌ Error analyzing {selected_symbol}: {str(e)}")
-    
-    # Display dashboard
-    display_dashboard()
+        active_alerts = alert_monitor.get_alerts()
+        if active_alerts:
+            alert_summary = []
+            for alert in active_alerts[:10]:
+                alert_summary.append({
+                    "Symbol": alert.symbol,
+                    "Type": alert.alert_type.value,
+                    "Threshold": alert.threshold,
+                    "Created": alert.created_at.strftime("%H:%M:%S"),
+                    "Triggered": "Yes" if alert.triggered else "No"
+                })
+            
+            alert_df = pd.DataFrame(alert_summary)
+            st.dataframe(alert_df, use_container_width=True)
+        else:
+            st.info("No active alerts")
     
     # Footer
-    st.sidebar.markdown("---")
-    st.sidebar.info(
-        "💡 **Tips:**\n"
-        "- Use Adaptive mode for AI-powered analysis\n"
-        "- Check multiple timeframes before trading\n"
-        "- Always use stop-loss orders\n"
-        "- Past performance doesn't guarantee future results"
-    )
-    
-    st.sidebar.markdown("---")
-    st.sidebar.caption("StockGenie Pro v2.0 | Market data may be delayed")
+    st.markdown("---")
+    st.caption("StockGenie Pro 2.0 | Real-time Analysis & Alert System | Data may be delayed")
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except KeyboardInterrupt:
+        logger.info("Application stopped by user")
+        alert_monitor.stop_monitoring()
+    except Exception as e:
+        logger.critical(f"Critical error: {e}")
+        st.error(f"Application error: {str(e)}")
