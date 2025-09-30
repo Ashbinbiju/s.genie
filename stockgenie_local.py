@@ -187,35 +187,6 @@ class StockDataValidator(BaseModel):
                 raise ValueError('Close must be between Low and High')
         return v
 
-class TechnicalIndicators(BaseModel):
-    """Validated technical indicators"""
-    rsi: Optional[float] = Field(None, ge=0, le=100)
-    macd: Optional[float] = None
-    macd_signal: Optional[float] = None
-    adx: Optional[float] = Field(None, ge=0, le=100)
-    atr: Optional[float] = Field(None, ge=0)
-    bollinger_upper: Optional[float] = Field(None, gt=0)
-    bollinger_lower: Optional[float] = Field(None, gt=0)
-    volume_ratio: Optional[float] = Field(None, ge=0)
-    
-    @validator('rsi')
-    def validate_rsi(cls, v):
-        if v is not None and (v < 0 or v > 100):
-            raise ValueError('RSI must be between 0 and 100')
-        return v
-
-class AlertCondition(BaseModel):
-    """Alert condition model"""
-    symbol: str
-    condition_type: str = Field(..., pattern="^(above|below|crossover|divergence)$")
-    price: Optional[float] = Field(None, gt=0)
-    indicator: Optional[str] = None
-    indicator_value: Optional[float] = None
-    message: str
-    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
-    triggered: bool = False
-    triggered_at: Optional[datetime] = None
-
 # ========================= THREAD-SAFE COMPONENTS =========================
 
 class ThreadSafeCache:
@@ -264,17 +235,6 @@ class ThreadSafeCache:
         with self._lock:
             self._cache.clear()
             self._access_count.clear()
-    
-    def _cleanup_expired(self) -> None:
-        """Remove expired entries"""
-        with self._lock:
-            current_time = time.time()
-            expired_keys = [
-                key for key, value in self._cache.items()
-                if value.get('expires_at') and value['expires_at'] < current_time
-            ]
-            for key in expired_keys:
-                self.delete(key)
 
 class ThreadSafeRateLimiter:
     """Enhanced thread-safe rate limiter with exponential backoff"""
@@ -370,7 +330,7 @@ def fetch_with_retry(url: str, headers: Optional[Dict] = None, params: Optional[
     
     return response
 
-# ========================= PERFORMANCE OPTIMIZATIONS =========================
+# ========================= FIXED NUMBA FUNCTIONS =========================
 
 @jit(nopython=True)
 def calculate_rsi_optimized(prices: np.ndarray, period: int = 14) -> np.ndarray:
@@ -423,22 +383,244 @@ def calculate_ema_optimized(prices: np.ndarray, period: int) -> np.ndarray:
     
     return ema
 
-def vectorized_bollinger_bands(prices: pd.Series, window: int = 20, num_std: float = 2) -> Tuple[pd.Series, pd.Series, pd.Series]:
-    """Vectorized Bollinger Bands calculation"""
-    middle = prices.rolling(window=window, min_periods=1).mean()
-    std = prices.rolling(window=window, min_periods=1).std()
-    upper = middle + (std * num_std)
-    lower = middle - (std * num_std)
-    return upper, middle, lower
+def convert_masked_to_regular_array(arr):
+    """Convert MaskedArray to regular numpy array"""
+    if isinstance(arr, np.ma.MaskedArray):
+        # Fill masked values with the mean of non-masked values
+        if arr.count() > 0:
+            filled_value = arr.mean()
+            return arr.filled(fill_value=filled_value)
+        else:
+            return arr.data
+    return arr
 
-def vectorized_multiple_smas(prices: pd.Series, windows: List[int]) -> pd.DataFrame:
-    """Vectorized calculation of multiple SMAs"""
-    result = pd.DataFrame(index=prices.index)
-    for window in windows:
-        result[f'SMA_{window}'] = prices.rolling(window=window, min_periods=1).mean()
-    return result
+# ========================= FIXED DATA VALIDATION =========================
 
-# ========================= MONITORING & ALERTS SYSTEM =========================
+def validate_ohlc_data(df: pd.DataFrame) -> pd.DataFrame:
+    """Validate and clean OHLC data - Fixed version"""
+    if df.empty:
+        raise ValidationError("Empty dataframe")
+    
+    required_columns = ['Open', 'High', 'Low', 'Close', 'Volume']
+    missing_columns = [col for col in required_columns if col not in df.columns]
+    if missing_columns:
+        raise ValidationError(f"Missing columns: {missing_columns}")
+    
+    # Validate each row
+    invalid_rows = []
+    for idx, row in df.iterrows():
+        try:
+            validator = StockDataValidator(
+                symbol="TEMP",
+                open=row['Open'],
+                high=row['High'],
+                low=row['Low'],
+                close=row['Close'],
+                volume=int(row['Volume']),
+                date=idx if isinstance(idx, datetime) else datetime.now()
+            )
+        except Exception as e:
+            invalid_rows.append(idx)
+            logger.warning(f"Invalid row at {idx}: {e}")
+    
+    # Remove invalid rows
+    if invalid_rows:
+        df = df.drop(invalid_rows)
+        logger.info(f"Removed {len(invalid_rows)} invalid rows")
+    
+    # Handle outliers - Fixed to convert MaskedArray to regular array
+    for col in ['Open', 'High', 'Low', 'Close']:
+        if col in df.columns:
+            winsorized_data = winsorize(df[col].values, limits=[0.001, 0.001])
+            # Convert MaskedArray to regular array
+            df[col] = convert_masked_to_regular_array(winsorized_data)
+    
+    return df
+
+# ========================= OPTIMIZED TECHNICAL INDICATORS =========================
+
+def compute_indicators_optimized(df: pd.DataFrame, symbol: Optional[str] = None) -> pd.DataFrame:
+    """Fixed indicator computation without MaskedArray issues"""
+    
+    if df.empty or 'Close' not in df.columns:
+        return df
+    
+    df = df.copy()
+    
+    try:
+        # Ensure we're working with regular numpy arrays
+        close_prices = np.asarray(df['Close'].values, dtype=np.float64)
+        high_prices = np.asarray(df['High'].values, dtype=np.float64)
+        low_prices = np.asarray(df['Low'].values, dtype=np.float64)
+        
+        # Remove any nan values for Numba functions
+        close_prices_clean = np.nan_to_num(close_prices, nan=np.nanmean(close_prices))
+        
+        # Use optimized functions when available
+        use_numba = config.USE_NUMBA
+        
+        # Check if arrays are suitable for Numba (no MaskedArrays)
+        if isinstance(close_prices, np.ma.MaskedArray):
+            close_prices = convert_masked_to_regular_array(close_prices)
+            use_numba = False
+            logger.debug("Detected MaskedArray, falling back to standard calculations")
+        
+        if use_numba and len(close_prices_clean) >= 14:
+            try:
+                # Optimized RSI
+                df['RSI'] = calculate_rsi_optimized(close_prices_clean, 14)
+                
+                # Optimized EMAs for MACD
+                if len(close_prices_clean) >= 26:
+                    ema_12 = calculate_ema_optimized(close_prices_clean, 12)
+                    ema_26 = calculate_ema_optimized(close_prices_clean, 26)
+                    macd_line = ema_12 - ema_26
+                    
+                    # Clean MACD line for signal calculation
+                    macd_clean = np.nan_to_num(macd_line, nan=0)
+                    valid_macd = macd_clean[~np.isnan(macd_line)]
+                    
+                    if len(valid_macd) >= 9:
+                        macd_signal = calculate_ema_optimized(valid_macd, 9)
+                        df['MACD'] = macd_line
+                        df['MACD_signal'] = np.nan
+                        # Align the signal properly
+                        signal_start = len(df) - len(macd_signal)
+                        if signal_start >= 0 and signal_start < len(df):
+                            df.iloc[signal_start:, df.columns.get_loc('MACD_signal')] = macd_signal
+                    else:
+                        df['MACD'] = macd_line
+                        df['MACD_signal'] = np.nan
+                        
+            except Exception as e:
+                logger.warning(f"Numba optimization failed, falling back to standard: {e}")
+                use_numba = False
+        
+        # Fallback to pandas/ta if Numba fails or is disabled
+        if not use_numba or len(df) < 14:
+            if len(df) >= 14:
+                try:
+                    df['RSI'] = ta.momentum.RSIIndicator(df['Close'], window=14).rsi()
+                except Exception as e:
+                    logger.warning(f"RSI calculation failed: {e}")
+                    df['RSI'] = np.nan
+            
+            if len(df) >= 26:
+                try:
+                    macd = ta.trend.MACD(df['Close'])
+                    df['MACD'] = macd.macd()
+                    df['MACD_signal'] = macd.macd_signal()
+                except Exception as e:
+                    logger.warning(f"MACD calculation failed: {e}")
+                    df['MACD'] = np.nan
+                    df['MACD_signal'] = np.nan
+        
+        # Vectorized operations for multiple indicators
+        if config.VECTORIZE_OPERATIONS:
+            # Multiple SMAs at once
+            sma_windows = [20, 50, 200]
+            for window in sma_windows:
+                if len(df) >= window:
+                    df[f'SMA_{window}'] = df['Close'].rolling(window, min_periods=1).mean()
+                else:
+                    df[f'SMA_{window}'] = np.nan
+            
+            # Bollinger Bands
+            if len(df) >= 20:
+                try:
+                    middle = df['Close'].rolling(window=20, min_periods=1).mean()
+                    std = df['Close'].rolling(window=20, min_periods=1).std()
+                    df['Upper_Band'] = middle + (std * 2)
+                    df['Middle_Band'] = middle
+                    df['Lower_Band'] = middle - (std * 2)
+                except Exception as e:
+                    logger.warning(f"Bollinger Bands calculation failed: {e}")
+                    df['Upper_Band'] = df['Middle_Band'] = df['Lower_Band'] = np.nan
+        else:
+            # Standard calculation
+            for window in [20, 50, 200]:
+                if len(df) >= window:
+                    df[f'SMA_{window}'] = df['Close'].rolling(window).mean()
+            
+            if len(df) >= 20:
+                try:
+                    bb = ta.volatility.BollingerBands(df['Close'], window=20, window_dev=2)
+                    df['Upper_Band'] = bb.bollinger_hband()
+                    df['Middle_Band'] = bb.bollinger_mavg()
+                    df['Lower_Band'] = bb.bollinger_lband()
+                except Exception as e:
+                    logger.warning(f"Bollinger Bands (ta) calculation failed: {e}")
+                    df['Upper_Band'] = df['Middle_Band'] = df['Lower_Band'] = np.nan
+        
+        # ATR and ADX
+        if len(df) >= 14:
+            try:
+                df['ATR'] = ta.volatility.AverageTrueRange(
+                    df['High'], df['Low'], df['Close'], window=14
+                ).average_true_range()
+            except Exception as e:
+                logger.warning(f"ATR calculation failed: {e}")
+                df['ATR'] = np.nan
+            
+            try:
+                df['ADX'] = ta.trend.ADXIndicator(
+                    df['High'], df['Low'], df['Close'], window=14
+                ).adx()
+            except Exception as e:
+                logger.warning(f"ADX calculation failed: {e}")
+                df['ADX'] = np.nan
+        
+        # Volume indicators
+        if 'Volume' in df.columns and len(df) >= 20:
+            try:
+                df['Volume_SMA'] = df['Volume'].rolling(20, min_periods=1).mean()
+                df['Volume_Ratio'] = df['Volume'] / df['Volume_SMA']
+                df['Volume_Ratio'] = df['Volume_Ratio'].replace([np.inf, -np.inf], 1.0)
+            except Exception as e:
+                logger.warning(f"Volume indicators calculation failed: {e}")
+                df['Volume_SMA'] = df['Volume_Ratio'] = np.nan
+            
+            try:
+                df['CMF'] = ta.volume.ChaikinMoneyFlowIndicator(
+                    df['High'], df['Low'], df['Close'], df['Volume'], window=20
+                ).chaikin_money_flow()
+            except Exception as e:
+                logger.warning(f"CMF calculation failed: {e}")
+                df['CMF'] = np.nan
+        
+        # Stochastic
+        if len(df) >= 14:
+            try:
+                stoch = ta.momentum.StochasticOscillator(df['High'], df['Low'], df['Close'])
+                df['Stoch_K'] = stoch.stoch()
+                df['Stoch_D'] = stoch.stoch_signal()
+            except Exception as e:
+                logger.warning(f"Stochastic calculation failed: {e}")
+                df['Stoch_K'] = df['Stoch_D'] = np.nan
+        
+        # VWAP
+        if 'Volume' in df.columns:
+            try:
+                typical_price = (df['High'] + df['Low'] + df['Close']) / 3
+                df['VWAP'] = (df['Volume'] * typical_price).cumsum() / df['Volume'].cumsum()
+                df['VWAP'] = df['VWAP'].replace([np.inf, -np.inf], np.nan)
+            except Exception as e:
+                logger.warning(f"VWAP calculation failed: {e}")
+                df['VWAP'] = np.nan
+        
+        logger.debug(f"Computed indicators for {symbol if symbol else 'unknown'}")
+        
+    except Exception as e:
+        logger.error(f"Error computing indicators: {e}")
+        # Return dataframe with basic indicators even if some fail
+        for col in ['RSI', 'MACD', 'MACD_signal', 'ATR', 'ADX', 'Upper_Band', 
+                   'Middle_Band', 'Lower_Band', 'Volume_SMA', 'Volume_Ratio']:
+            if col not in df.columns:
+                df[col] = np.nan
+    
+    return df
+
+# ========================= ALERT SYSTEM =========================
 
 class AlertType(Enum):
     """Alert types enumeration"""
@@ -560,7 +742,7 @@ class AlertMonitor:
             current_price = data['Close'].iloc[-1] if not data.empty else None
             current_rsi = data['RSI'].iloc[-1] if 'RSI' in data.columns and not data.empty else None
             current_volume = data['Volume'].iloc[-1] if 'Volume' in data.columns and not data.empty else None
-            avg_volume = data['Volume'].rolling(20).mean().iloc[-1] if 'Volume' in data.columns and len(data) >= 20 else None
+            avg_volume = data['Volume_SMA'].iloc[-1] if 'Volume_SMA' in data.columns and not data.empty else None
             
             for alert in self.alerts[symbol]:
                 if alert.triggered and alert.trigger_count >= 3:
@@ -578,7 +760,7 @@ class AlertMonitor:
                     should_trigger = alert.check_condition(current_rsi)
                 
                 elif alert.alert_type == AlertType.VOLUME_SPIKE and current_volume and avg_volume:
-                    volume_ratio = current_volume / avg_volume
+                    volume_ratio = current_volume / avg_volume if avg_volume > 0 else 0
                     current_value = volume_ratio
                     should_trigger = volume_ratio > alert.threshold
                 
@@ -587,60 +769,12 @@ class AlertMonitor:
                     triggered_alerts.append(alert)
         
         return triggered_alerts
-    
-    def start_monitoring(self, check_interval: int = 60):
-        """Start background monitoring"""
-        if self._monitoring:
-            return
-        
-        self._monitoring = True
-        self._stop_event.clear()
-        self._monitor_thread = threading.Thread(target=self._monitor_loop, args=(check_interval,))
-        self._monitor_thread.daemon = True
-        self._monitor_thread.start()
-        logger.info("Alert monitoring started")
-    
-    def stop_monitoring(self):
-        """Stop background monitoring"""
-        if not self._monitoring:
-            return
-        
-        self._monitoring = False
-        self._stop_event.set()
-        if self._monitor_thread:
-            self._monitor_thread.join(timeout=5)
-        logger.info("Alert monitoring stopped")
-    
-    def _monitor_loop(self, check_interval: int):
-        """Background monitoring loop"""
-        while not self._stop_event.is_set():
-            try:
-                symbols_to_check = list(self.alerts.keys())
-                
-                for symbol in symbols_to_check:
-                    if self._stop_event.is_set():
-                        break
-                    
-                    try:
-                        # Fetch latest data
-                        data = fetch_stock_data_with_validation(symbol, period="1d", interval="5m")
-                        if not data.empty:
-                            self.check_alerts(symbol, data)
-                    except Exception as e:
-                        logger.error(f"Error checking alerts for {symbol}: {e}")
-                
-                # Wait for next check
-                self._stop_event.wait(check_interval)
-                
-            except Exception as e:
-                logger.error(f"Error in monitor loop: {e}")
 
 # Global alert monitor instance
 alert_monitor = AlertMonitor()
 
-# ========================= ENHANCED DATA FETCHING =========================
+# ========================= API CONFIGURATION =========================
 
-# API Configuration
 CLIENT_ID = os.getenv("CLIENT_ID")
 PASSWORD = os.getenv("PASSWORD")
 TOTP_SECRET = os.getenv("TOTP_SECRET")
@@ -655,7 +789,6 @@ USER_AGENTS = [
     "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36",
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:127.0) Gecko/20100101 Firefox/127.0",
 ]
-
 @st.cache_data(ttl=86400)
 def load_symbol_token_map() -> Dict[str, str]:
     """Load symbol to token mapping with retry logic"""
