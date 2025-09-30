@@ -20,4 +20,8 @@ chromedriver-py
 selenium
 ratelimit
 webdriver-manager
+pydantic 
+tenacity
+numba
+aiohttp
 dhanhq
