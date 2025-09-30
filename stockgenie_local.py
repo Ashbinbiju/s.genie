@@ -1250,32 +1250,217 @@ def analyze_batch_stocks(stock_list: List[str], progress_callback: Optional[call
 
 # ========================= SECTORS CONFIGURATION =========================
 
+
 SECTORS = {
-    "Bank": [
-        "HDFCBANK-EQ", "ICICIBANK-EQ", "SBIN-EQ", "KOTAKBANK-EQ", "AXISBANK-EQ"
-    ],
-    "IT": [
-        "TCS-EQ", "INFY-EQ", "HCLTECH-EQ", "WIPRO-EQ", "TECHM-EQ"
-    ],
-    "Pharma": [
-        "SUNPHARMA-EQ", "CIPLA-EQ", "DRREDDY-EQ", "LUPIN-EQ", "DIVISLAB-EQ"
-    ],
-    "Auto": [
-        "MARUTI-EQ", "TATAMOTORS-EQ", "M&M-EQ", "BAJAJ-AUTO-EQ", "HEROMOTOCO-EQ"
-    ],
-    "FMCG": [
-        "HINDUNILVR-EQ", "ITC-EQ", "NESTLEIND-EQ", "BRITANNIA-EQ", "DABUR-EQ"
-    ],
-    "Metal": [
-        "TATASTEEL-EQ", "JSWSTEEL-EQ", "HINDALCO-EQ", "VEDL-EQ", "SAIL-EQ"
-    ],
-    "Oil & Gas": [
-        "RELIANCE-EQ", "ONGC-EQ", "IOC-EQ", "BPCL-EQ", "GAIL-EQ"
-    ],
-    "Power": [
-        "NTPC-EQ", "POWERGRID-EQ", "ADANIPOWER-EQ", "TATAPOWER-EQ"
-    ]
+  "Bank": [
+    "HDFCBANK ", "ICICIBANK ", "SBIN ", "KOTAKBANK ", "AXISBANK ",
+    "INDUSINDBK ", "PNB ", "BANKBARODA ", "CANBK ", "UNIONBANK ",
+    "IDFCFIRSTB ", "FEDERALBNK ", "RBLBANK ", "BANDHANBNK ", "INDIANB ",
+    "BANKINDIA ", "KARURVYSYA ", "CUB ", "J&KBANK ", "DCBBANK ",
+    "AUBANK ", "YESBANK ", "IDBI ", "SOUTHBANK ", "CSBBANK ",
+    "TMB ", "KTKBANK ", "EQUITASBNK ", "UJJIVANSFB "
+  ],
+
+
+
+  "Software & IT Services": [
+    "TCS ", "INFY ", "HCLTECH ", "WIPRO ", "TECHM ", "LTIM ",
+    "MPHASIS ", "FSL ", "BSOFT ", "NEWGEN ", "ZENSARTECH ",
+    "RATEGAIN ", "TANLA ", "COFORGE ", "PERSISTENT ", "CYIENT ",
+    "SONATSOFTW ", "KPITTECH ", "BIRLASOFT ", "TATAELXSI ", "MINDTREE ",
+    "INTELLECT ", "HAPPSTMNDS ", "MASTEK ", "ECLERX ", "NIITLTD ",
+    "RSYSTEMS ", "XCHANGING ", "OFSS ", "AURIONPRO ", "DATAMATICS ",
+    "QUICKHEAL ", "CIGNITITEC ", "ALLSEC "
+  ],
+
+
+
+  "Finance": [
+    "HDFCBANK ", "ICICIBANK ", "SBIN ", "KOTAKBANK ", "BAJFINANCE ",
+    "AXISBANK ", "BAJAJFINSV ", "INDUSINDBK ", "SHRIRAMFIN ", "CHOLAFIN ",
+    "SBICARD ", "M&MFIN ", "MUTHOOTFIN ", "LICHSGFIN ", "IDFCFIRSTB ",
+    "AUBANK ", "POONAWALLA ", "SUNDARMFIN ", "IIFL ", "ABCAPITAL ",
+    "L&TFH ", "CREDITACC ", "MANAPPURAM ", "DHANI ", "JMFINANCIL ",
+    "EDELWEISS ", "INDIASHLTR ", "MOTILALOFS ", "CDSL ", "BSE ",
+    "MCX ", "ANGELONE ", "KARURVYSYA ", "RBLBANK ", "PNB ",
+    "CANBK ", "UNIONBANK ", "IOB ", "YESBANK ", "UCOBANK ",
+    "BANKINDIA ", "CENTRALBK ", "IDBI ", "J&KBANK ", "DCBBANK ",
+    "FEDERALBNK ", "SOUTHBANK ", "CSBBANK ", "TMB ", "KTKBANK ",
+    "EQUITASBNK ", "UJJIVANSFB ", "BANDHANBNK ", "SURYODAY ", "FSL ",
+    "PSB ", "PFS ", "HDFCAMC ", "NAM-INDIA ", "UTIAMC ", "ABSLAMC ",
+    "360ONE ", "ANANDRATHI ", "PNBHOUSING ", "HOMEFIRST ", "AAVAS ",
+    "APTUS ", "RECLTD ", "PFC ", "IREDA ", "SMCGLOBAL ", "CHOICEIN ",
+    "KFINTECH ", "CAMSBANK ", "MASFIN ", "TRIDENT ", "SBFC ",
+    "UGROCAP ", "FUSION ", "PAISALO ", "CAPITALSFB ", "NSIL ",
+    "SATIN ", "CREDAGRI "
+  ],
+
+
+
+  "Automobile & Ancillaries": [
+    "MARUTI ", "TATAMOTORS ", "M&M ", "BAJAJ-AUTO ", "HEROMOTOCO ",
+    "EICHERMOT ", "TVSMOTOR ", "ASHOKLEY ", "MRF ", "BALKRISIND ",
+    "APOLLOTYRE ", "CEATLTD ", "JKTYRE ", "MOTHERSON ", "BHARATFORG ",
+    "SUNDRMFAST ", "EXIDEIND ", "AMARAJABAT ", "BOSCHLTD ", "ENDURANCE ",
+    "MINDAIND ", "WABCOINDIA ", "GABRIEL ", "SUPRAJIT ", "LUMAXTECH ",
+    "FIEMIND ", "SUBROS ", "JAMNAAUTO ", "SHRIRAMCIT ", "ESCORTS ",
+    "ATULAUTO ", "OLECTRA ", "GREAVESCOT ", "SMLISUZU ", "VSTTILLERS ",
+    "HINDMOTORS ", "MAHSCOOTER "
+  ],
+
+
+
+  "Healthcare": [
+    "SUNPHARMA ", "CIPLA ", "DRREDDY ", "APOLLOHOSP ", "LUPIN ",
+    "DIVISLAB ", "AUROPHARMA ", "ALKEM ", "TORNTPHARM ", "ZYDUSLIFE ",
+    "IPCALAB ", "GLENMARK ", "BIOCON ", "ABBOTINDIA ", "SANOFI ",
+    "PFIZER ", "GLAXO ", "NATCOPHARM ", "AJANTPHARM ", "GRANULES ",
+    "LAURUSLABS ", "STAR ", "JUBLPHARMA ", "ASTRAZEN ", "WOCKPHARDT ",
+    "FORTIS ", "MAXHEALTH ", "METROPOLIS ", "THYROCARE ", "POLYMED ",
+    "KIMS ", "NH ", "LALPATHLAB ", "MEDPLUS ", "ERIS ", "INDOCO ",
+    "CAPLIPOINT ", "NEULANDLAB ", "SHILPAMED ", "SUVENPHAR ", "AARTIDRUGS ",
+    "PGHL ", "SYNGENE ", "VINATIORGA ", "GLAND ", "JBCHEPHARM ",
+    "HCG ", "RAINBOW ", "ASTERDM ", "KRSNAA ", "VIJAYA ", "MEDANTA ",
+    "NETMEDS ", "BLISSGVS ", "MOREPENLAB ", "RPGLIFE "
+  ],
+
+
+  "Metals & Mining": [
+    "TATASTEEL ", "JSWSTEEL ", "HINDALCO ", "VEDL ", "SAIL ",
+    "NMDC ", "HINDZINC ", "NALCO ", "JINDALSTEL ", "MOIL ",
+    "APLAPOLLO ", "RATNAMANI ", "JSL ", "WELCORP ", "TINPLATE ",
+    "SHYAMMETL ", "MIDHANI ", "GRAVITA ", "SARDAEN ", "ASHAPURMIN ",
+    "JTLIND ", "RAMASTEEL ", "MAITHANALL ", "KIOCL ", "IMFA ",
+    "GMDCLTD ", "VISHNU ", "SANDUMA "
+  ],
+
+
+  "FMCG": [
+    "HINDUNILVR ", "ITC ", "NESTLEIND ", "VARBEV ", "BRITANNIA ",
+    "GODREJCP ", "DABUR ", "COLPAL ", "MARICO ", "PGHH ",
+    "EMAMILTD ", "GILLETTE ", "HATSUN ", "JYOTHYLAB ", "BAJAJCON ",
+    "RADICO ", "TATACONSUM ", "UNITDSPR ", "CCL ", "AVANTIFEED ",
+    "BIKAJI ", "PATANJALI ", "VBL ", "ZOMATO ", "DOMS ",
+    "GODREJAGRO ", "SAPPHIRE ", "VENKEYS ", "BECTORFOOD ", "KRBL "
+  ],
+
+
+
+  "Power": [
+    "NTPC ", "POWERGRID ", "ADANIPOWER ", "TATAPOWER ", "JSWENERGY ",
+    "NHPC ", "SJVN ", "TORNTPOWER ", "CESC ", "ADANIENSOL ",
+    "INDIAGRID ", "POWERMECH ", "KEC ", "INOXWIND ", "KALPATPOWR ",
+    "SUZLON ", "BHEL ", "THERMAX ", "GEPIL ", "VOLTAMP ",
+    "TRIL ", "TDPOWERSYS ", "JYOTISTRUC ", "IWEL "
+  ],
+
+
+  "Capital Goods": [
+    "LT ", "SIEMENS ", "ABB ", "BEL ", "BHEL ", "HAL ",
+    "CUMMINSIND ", "THERMAX ", "AIAENG ", "SKFINDIA ", "GRINDWELL ",
+    "TIMKEN ", "KSB ", "ELGIEQUIP ", "LAKSHMIMACH ", "KIRLOSENG ",
+    "GREAVESCOT ", "TRITURBINE ", "VOLTAS ", "BLUESTARCO ", "HAVELLS ",
+    "DIXON ", "KAYNES ", "SYRMA ", "AMBER ", "SUZLON ", "CGPOWER ",
+    "APARINDS ", "HBLPOWER ", "KEI ", "POLYCAB ", "RRKABEL ",
+    "SCHNEIDER ", "TDPOWERSYS ", "KIRLOSBROS ", "JYOTICNC ", "DATAPATTNS ",
+    "INOXWIND ", "KALPATPOWR ", "MAZDOCK ", "COCHINSHIP ", "GRSE ",
+    "POWERMECH ", "ISGEC ", "HPL ", "VTL ", "DYNAMATECH ", "JASH ",
+    "GMMPFAUDLR ", "ESABINDIA ", "CENTURYEXT ", "SALASAR ", "TITAGARH ",
+    "VGUARD ", "WABAG "
+  ],
+
+
+  "Oil & Gas": [
+    "RELIANCE ", "ONGC ", "IOC ", "BPCL ", "HPCL ", "GAIL ",
+    "PETRONET ", "OIL ", "IGL ", "MGL ", "GUJGASLTD ", "GSPL ",
+    "AEGISCHEM ", "CHENNPETRO ", "MRPL ", "GULFOILLUB ", "CASTROLIND ",
+    "SOTL ", "PANAMAPET ", "GOCLCORP "
+  ],
+
+
+  "Chemicals": [
+    "PIDILITIND ", "SRF ", "DEEPAKNTR ", "ATUL ", "AARTIIND ",
+    "NAVINFLUOR ", "VINATIORGA ", "FINEORG ", "ALKYLAMINE ", "BALAMINES ",
+    "GUJFLUORO ", "CLEAN ", "JUBLINGREA ", "GALAXYSURF ", "PCBL ",
+    "NOCIL ", "BASF ", "SUDARSCHEM ", "NEOGEN ", "PRIVISCL ",
+    "ROSSARI ", "LXCHEM ", "ANURAS ", "JUBLPHARMA ", "CHEMCON ",
+    "DMCC ", "TATACHEM ", "COROMANDEL ", "UPL ", "BAYERCROP ",
+    "SUMICHEM ", "PIIND ", "DHARAMSI ", "EIDPARRY ", "CHEMPLASTS ",
+    "VISHNU ", "IGPL ", "TIRUMALCHM "
+  ],
+
+
+  "Telecom": [
+    "BHARTIARTL ", "VODAFONEIDEA ", "INDUSTOWER ", "TATACOMM ",
+    "HFCL ", "TEJASNET ", "STLTECH ", "ITI ", "ASTEC "
+  ],
+
+
+  "Infrastructure": [
+    "LT ", "GMRINFRA ", "IRB ", "NBCC ", "RVNL ", "KEC ",
+    "PNCINFRA ", "KNRCON ", "GRINFRA ", "NCC ", "HGINFRA ",
+    "ASHOKA ", "SADBHAV ", "JWL ", "PATELENG ", "KALPATPOWR ",
+    "IRCON ", "ENGINERSIN ", "AHLUWALIA ", "PSPPROJECTS ", "CAPACITE ",
+    "WELSPUNIND ", "TITAGARH ", "HCC ", "MANINFRA ", "RIIL ",
+    "DBREALTY ", "JWL "
+  ],
+
+
+
+  "Insurance": [
+    "SBILIFE ", "HDFCLIFE ", "ICICIGI ", "ICICIPRULI ", "LICI ",
+    "GICRE ", "NIACL ", "STARHEALTH ", "BAJAJFINSV ", "MAXFIN "
+  ],
+
+
+  "Diversified": [
+    "ITC ", "RELIANCE ", "ADANIENT ", "GRASIM ", "HINDUNILVR ",
+    "DCMSHRIRAM ", "3MINDIA ", "CENTURYPLY ", "KFINTECH ", "BALMERLAWRI ",
+    "GODREJIND ", "VBL ", "BIRLACORPN "
+  ],
+
+
+  "Construction Materials": [
+    "ULTRACEMCO ", "SHREECEM ", "AMBUJACEM ", "ACC ", "JKCEMENT ",
+    "DALBHARAT ", "RAMCOCEM ", "NUVOCO ", "JKLAKSHMI ", "BIRLACORPN ",
+    "HEIDELBERG ", "INDIACEM ", "PRISMJOHNS ", "STARCEMENT ", "SAGCEM ",
+    "DECCANCE ", "KCP ", "ORIENTCEM ", "HIL ", "EVERESTIND ",
+    "VISAKAIND ", "BIGBLOC "
+  ],
+
+
+  "Real Estate": [
+    "DLF ", "GODREJPROP ", "OBEROIRLTY ", "PHOENIXLTD ", "PRESTIGE ",
+    "BRIGADE ", "SOBHA ", "SUNTECK ", "MAHLIFE ", "ANANTRAJ ",
+    "KOLTEPATIL ", "PURVA ", "ARVSMART ", "RUSTOMJEE ", "DBREALTY ",
+    "IBREALEST ", "OMAXE ", "ASHIANA ", "ELDEHSG ", "TARC "
+  ],
+
+
+  "Aviation": [
+    "INDIGO ", "SPICEJET ", "AAI ", "GMRINFRA "
+  ],
+
+
+  "Retailing": [
+    "DMART ", "TRENT ", "ABFRL ", "VMART ", "SHOPERSTOP ",
+    "BATAINDIA ", "METROBRAND ", "ARVINDFASN ", "CANTABIL ", "ZOMATO ",
+    "NYKAA ", "MANYAVAR ", "ELECTRONICSMRKT ", "LANDMARK ", "V2RETAIL ",
+    "THANGAMAYL ", "KALYANKJIL ", "TITAN "
+  ],
+
+
+  "Miscellaneous": [
+    "PIDILITIND ", "BSE ", "CDSL ", "MCX ", "NAUKRI ",
+    "JUSTDIAL ", "TEAMLEASE ", "QUESS ", "SIS ", "DELHIVERY ",
+    "PRUDENT ", "MEDIASSIST ", "AWFIS ", "JUBLFOOD ", "DEVYANI ",
+    "WESTLIFE ", "SAPPHIRE ", "BARBEQUE ", "EASEMYTRIP ", "THOMASCOOK ",
+    "MSTC ", "IRCTC ", "POLICYBZR ", "PAYTM ", "INFIBEAM ",
+    "CARTRADE ", "HONASA ", "ONE97COMM ", "SIGNATURE ", "RRKABEL ",
+    "HMAAGRO ", "RKFORGE ", "CAMPUS ", "SENCO ", "CONCORDBIO "
+  ]
 }
+
 
 # ========================= MAIN APPLICATION =========================
 
