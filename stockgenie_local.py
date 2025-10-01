@@ -1966,23 +1966,22 @@ def update_progress(progress_bar, loading_text, progress_value, loading_messages
         update_progress._last_text_update = current_step
 
 def display_dashboard(symbol=None, data=None, recommendations=None):
-# Initialize session state
-if 'selected_sectors' not in st.session_state:
-st.session_state.selected_sectors = ["Bank"]
-if 'symbol' not in st.session_state:
-st.session_state.symbol = None
-if 'data' not in st.session_state:
-st.session_state.data = None
-if 'recommendations' not in st.session_state:
-st.session_state.recommendations = None
-if 'backtest_results_swing' not in st.session_state:
-st.session_state.backtest_results_swing = None
-if 'backtest_results_intraday' not in st.session_state:
-st.session_state.backtest_results_intraday = None
-if 'recommendation_mode' not in st.session_state:
-st.session_state.recommendation_mode = "Standard"
+    # Initialize session state
+    if 'selected_sectors' not in st.session_state:
+        st.session_state.selected_sectors = ["Bank"]
+    if 'symbol' not in st.session_state:
+        st.session_state.symbol = None
+    if 'data' not in st.session_state:
+        st.session_state.data = None
+    if 'recommendations' not in st.session_state:
+        st.session_state.recommendations = None
+    if 'backtest_results_swing' not in st.session_state:
+        st.session_state.backtest_results_swing = None
+    if 'backtest_results_intraday' not in st.session_state:
+        st.session_state.backtest_results_intraday = None
+    if 'recommendation_mode' not in st.session_state:
+        st.session_state.recommendation_mode = "Standard"
 
-text
 
 # Update session state if new data is provided
 if symbol and data is not None and recommendations is not None:
