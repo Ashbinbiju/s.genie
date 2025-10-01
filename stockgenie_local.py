@@ -28,7 +28,6 @@ from dotenv import load_dotenv
 from scipy.stats.mstats import winsorize
 from streamlit import cache_data
 from itertools import cycle
-import json  # Added for API response parsing
 
 load_dotenv()
 
@@ -57,49 +56,20 @@ API_KEYS = {
 }
 
 USER_AGENTS = [
-    # Chrome on Windows 11
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36",
-    
-    # Chrome on macOS Sonoma
     "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36",
-    
-    # Chrome on macOS with Apple Silicon
     "Mozilla/5.0 (Macintosh; Intel Mac OS X 14_5) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36",
-    
-    # Firefox on Windows 11
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:127.0) Gecko/20100101 Firefox/127.0",
-    
-    # Firefox on macOS
     "Mozilla/5.0 (Macintosh; Intel Mac OS X 14.5; rv:127.0) Gecko/20100101 Firefox/127.0",
-    
-    # Safari on macOS Sonoma
     "Mozilla/5.0 (Macintosh; Intel Mac OS X 14_5) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.5 Safari/605.1.15",
-    
-    # Edge on Windows 11
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36 Edg/126.0.0.0",
-    
-    # Chrome on Android 14 (Samsung Galaxy)
     "Mozilla/5.0 (Linux; Android 14; SM-S928B) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Mobile Safari/537.36",
-    
-    # Chrome on Android 14 (Pixel)
     "Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Mobile Safari/537.36",
-    
-    # Safari on iPhone (iOS 17.5)
     "Mozilla/5.0 (iPhone; CPU iPhone OS 17_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.5 Mobile/15E148 Safari/604.1",
-    
-    # Safari on iPad (iOS 17.5)
     "Mozilla/5.0 (iPad; CPU OS 17_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.5 Mobile/15E148 Safari/604.1",
-    
-    # Opera on Windows 11
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36 OPR/112.0.0.0",
-    
-    # Samsung Internet on Android
     "Mozilla/5.0 (Linux; Android 14; SM-S928B) AppleWebKit/537.36 (KHTML, like Gecko) SamsungBrowser/25.0 Chrome/121.0.0.0 Mobile Safari/537.36",
-    
-    # Brave on Windows 11
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36 Brave/126.0.0.0",
-    
-    # Chrome on Linux (Ubuntu)
     "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36"
 ]
 
@@ -120,189 +90,170 @@ TOOLTIPS = {
 }
 
 SECTORS = {
- 
-  "Bank": [
-    "HDFCBANK.NS", "ICICIBANK.NS", "SBIN.NS", "KOTAKBANK.NS", "AXISBANK.NS",
-    "INDUSINDBK.NS", "PNB.NS", "BANKBARODA.NS", "CANBK.NS", "UNIONBANK.NS",
-    "IDFCFIRSTB.NS", "FEDERALBNK.NS", "RBLBANK.NS", "BANDHANBNK.NS", "INDIANB.NS",
-    "BANKINDIA.NS", "KARURVYSYA.NS", "CUB.NS", "J&KBANK.NS", "DCBBANK.NS",
-    "AUBANK.NS", "YESBANK.NS", "IDBI.NS", "SOUTHBANK.NS", "CSBBANK.NS",
-    "TMB.NS", "KTKBANK.NS", "EQUITASBNK.NS", "UJJIVANSFB.NS"
-  ],
-
-  "Software & IT Services": [
-    "TCS.NS", "INFY.NS", "HCLTECH.NS", "WIPRO.NS", "TECHM.NS", "LTIM.NS",
-    "MPHASIS.NS", "FSL.NS", "BSOFT.NS", "NEWGEN.NS", "ZENSARTECH.NS",
-    "RATEGAIN.NS", "TANLA.NS", "COFORGE.NS", "PERSISTENT.NS", "CYIENT.NS",
-    "SONATSOFTW.NS", "KPITTECH.NS", "BIRLASOFT.NS", "TATAELXSI.NS", "MINDTREE.NS",
-    "INTELLECT.NS", "HAPPSTMNDS.NS", "MASTEK.NS", "ECLERX.NS", "NIITLTD.NS",
-    "RSYSTEMS.NS", "XCHANGING.NS", "OFSS.NS", "AURIONPRO.NS", "DATAMATICS.NS",
-    "QUICKHEAL.NS", "CIGNITITEC.NS","SAGILITY.NS" "ALLSEC.NS"
-  ],
-
-  "Finance": [
-    "HDFCBANK.NS", "ICICIBANK.NS", "SBIN.NS", "KOTAKBANK.NS", "BAJFINANCE.NS",
-    "AXISBANK.NS", "BAJAJFINSV.NS", "INDUSINDBK.NS", "SHRIRAMFIN.NS", "CHOLAFIN.NS",
-    "SBICARD.NS", "M&MFIN.NS", "MUTHOOTFIN.NS", "LICHSGFIN.NS", "IDFCFIRSTB.NS",
-    "AUBANK.NS", "POONAWALLA.NS", "SUNDARMFIN.NS", "IIFL.NS", "ABCAPITAL.NS",
-    "L&TFH.NS", "CREDITACC.NS", "MANAPPURAM.NS", "DHANI.NS", "JMFINANCIL.NS",
-    "EDELWEISS.NS", "INDIASHLTR.NS", "MOTILALOFS.NS", "CDSL.NS", "BSE.NS",
-    "MCX.NS", "ANGELONE.NS", "KARURVYSYA.NS", "RBLBANK.NS", "PNB.NS",
-    "CANBK.NS", "UNIONBANK.NS", "IOB.NS", "YESBANK.NS", "UCOBANK.NS",
-    "BANKINDIA.NS", "CENTRALBK.NS", "IDBI.NS", "J&KBANK.NS", "DCBBANK.NS",
-    "FEDERALBNK.NS", "SOUTHBANK.NS", "CSBBANK.NS", "TMB.NS", "KTKBANK.NS",
-    "EQUITASBNK.NS", "UJJIVANSFB.NS", "BANDHANBNK.NS", "SURYODAY.NS", "FSL.NS",
-    "PSB.NS", "PFS.NS", "HDFCAMC.NS", "NAM-INDIA.NS", "UTIAMC.NS", "ABSLAMC.NS",
-    "360ONE.NS", "ANANDRATHI.NS", "PNBHOUSING.NS", "HOMEFIRST.NS", "AAVAS.NS",
-    "APTUS.NS", "RECLTD.NS", "PFC.NS", "IREDA.NS", "SMCGLOBAL.NS", "CHOICEIN.NS",
-    "KFINTECH.NS", "CAMSBANK.NS", "MASFIN.NS", "TRIDENT.NS", "SBFC.NS",
-    "UGROCAP.NS", "FUSION.NS", "PAISALO.NS", "CAPITALSFB.NS", "NSIL.NS",
-    "SATIN.NS", "CREDAGRI.NS"
-  ],
-
-  "Automobile & Ancillaries": [
-    "MARUTI.NS", "TATAMOTORS.NS", "M&M.NS", "BAJAJ-AUTO.NS", "HEROMOTOCO.NS",
-    "EICHERMOT.NS", "TVSMOTOR.NS", "ASHOKLEY.NS", "MRF.NS", "BALKRISIND.NS",
-    "APOLLOTYRE.NS", "CEATLTD.NS", "JKTYRE.NS", "MOTHERSON.NS", "BHARATFORG.NS",
-    "SUNDRMFAST.NS", "EXIDEIND.NS", "AMARAJABAT.NS", "BOSCHLTD.NS", "ENDURANCE.NS",
-    "MINDAIND.NS", "WABCOINDIA.NS", "GABRIEL.NS", "SUPRAJIT.NS", "LUMAXTECH.NS",
-    "FIEMIND.NS", "SUBROS.NS", "JAMNAAUTO.NS", "SHRIRAMCIT.NS", "ESCORTS.NS",
-    "ATULAUTO.NS", "OLECTRA.NS", "GREAVESCOT.NS", "SMLISUZU.NS", "VSTTILLERS.NS",
-    "HINDMOTORS.NS", "MAHSCOOTER.NS","HINDMOTORS.NS"
-  ],
-
-  "Healthcare": [
-    "SUNPHARMA.NS", "CIPLA.NS", "DRREDDY.NS", "APOLLOHOSP.NS", "LUPIN.NS",
-    "DIVISLAB.NS", "AUROPHARMA.NS", "ALKEM.NS", "TORNTPHARM.NS", "ZYDUSLIFE.NS",
-    "IPCALAB.NS", "GLENMARK.NS", "BIOCON.NS", "ABBOTINDIA.NS", "SANOFI.NS",
-    "PFIZER.NS", "GLAXO.NS", "NATCOPHARM.NS", "AJANTPHARM.NS", "GRANULES.NS",
-    "LAURUSLABS.NS", "STAR.NS", "JUBLPHARMA.NS", "ASTRAZEN.NS", "WOCKPHARDT.NS","PPLPHARMA.NS"
-    "FORTIS.NS", "MAXHEALTH.NS", "METROPOLIS.NS", "THYROCARE.NS", "POLYMED.NS",
-    "KIMS.NS", "NH.NS", "LALPATHLAB.NS", "MEDPLUS.NS", "ERIS.NS", "INDOCO.NS",
-    "CAPLIPOINT.NS", "NEULANDLAB.NS", "SHILPAMED.NS", "SUVENPHAR.NS", "AARTIDRUGS.NS",
-    "PGHL.NS", "SYNGENE.NS", "VINATIORGA.NS", "GLAND.NS", "JBCHEPHARM.NS",
-    "HCG.NS", "RAINBOW.NS", "ASTERDM.NS", "KRSNAA.NS", "VIJAYA.NS", "MEDANTA.NS",
-    "NETMEDS.NS", "BLISSGVS.NS", "MOREPENLAB.NS", "RPGLIFE.NS"
-  ],
-
-  "Metals & Mining": [
-    "TATASTEEL.NS", "JSWSTEEL.NS", "HINDALCO.NS", "VEDL.NS", "SAIL.NS",
-    "NMDC.NS", "HINDZINC.NS", "NALCO.NS", "JINDALSTEL.NS", "MOIL.NS",
-    "APLAPOLLO.NS", "RATNAMANI.NS", "JSL.NS", "WELCORP.NS", "TINPLATE.NS",
-    "SHYAMMETL.NS", "MIDHANI.NS", "GRAVITA.NS", "SARDAEN.NS", "ASHAPURMIN.NS",
-    "JTLIND.NS", "RAMASTEEL.NS", "MAITHANALL.NS", "KIOCL.NS", "IMFA.NS",
-    "GMDCLTD.NS", "VISHNU.NS", "SANDUMA.NS","VRAJ.NS","COALINDIA.NS ","NILE.BO"
-  ],
-
-  "FMCG": [
-    "HINDUNILVR.NS", "ITC.NS", "NESTLEIND.NS", "VARBEV.NS", "BRITANNIA.NS",
-    "GODREJCP.NS", "DABUR.NS", "COLPAL.NS", "MARICO.NS", "PGHH.NS",
-    "EMAMILTD.NS", "GILLETTE.NS", "HATSUN.NS", "JYOTHYLAB.NS", "BAJAJCON.NS",
-    "RADICO.NS", "TATACONSUM.NS", "UNITDSPR.NS", "CCL.NS", "AVANTIFEED.NS",
-    "BIKAJI.NS", "PATANJALI.NS", "VBL.NS", "ZOMATO.NS", "DOMS.NS",
-    "GODREJAGRO.NS", "SAPPHIRE.NS", "VENKEYS.NS", "BECTORFOOD.NS", "KRBL.NS"
-  ],
-
-  "Power": [
-    "NTPC.NS", "POWERGRID.NS", "ADANIPOWER.NS", "TATAPOWER.NS", "JSWENERGY.NS",
-    "NHPC.NS", "SJVN.NS", "TORNTPOWER.NS", "CESC.NS", "ADANIENSOL.NS",
-    "INDIAGRID.NS", "POWERMECH.NS", "KEC.NS", "INOXWIND.NS", "KALPATPOWR.NS",
-    "SUZLON.NS", "BHEL.NS", "THERMAX.NS", "GEPIL.NS", "VOLTAMP.NS",
-    "TRIL.NS", "TDPOWERSYS.NS", "JYOTISTRUC.NS", "IWEL.NS"
-  ],
-
-  "Capital Goods": [
-    "LT.NS", "SHAKTIPUMP.NS","SIEMENS.NS", "ABB.NS", "BEL.NS", "BHEL.NS", "HAL.NS",
-    "CUMMINSIND.NS", "THERMAX.NS", "AIAENG.NS", "SKFINDIA.NS", "GRINDWELL.NS",
-    "TIMKEN.NS", "KSB.NS", "ELGIEQUIP.NS", "LAKSHMIMACH.NS", "KIRLOSENG.NS",
-    "GREAVESCOT.NS", "TRITURBINE.NS", "VOLTAS.NS", "BLUESTARCO.NS", "HAVELLS.NS",
-    "DIXON.NS", "KAYNES.NS", "SYRMA.NS", "AMBER.NS", "SUZLON.NS", "CGPOWER.NS",
-    "APARINDS.NS", "HBLPOWER.NS", "KEI.NS", "POLYCAB.NS", "RRKABEL.NS",
-    "SCHNEIDER.NS", "TDPOWERSYS.NS", "KIRLOSBROS.NS", "JYOTICNC.NS", "DATAPATTNS.NS",
-    "INOXWIND.NS", "KALPATPOWR.NS", "MAZDOCK.NS", "COCHINSHIP.NS", "GRSE.NS",
-    "POWERMECH.NS", "ISGEC.NS", "HPL.NS", "VTL.NS", "DYNAMATECH.NS", "JASH.NS",
-    "GMMPFAUDLR.NS", "ESABINDIA.NS", "CENTURYEXT.NS", "SALASAR.NS", "TITAGARH.NS",
-    "VGUARD.NS", "WABAG.NS","AZAD"
-  ],
-
-  "Oil & Gas": [
-    "RELIANCE.NS", "ONGC.NS", "IOC.NS", "BPCL.NS", "HPCL.NS", "GAIL.NS",
-    "PETRONET.NS", "OIL.NS", "IGL.NS", "MGL.NS", "GUJGASLTD.NS", "GSPL.NS",
-    "AEGISCHEM.NS", "CHENNPETRO.NS", "MRPL.NS", "GULFOILLUB.NS", "CASTROLIND.NS",
-    "SOTL.NS", "PANAMAPET.NS", "GOCLCORP.NS"
-  ],
-
-  "Chemicals": [
-    "PIDILITIND.NS", "SRF.NS", "DEEPAKNTR.NS", "ATUL.NS", "AARTIIND.NS",
-    "NAVINFLUOR.NS", "VINATIORGA.NS", "FINEORG.NS", "ALKYLAMINE.NS", "BALAMINES.NS",
-    "GUJFLUORO.NS", "CLEAN.NS", "JUBLINGREA.NS", "GALAXYSURF.NS", "PCBL.NS",
-    "NOCIL.NS", "BASF.NS", "SUDARSCHEM.NS", "NEOGEN.NS", "PRIVISCL.NS",
-    "ROSSARI.NS", "LXCHEM.NS", "ANURAS.NS", "JUBLPHARMA.NS", "CHEMCON.NS",
-    "DMCC.NS", "TATACHEM.NS", "COROMANDEL.NS", "UPL.NS", "BAYERCROP.NS",
-    "SUMICHEM.NS", "PIIND.NS", "DHARAMSI.NS", "EIDPARRY.NS", "CHEMPLASTS.NS",
-    "VISHNU.NS", "IGPL.NS", "TIRUMALCHM.NS"
-  ],
-
-  "Telecom": [
-    "BHARTIARTL.NS", "VODAFONEIDEA.NS", "INDUSTOWER.NS", "TATACOMM.NS",
-    "HFCL.NS", "TEJASNET.NS", "STLTECH.NS", "ITI.NS", "ASTEC.NS"
-  ],
-
-  "Infrastructure": [
-    "LT.NS", "GMRINFRA.NS", "IRB.NS", "NBCC.NS", "RVNL.NS", "KEC.NS",
-    "PNCINFRA.NS", "KNRCON.NS", "GRINFRA.NS", "NCC.NS", "HGINFRA.NS",
-    "ASHOKA.NS", "SADBHAV.NS", "JWL.NS", "PATELENG.NS", "KALPATPOWR.NS",
-    "IRCON.NS", "ENGINERSIN.NS", "AHLUWALIA.NS", "PSPPROJECTS.NS", "CAPACITE.NS",
-    "WELSPUNIND.NS", "TITAGARH.NS", "HCC.NS", "MANINFRA.NS", "RIIL.NS",
-    "DBREALTY.NS", "JWL.NS"
-  ],
-
-  "Insurance": [
-    "SBILIFE.NS", "HDFCLIFE.NS", "ICICIGI.NS", "ICICIPRULI.NS", "LICI.NS",
-    "GICRE.NS", "NIACL.NS", "STARHEALTH.NS", "BAJAJFINSV.NS", "MAXFIN.NS"
-  ],
-
-  "Diversified": [
-    "ITC.NS", "RELIANCE.NS", "ADANIENT.NS", "GRASIM.NS", "HINDUNILVR.NS",
-    "DCMSHRIRAM.NS", "3MINDIA.NS", "CENTURYPLY.NS", "KFINTECH.NS", "BALMERLAWRI.NS",
-    "GODREJIND.NS", "VBL.NS", "BIRLACORPN.NS"
-  ],
-
-  "Construction Materials": [
-    "ULTRACEMCO.NS", "SHREECEM.NS", "AMBUJACEM.NS", "ACC.NS", "JKCEMENT.NS",
-    "DALBHARAT.NS", "RAMCOCEM.NS", "NUVOCO.NS", "JKLAKSHMI.NS", "BIRLACORPN.NS",
-    "HEIDELBERG.NS", "INDIACEM.NS", "PRISMJOHNS.NS", "STARCEMENT.NS", "SAGCEM.NS",
-    "DECCANCE.NS", "KCP.NS", "ORIENTCEM.NS", "HIL.NS", "EVERESTIND.NS",
-    "VISAKAIND.NS", "BIGBLOC.NS"
-  ],
-
-  "Real Estate": [
-    "DLF.NS", "GODREJPROP.NS", "OBEROIRLTY.NS", "PHOENIXLTD.NS", "PRESTIGE.NS",
-    "BRIGADE.NS", "SOBHA.NS", "SUNTECK.NS", "MAHLIFE.NS", "ANANTRAJ.NS",
-    "KOLTEPATIL.NS", "PURVA.NS", "ARVSMART.NS", "RUSTOMJEE.NS", "DBREALTY.NS",
-    "IBREALEST.NS", "OMAXE.NS", "ASHIANA.NS", "ELDEHSG.NS", "TARC.NS"
-  ],
-
-  "Aviation": [
-    "INDIGO.NS", "SPICEJET.NS", "AAI.NS", "GMRINFRA.NS"
-  ],
-
-  "Retailing": [
-    "DMART.NS", "TRENT.NS", "ABFRL.NS", "VMART.NS", "SHOPERSTOP.NS",
-    "BATAINDIA.NS", "METROBRAND.NS", "ARVINDFASN.NS", "CANTABIL.NS", "ZOMATO.NS",
-    "NYKAA.NS", "MANYAVAR.NS", "ELECTRONICSMRKT.NS", "LANDMARK.NS", "V2RETAIL.NS",
-    "THANGAMAYL.NS", "KALYANKJIL.NS", "TITAN.NS"
-  ],
-
-  "Miscellaneous": [
-    "PIDILITIND.NS", "BSE.NS", "CDSL.NS", "MCX.NS", "NAUKRI.NS",
-    "JUSTDIAL.NS", "TEAMLEASE.NS", "QUESS.NS", "SIS.NS", "DELHIVERY.NS",
-    "PRUDENT.NS", "MEDIASSIST.NS", "AWFIS.NS", "JUBLFOOD.NS", "DEVYANI.NS",
-    "WESTLIFE.NS", "SAPPHIRE.NS", "BARBEQUE.NS", "EASEMYTRIP.NS", "THOMASCOOK.NS",
-    "MSTC.NS", "IRCTC.NS", "POLICYBZR.NS", "PAYTM.NS", "INFIBEAM.NS",
-    "CARTRADE.NS", "HONASA.NS", "ONE97COMM.NS", "SIGNATURE.NS", "RRKABEL.NS",
-    "HMAAGRO.NS", "RKFORGE.NS", "CAMPUS.NS", "SENCO.NS", "CONCORDBIO.NS"
-  ]
+    "Bank": [
+        "HDFCBANK.NS", "ICICIBANK.NS", "SBIN.NS", "KOTAKBANK.NS", "AXISBANK.NS",
+        "INDUSINDBK.NS", "PNB.NS", "BANKBARODA.NS", "CANBK.NS", "UNIONBANK.NS",
+        "IDFCFIRSTB.NS", "FEDERALBNK.NS", "RBLBANK.NS", "BANDHANBNK.NS", "INDIANB.NS",
+        "BANKINDIA.NS", "KARURVYSYA.NS", "CUB.NS", "J&KBANK.NS", "DCBBANK.NS",
+        "AUBANK.NS", "YESBANK.NS", "IDBI.NS", "SOUTHBANK.NS", "CSBBANK.NS",
+        "TMB.NS", "KTKBANK.NS", "EQUITASBNK.NS", "UJJIVANSFB.NS"
+    ],
+    "Software & IT Services": [
+        "TCS.NS", "INFY.NS", "HCLTECH.NS", "WIPRO.NS", "TECHM.NS", "LTIM.NS",
+        "MPHASIS.NS", "FSL.NS", "BSOFT.NS", "NEWGEN.NS", "ZENSARTECH.NS",
+        "RATEGAIN.NS", "TANLA.NS", "COFORGE.NS", "PERSISTENT.NS", "CYIENT.NS",
+        "SONATSOFTW.NS", "KPITTECH.NS", "BIRLASOFT.NS", "TATAELXSI.NS", "MINDTREE.NS",
+        "INTELLECT.NS", "HAPPSTMNDS.NS", "MASTEK.NS", "ECLERX.NS", "NIITLTD.NS",
+        "RSYSTEMS.NS", "XCHANGING.NS", "OFSS.NS", "AURIONPRO.NS", "DATAMATICS.NS",
+        "QUICKHEAL.NS", "CIGNITITEC.NS", "SAGILITY.NS", "ALLSEC.NS"
+    ],
+    "Finance": [
+        "HDFCBANK.NS", "ICICIBANK.NS", "SBIN.NS", "KOTAKBANK.NS", "BAJFINANCE.NS",
+        "AXISBANK.NS", "BAJAJFINSV.NS", "INDUSINDBK.NS", "SHRIRAMFIN.NS", "CHOLAFIN.NS",
+        "SBICARD.NS", "M&MFIN.NS", "MUTHOOTFIN.NS", "LICHSGFIN.NS", "IDFCFIRSTB.NS",
+        "AUBANK.NS", "POONAWALLA.NS", "SUNDARMFIN.NS", "IIFL.NS", "ABCAPITAL.NS",
+        "L&TFH.NS", "CREDITACC.NS", "MANAPPURAM.NS", "DHANI.NS", "JMFINANCIL.NS",
+        "EDELWEISS.NS", "INDIASHLTR.NS", "MOTILALOFS.NS", "CDSL.NS", "BSE.NS",
+        "MCX.NS", "ANGELONE.NS", "KARURVYSYA.NS", "RBLBANK.NS", "PNB.NS",
+        "CANBK.NS", "UNIONBANK.NS", "IOB.NS", "YESBANK.NS", "UCOBANK.NS",
+        "BANKINDIA.NS", "CENTRALBK.NS", "IDBI.NS", "J&KBANK.NS", "DCBBANK.NS",
+        "FEDERALBNK.NS", "SOUTHBANK.NS", "CSBBANK.NS", "TMB.NS", "KTKBANK.NS",
+        "EQUITASBNK.NS", "UJJIVANSFB.NS", "BANDHANBNK.NS", "SURYODAY.NS", "FSL.NS",
+        "PSB.NS", "PFS.NS", "HDFCAMC.NS", "NAM-INDIA.NS", "UTIAMC.NS", "ABSLAMC.NS",
+        "360ONE.NS", "ANANDRATHI.NS", "PNBHOUSING.NS", "HOMEFIRST.NS", "AAVAS.NS",
+        "APTUS.NS", "RECLTD.NS", "PFC.NS", "IREDA.NS", "SMCGLOBAL.NS", "CHOICEIN.NS",
+        "KFINTECH.NS", "CAMSBANK.NS", "MASFIN.NS", "TRIDENT.NS", "SBFC.NS",
+        "UGROCAP.NS", "FUSION.NS", "PAISALO.NS", "CAPITALSFB.NS", "NSIL.NS",
+        "SATIN.NS", "CREDAGRI.NS"
+    ],
+    "Automobile & Ancillaries": [
+        "MARUTI.NS", "TATAMOTORS.NS", "M&M.NS", "BAJAJ-AUTO.NS", "HEROMOTOCO.NS",
+        "EICHERMOT.NS", "TVSMOTOR.NS", "ASHOKLEY.NS", "MRF.NS", "BALKRISIND.NS",
+        "APOLLOTYRE.NS", "CEATLTD.NS", "JKTYRE.NS", "MOTHERSON.NS", "BHARATFORG.NS",
+        "SUNDRMFAST.NS", "EXIDEIND.NS", "AMARAJABAT.NS", "BOSCHLTD.NS", "ENDURANCE.NS",
+        "MINDAIND.NS", "WABCOINDIA.NS", "GABRIEL.NS", "SUPRAJIT.NS", "LUMAXTECH.NS",
+        "FIEMIND.NS", "SUBROS.NS", "JAMNAAUTO.NS", "SHRIRAMCIT.NS", "ESCORTS.NS",
+        "ATULAUTO.NS", "OLECTRA.NS", "GREAVESCOT.NS", "SMLISUZU.NS", "VSTTILLERS.NS",
+        "HINDMOTORS.NS", "MAHSCOOTER.NS"
+    ],
+    "Healthcare": [
+        "SUNPHARMA.NS", "CIPLA.NS", "DRREDDY.NS", "APOLLOHOSP.NS", "LUPIN.NS",
+        "DIVISLAB.NS", "AUROPHARMA.NS", "ALKEM.NS", "TORNTPHARM.NS", "ZYDUSLIFE.NS",
+        "IPCALAB.NS", "GLENMARK.NS", "BIOCON.NS", "ABBOTINDIA.NS", "SANOFI.NS",
+        "PFIZER.NS", "GLAXO.NS", "NATCOPHARM.NS", "AJANTPHARM.NS", "GRANULES.NS",
+        "LAURUSLABS.NS", "STAR.NS", "JUBLPHARMA.NS", "ASTRAZEN.NS", "WOCKPHARDT.NS",
+        "PPLPHARMA.NS", "FORTIS.NS", "MAXHEALTH.NS", "METROPOLIS.NS", "THYROCARE.NS",
+        "POLYMED.NS", "KIMS.NS", "NH.NS", "LALPATHLAB.NS", "MEDPLUS.NS", "ERIS.NS",
+        "INDOCO.NS", "CAPLIPOINT.NS", "NEULANDLAB.NS", "SHILPAMED.NS", "SUVENPHAR.NS",
+        "AARTIDRUGS.NS", "PGHL.NS", "SYNGENE.NS", "VINATIORGA.NS", "GLAND.NS",
+        "JBCHEPHARM.NS", "HCG.NS", "RAINBOW.NS", "ASTERDM.NS", "KRSNAA.NS",
+        "VIJAYA.NS", "MEDANTA.NS", "NETMEDS.NS", "BLISSGVS.NS", "MOREPENLAB.NS",
+        "RPGLIFE.NS"
+    ],
+    "Metals & Mining": [
+        "TATASTEEL.NS", "JSWSTEEL.NS", "HINDALCO.NS", "VEDL.NS", "SAIL.NS",
+        "NMDC.NS", "HINDZINC.NS", "NALCO.NS", "JINDALSTEL.NS", "MOIL.NS",
+        "APLAPOLLO.NS", "RATNAMANI.NS", "JSL.NS", "WELCORP.NS", "TINPLATE.NS",
+        "SHYAMMETL.NS", "MIDHANI.NS", "GRAVITA.NS", "SARDAEN.NS", "ASHAPURMIN.NS",
+        "JTLIND.NS", "RAMASTEEL.NS", "MAITHANALL.NS", "KIOCL.NS", "IMFA.NS",
+        "GMDCLTD.NS", "VISHNU.NS", "SANDUMA.NS", "VRAJ.NS", "COALINDIA.NS", "NILE.BO"
+    ],
+    "FMCG": [
+        "HINDUNILVR.NS", "ITC.NS", "NESTLEIND.NS", "VARBEV.NS", "BRITANNIA.NS",
+        "GODREJCP.NS", "DABUR.NS", "COLPAL.NS", "MARICO.NS", "PGHH.NS",
+        "EMAMILTD.NS", "GILLETTE.NS", "HATSUN.NS", "JYOTHYLAB.NS", "BAJAJCON.NS",
+        "RADICO.NS", "TATACONSUM.NS", "UNITDSPR.NS", "CCL.NS", "AVANTIFEED.NS",
+        "BIKAJI.NS", "PATANJALI.NS", "VBL.NS", "ZOMATO.NS", "DOMS.NS",
+        "GODREJAGRO.NS", "SAPPHIRE.NS", "VENKEYS.NS", "BECTORFOOD.NS", "KRBL.NS"
+    ],
+    "Power": [
+        "NTPC.NS", "POWERGRID.NS", "ADANIPOWER.NS", "TATAPOWER.NS", "JSWENERGY.NS",
+        "NHPC.NS", "SJVN.NS", "TORNTPOWER.NS", "CESC.NS", "ADANIENSOL.NS",
+        "INDIAGRID.NS", "POWERMECH.NS", "KEC.NS", "INOXWIND.NS", "KALPATPOWR.NS",
+        "SUZLON.NS", "BHEL.NS", "THERMAX.NS", "GEPIL.NS", "VOLTAMP.NS",
+        "TRIL.NS", "TDPOWERSYS.NS", "JYOTISTRUC.NS", "IWEL.NS"
+    ],
+    "Capital Goods": [
+        "LT.NS", "SHAKTIPUMP.NS", "SIEMENS.NS", "ABB.NS", "BEL.NS", "BHEL.NS", "HAL.NS",
+        "CUMMINSIND.NS", "THERMAX.NS", "AIAENG.NS", "SKFINDIA.NS", "GRINDWELL.NS",
+        "TIMKEN.NS", "KSB.NS", "ELGIEQUIP.NS", "LAKSHMIMACH.NS", "KIRLOSENG.NS",
+        "GREAVESCOT.NS", "TRITURBINE.NS", "VOLTAS.NS", "BLUESTARCO.NS", "HAVELLS.NS",
+        "DIXON.NS", "KAYNES.NS", "SYRMA.NS", "AMBER.NS", "SUZLON.NS", "CGPOWER.NS",
+        "APARINDS.NS", "HBLPOWER.NS", "KEI.NS", "POLYCAB.NS", "RRKABEL.NS",
+        "SCHNEIDER.NS", "TDPOWERSYS.NS", "KIRLOSBROS.NS", "JYOTICNC.NS", "DATAPATTNS.NS",
+        "INOXWIND.NS", "KALPATPOWR.NS", "MAZDOCK.NS", "COCHINSHIP.NS", "GRSE.NS",
+        "POWERMECH.NS", "ISGEC.NS", "HPL.NS", "VTL.NS", "DYNAMATECH.NS", "JASH.NS",
+        "GMMPFAUDLR.NS", "ESABINDIA.NS", "CENTURYEXT.NS", "SALASAR.NS", "TITAGARH.NS",
+        "VGUARD.NS", "WABAG.NS", "AZAD"
+    ],
+    "Oil & Gas": [
+        "RELIANCE.NS", "ONGC.NS", "IOC.NS", "BPCL.NS", "HPCL.NS", "GAIL.NS",
+        "PETRONET.NS", "OIL.NS", "IGL.NS", "MGL.NS", "GUJGASLTD.NS", "GSPL.NS",
+        "AEGISCHEM.NS", "CHENNPETRO.NS", "MRPL.NS", "GULFOILLUB.NS", "CASTROLIND.NS",
+        "SOTL.NS", "PANAMAPET.NS", "GOCLCORP.NS"
+    ],
+    "Chemicals": [
+        "PIDILITIND.NS", "SRF.NS", "DEEPAKNTR.NS", "ATUL.NS", "AARTIIND.NS",
+        "NAVINFLUOR.NS", "VINATIORGA.NS", "FINEORG.NS", "ALKYLAMINE.NS", "BALAMINES.NS",
+        "GUJFLUORO.NS", "CLEAN.NS", "JUBLINGREA.NS", "GALAXYSURF.NS", "PCBL.NS",
+        "NOCIL.NS", "BASF.NS", "SUDARSCHEM.NS", "NEOGEN.NS", "PRIVISCL.NS",
+        "ROSSARI.NS", "LXCHEM.NS", "ANURAS.NS", "JUBLPHARMA.NS", "CHEMCON.NS",
+        "DMCC.NS", "TATACHEM.NS", "COROMANDEL.NS", "UPL.NS", "BAYERCROP.NS",
+        "SUMICHEM.NS", "PIIND.NS", "DHARAMSI.NS", "EIDPARRY.NS", "CHEMPLASTS.NS",
+        "VISHNU.NS", "IGPL.NS", "TIRUMALCHM.NS"
+    ],
+    "Telecom": [
+        "BHARTIARTL.NS", "VODAFONEIDEA.NS", "INDUSTOWER.NS", "TATACOMM.NS",
+        "HFCL.NS", "TEJASNET.NS", "STLTECH.NS", "ITI.NS", "ASTEC.NS"
+    ],
+    "Infrastructure": [
+        "LT.NS", "GMRINFRA.NS", "IRB.NS", "NBCC.NS", "RVNL.NS", "KEC.NS",
+        "PNCINFRA.NS", "KNRCON.NS", "GRINFRA.NS", "NCC.NS", "HGINFRA.NS",
+        "ASHOKA.NS", "SADBHAV.NS", "JWL.NS", "PATELENG.NS", "KALPATPOWR.NS",
+        "IRCON.NS", "ENGINERSIN.NS", "AHLUWALIA.NS", "PSPPROJECTS.NS", "CAPACITE.NS",
+        "WELSPUNIND.NS", "TITAGARH.NS", "HCC.NS", "MANINFRA.NS", "RIIL.NS",
+        "DBREALTY.NS", "JWL.NS"
+    ],
+    "Insurance": [
+        "SBILIFE.NS", "HDFCLIFE.NS", "ICICIGI.NS", "ICICIPRULI.NS", "LICI.NS",
+        "GICRE.NS", "NIACL.NS", "STARHEALTH.NS", "BAJAJFINSV.NS", "MAXFIN.NS"
+    ],
+    "Diversified": [
+        "ITC.NS", "RELIANCE.NS", "ADANIENT.NS", "GRASIM.NS", "HINDUNILVR.NS",
+        "DCMSHRIRAM.NS", "3MINDIA.NS", "CENTURYPLY.NS", "KFINTECH.NS", "BALMERLAWRI.NS",
+        "GODREJIND.NS", "VBL.NS", "BIRLACORPN.NS"
+    ],
+    "Construction Materials": [
+        "ULTRACEMCO.NS", "SHREECEM.NS", "AMBUJACEM.NS", "ACC.NS", "JKCEMENT.NS",
+        "DALBHARAT.NS", "RAMCOCEM.NS", "NUVOCO.NS", "JKLAKSHMI.NS", "BIRLACORPN.NS",
+        "HEIDELBERG.NS", "INDIACEM.NS", "PRISMJOHNS.NS", "STARCEMENT.NS", "SAGCEM.NS",
+        "DECCANCE.NS", "KCP.NS", "ORIENTCEM.NS", "HIL.NS", "EVERESTIND.NS",
+        "VISAKAIND.NS", "BIGBLOC.NS"
+    ],
+    "Real Estate": [
+        "DLF.NS", "GODREJPROP.NS", "OBEROIRLTY.NS", "PHOENIXLTD.NS", "PRESTIGE.NS",
+        "BRIGADE.NS", "SOBHA.NS", "SUNTECK.NS", "MAHLIFE.NS", "ANANTRAJ.NS",
+        "KOLTEPATIL.NS", "PURVA.NS", "ARVSMART.NS", "RUSTOMJEE.NS", "DBREALTY.NS",
+        "IBREALEST.NS", "OMAXE.NS", "ASHIANA.NS", "ELDEHSG.NS", "TARC.NS"
+    ],
+    "Aviation": [
+        "INDIGO.NS", "SPICEJET.NS", "AAI.NS", "GMRINFRA.NS"
+    ],
+    "Retailing": [
+        "DMART.NS", "TRENT.NS", "ABFRL.NS", "VMART.NS", "SHOPERSTOP.NS",
+        "BATAINDIA.NS", "METROBRAND.NS", "ARVINDFASN.NS", "CANTABIL.NS", "ZOMATO.NS",
+        "NYKAA.NS", "MANYAVAR.NS", "ELECTRONICSMRKT.NS", "LANDMARK.NS", "V2RETAIL.NS",
+        "THANGAMAYL.NS", "KALYANKJIL.NS", "TITAN.NS"
+    ],
+    "Miscellaneous": [
+        "PIDILITIND.NS", "BSE.NS", "CDSL.NS", "MCX.NS", "NAUKRI.NS",
+        "JUSTDIAL.NS", "TEAMLEASE.NS", "QUESS.NS", "SIS.NS", "DELHIVERY.NS",
+        "PRUDENT.NS", "MEDIASSIST.NS", "AWFIS.NS", "JUBLFOOD.NS", "DEVYANI.NS",
+        "WESTLIFE.NS", "SAPPHIRE.NS", "BARBEQUE.NS", "EASEMYTRIP.NS", "THOMASCOOK.NS",
+        "MSTC.NS", "IRCTC.NS", "POLICYBZR.NS", "PAYTM.NS", "INFIBEAM.NS",
+        "CARTRADE.NS", "HONASA.NS", "ONE97COMM.NS", "SIGNATURE.NS", "RRKABEL.NS",
+        "HMAAGRO.NS", "RKFORGE.NS", "CAMPUS.NS", "SENCO.NS", "CONCORDBIO.NS"
+    ]
 }
 
 def init_smartapi_client():
@@ -322,7 +273,7 @@ def init_smartapi_client():
 def tooltip(label, explanation):
     return f"{label} 📌 ({explanation})"
 
-def retry(max_retries=5, delay=5, backoff_factor=2, jitter=1):
+def retry(max_retries=10, delay=10, backoff_factor=2, jitter=1):
     def decorator(func):
         @wraps(func)
         def wrapper(*args, **kwargs):
@@ -332,26 +283,27 @@ def retry(max_retries=5, delay=5, backoff_factor=2, jitter=1):
                 except requests.exceptions.HTTPError as e:
                     if e.response.status_code == 429:
                         if attempt == max_retries:
-                            st.error("Max retries reached due to rate limiting (HTTP 429).")
-                            raise
+                            st.warning(f"Max retries reached due to rate limiting (HTTP 429) for {func.__name__}. Skipping...")
+                            return None
                         sleep_time = (delay * (backoff_factor ** (attempt - 1))) + random.uniform(0, jitter)
-                        st.warning(f"Rate limit hit (429). Attempt {attempt}/{max_retries}. Retrying in {sleep_time:.2f}s...")
+                        st.info(f"Rate limit hit (429). Attempt {attempt}/{max_retries}. Retrying in {sleep_time:.2f}s...")
                         time.sleep(sleep_time)
+                        continue
                     else:
                         raise
                 except requests.exceptions.RequestException as e:
                     if attempt == max_retries:
-                        st.error("Max retries reached due to a network error.")
-                        raise
+                        st.warning(f"Network error after max retries for {func.__name__}: {e}. Skipping...")
+                        return None
                     sleep_time = (delay * (backoff_factor ** (attempt - 1))) + random.uniform(0, jitter)
-                    st.warning(f"Network error: {e}. Attempt {attempt}/{max_retries}. Retrying in {sleep_time:.2f}s...")
+                    st.info(f"Network error: {e}. Attempt {attempt}/{max_retries}. Retrying in {sleep_time:.2f}s...")
                     time.sleep(sleep_time)
-            # This should never be reached, but added for safety
-            raise RuntimeError("Retry mechanism exhausted without success or proper exception raised.")
+            st.warning(f"Retry mechanism exhausted for {func.__name__}.")
+            return None
         return wrapper
     return decorator
 
-@retry(max_retries=5, delay=5)
+@retry(max_retries=10, delay=10)
 def fetch_nse_stock_list():
     url = "https://archives.nseindia.com/content/equities/EQUITY_L.csv"
     try:
@@ -362,10 +314,11 @@ def fetch_nse_stock_list():
         nse_data = pd.read_csv(io.StringIO(response.text))
         stock_list = [f"{symbol}-EQ" for symbol in nse_data['SYMBOL']]
         return stock_list
-    except Exception:
+    except Exception as e:
+        st.warning(f"⚠️ Fallback to predefined stocks due to NSE fetch error: {e}")
         return list(set([stock for sector in SECTORS.values() for stock in sector]))
 
-@retry(max_retries=5, delay=5)
+@retry(max_retries=10, delay=10)
 def fetch_stock_data_with_auth(symbol, period="2y", interval="1d"):
     cache_key = f"{symbol}_{period}_{interval}"
     cached_data = cache.get(cache_key)
@@ -401,7 +354,7 @@ def fetch_stock_data_with_auth(symbol, period="2y", interval="1d"):
         symbol_token_map = load_symbol_token_map()
         symboltoken = symbol_token_map.get(symbol)
         if not symboltoken:
-            st.warning(f"⚠️ Token not found for symbol: {symbol}")
+            st.warning(f"⚠️ Token not found for symbol: {symbol}. Skipping...")
             return pd.DataFrame()
 
         historical_data = smart_api.getCandleData({
@@ -419,18 +372,14 @@ def fetch_stock_data_with_auth(symbol, period="2y", interval="1d"):
 
             buffer = io.BytesIO()
             data.to_pickle(buffer)
-            cache.set(cache_key, buffer.getvalue(), expire=86400)
+            cache.set(cache_key, buffer.getvalue(), expire=7200)  # 2 hours TTL
             return data
         else:
-            raise ValueError(f"No data found for {symbol}: {historical_data.get('message', 'Unknown error')}")
-
-    except requests.exceptions.HTTPError as e:
-        if e.response.status_code == 429:
-            st.warning(f"⚠️ Rate limit exceeded for {symbol}. Skipping...")
+            st.warning(f"⚠️ No data for {symbol}: {historical_data.get('message', 'Unknown error')}. Skipping...")
             return pd.DataFrame()
-        raise e
+
     except Exception as e:
-        st.warning(f"⚠️ Error fetching data for {symbol}: {str(e)}")
+        st.warning(f"⚠️ Error fetching data for {symbol}: {str(e)}. Skipping...")
         return pd.DataFrame()
 
 @lru_cache(maxsize=1000)
@@ -450,7 +399,6 @@ def calculate_advance_decline_ratio(stock_list):
     return advances / declines if declines != 0 else 0
 
 def monte_carlo_simulation(data, simulations=1000, days=30, garch_min_obs=80, winsorize_limit=0.01):
-    # === Validation ===
     if data is None or not isinstance(data, pd.DataFrame) or 'Close' not in data.columns:
         raise ValueError("Input 'data' must be a DataFrame with a 'Close' column.")
     
@@ -464,26 +412,21 @@ def monte_carlo_simulation(data, simulations=1000, days=30, garch_min_obs=80, wi
 
     last_price = close_prices.iloc[-1]
     
-    # === Optional: Winsorize to reduce effect of outliers ===
     if winsorize_limit > 0:
         returns = pd.Series(winsorize(returns, limits=winsorize_limit))
 
-    # === Use geometric mean return for better forward-looking estimate ===
     log_returns = np.log1p(returns)
-    geo_mean = np.expm1(log_returns.mean())  # annualized drift is another option
+    geo_mean = np.expm1(log_returns.mean())
 
     std_return = returns.std()
 
-    # === Choose method based on data length ===
     if len(returns) < garch_min_obs:
-        # === Simple vectorized Monte Carlo ===
         rand_returns = np.random.normal(geo_mean, std_return, (simulations, days))
         price_paths = last_price * np.cumprod(1 + rand_returns, axis=1)
         price_paths = np.hstack([np.full((simulations, 1), last_price), price_paths])
         return price_paths.tolist()
     
     else:
-        # === GARCH Simulation with volatility forecasting ===
         try:
             model = arch_model(returns, vol='GARCH', p=1, q=1, dist='Normal', rescale=False)
             garch_fit = model.fit(disp='off')
@@ -500,7 +443,7 @@ def monte_carlo_simulation(data, simulations=1000, days=30, garch_min_obs=80, wi
             return sim_results
 
         except Exception as e:
-            print(f"GARCH model fitting failed: {e}. Falling back to simple simulation.")
+            st.warning(f"GARCH model fitting failed: {e}. Falling back to simple simulation.")
             rand_returns = np.random.normal(geo_mean, std_return, (simulations, days))
             price_paths = last_price * np.cumprod(1 + rand_returns, axis=1)
             price_paths = np.hstack([np.full((simulations, 1), last_price), price_paths])
@@ -518,14 +461,12 @@ def get_trending_stocks():
     return trending
 
 def calculate_confidence_score(data):
-    # Safety check for empty or None data
     if data is None or len(data) == 0:
         return 0
 
     score = 0
     max_score = 0
 
-    # --- RSI Oversold Check ---
     if 'RSI' in data.columns:
         latest_rsi = data['RSI'].iloc[-1]
         if not pd.isna(latest_rsi):
@@ -533,7 +474,6 @@ def calculate_confidence_score(data):
             if latest_rsi < 30:
                 score += 1
 
-    # --- MACD Bullish Crossover Check ---
     if 'MACD' in data.columns and 'MACD_signal' in data.columns:
         macd = data['MACD'].iloc[-1]
         signal = data['MACD_signal'].iloc[-1]
@@ -542,7 +482,6 @@ def calculate_confidence_score(data):
             if macd > signal:
                 score += 1
 
-    # --- Ichimoku Span A Check ---
     if 'Ichimoku_Span_A' in data.columns and 'Close' in data.columns:
         span_a = data['Ichimoku_Span_A'].iloc[-1]
         close = data['Close'].iloc[-1]
@@ -551,20 +490,17 @@ def calculate_confidence_score(data):
             if close > span_a:
                 score += 1
 
-    # --- ATR-based Volatility Check (High Volatility = Good) ---
     if 'ATR' in data.columns and 'Close' in data.columns:
         atr = data['ATR'].iloc[-1]
         close = data['Close'].iloc[-1]
         if not pd.isna(atr) and not pd.isna(close) and close != 0:
             max_score += 0.5
             atr_volatility = atr / close
-
             if atr_volatility < 0.02:
-                score += 0.25  # Very low volatility — minor positive
+                score += 0.25
             elif atr_volatility > 0.05:
-                score += 0.5   # High volatility — positive for momentum/breakout
+                score += 0.5
 
-    # Final normalized score between 0 and 1
     if max_score == 0:
         return 0
 
@@ -590,13 +526,10 @@ def optimize_rsi_window(data, windows=range(5, 15), risk_free_rate=0.025):
     for window in windows:
         rsi = ta.momentum.RSIIndicator(data['Close'], window=window).rsi()
 
-        # Signal: Buy if RSI < 30, Sell if RSI > 70
         signals = (rsi < 30).astype(int) - (rsi > 70).astype(int)
 
-        # Vectorized position logic: hold previous signal
         positions = signals.replace(0, np.nan).ffill().fillna(0).shift(1)
 
-        # Align positions and returns safely
         aligned_index = returns.index.intersection(positions.index)
         returns_aligned = returns.loc[aligned_index]
         positions_aligned = positions.loc[aligned_index]
@@ -618,37 +551,32 @@ def detect_divergence(data, window=10, rsi_threshold=5):
     price = data['Close']
     rsi = data['RSI']
     
-    # Ensure enough data
     if len(price) < window or len(rsi) < window:
         return "Insufficient data"
 
-    # Get recent extreme indices
     recent_price_low_idx = price[-window:].idxmin()
     recent_price_high_idx = price[-window:].idxmax()
     recent_rsi_low_idx = rsi[-window:].idxmin()
     recent_rsi_high_idx = rsi[-window:].idxmax()
 
-    # Convert to positional indices
     price_low_pos = price.index.get_loc(recent_price_low_idx)
     price_high_pos = price.index.get_loc(recent_price_high_idx)
     rsi_low_pos = rsi.index.get_loc(recent_rsi_low_idx)
     rsi_high_pos = rsi.index.get_loc(recent_rsi_high_idx)
     latest_pos = len(price) - 1
 
-    # Bullish divergence conditions
     bullish_div = (
-        price[recent_price_low_idx] < price.iloc[-1] and                         # Price lower low
-        rsi[recent_rsi_low_idx] > rsi.iloc[-1] and                               # RSI higher low
-        abs(rsi[recent_rsi_low_idx] - rsi.iloc[-1]) > rsi_threshold and          # RSI change is significant
-        price_low_pos > rsi_low_pos and price_low_pos != latest_pos             # RSI low occurs before price low and not current bar
+        price[recent_price_low_idx] < price.iloc[-1] and
+        rsi[recent_rsi_low_idx] > rsi.iloc[-1] and
+        abs(rsi[recent_rsi_low_idx] - rsi.iloc[-1]) > rsi_threshold and
+        price_low_pos > rsi_low_pos and price_low_pos != latest_pos
     )
 
-    # Bearish divergence conditions
     bearish_div = (
-        price[recent_price_high_idx] > price.iloc[-1] and                        # Price higher high
-        rsi[recent_rsi_high_idx] < rsi.iloc[-1] and                              # RSI lower high
-        abs(rsi[recent_rsi_high_idx] - rsi.iloc[-1]) > rsi_threshold and         # RSI change is significant
-        price_high_pos > rsi_high_pos and price_high_pos != latest_pos          # RSI high occurs before price high and not current bar
+        price[recent_price_high_idx] > price.iloc[-1] and
+        rsi[recent_rsi_high_idx] < rsi.iloc[-1] and
+        abs(rsi[recent_rsi_high_idx] - rsi.iloc[-1]) > rsi_threshold and
+        price_high_pos > rsi_high_pos and price_high_pos != latest_pos
     )
 
     if bullish_div:
@@ -669,72 +597,35 @@ def calculate_cmo(close, window=14):
         st.warning(f"⚠️ Failed to compute custom CMO: {str(e)}")
         return None
 
-logging.basicConfig(level=logging.WARNING,
-                    format="%(levelname)s: %(message)s")
+logging.basicConfig(level=logging.WARNING, format="%(levelname)s: %(message)s")
 
-def validate_data(
-    data: pd.DataFrame,
-    required_columns=None,
-    min_length: int = 30,
-    max_volume: float | None = 1e10,
-    check_positive_prices: bool = True,
-) -> bool:
-    """
-    Comprehensive OHLCV DataFrame validator.
-    
-    Parameters
-    ----------
-    data : pd.DataFrame
-        Stock price data (must include at least Open/High/Low/Close/Volume columns).
-    required_columns : list[str] | None
-        Columns that must be present. Defaults to the standard OHLCV set.
-    min_length : int
-        Minimum number of rows required for the DataFrame.
-    max_volume : float | None
-        Flag rows with unrealistically large volume figures. Set to None to skip.
-    check_positive_prices : bool
-        If True, verifies that all price columns are > 0.
-
-    Returns
-    -------
-    bool
-        True if all checks pass; otherwise False (with warnings logged).
-    """
-    # Default required columns
+def validate_data(data: pd.DataFrame, required_columns=None, min_length: int = 30, max_volume: float | None = 1e10, check_positive_prices: bool = True) -> bool:
     if required_columns is None:
         required_columns = ['Open', 'High', 'Low', 'Close', 'Volume']
 
-    # 1 — basic integrity
     if data is None or data.empty:
         logging.warning("No data provided for validation.")
         return False
     if len(data) < min_length:
-        logging.warning("Insufficient data length: %d rows (minimum %d required).",
-                        len(data), min_length)
+        logging.warning("Insufficient data length: %d rows (minimum %d required).", len(data), min_length)
         return False
 
-    # 2 — schema
     missing = [c for c in required_columns if c not in data.columns]
     if missing:
         logging.warning("Missing required columns: %s", ", ".join(missing))
         return False
 
-    # 3 — nulls
     if data[required_columns].isnull().any().any():
         logging.warning("Data contains null values in required columns.")
         return False
 
-    # 4 — positive prices
     price_cols = [c for c in ('Open', 'High', 'Low', 'Close') if c in data.columns]
     if check_positive_prices and (data[price_cols] <= 0).any().any():
         logging.warning("Invalid price values (≤ 0 detected).")
         return False
 
-    # 5 — volume sanity
-    if max_volume is not None and 'Volume' in data.columns \
-       and data['Volume'].max() > max_volume:
-        logging.warning("Abnormal volume values detected (max %.0f > %.0f).",
-                        data['Volume'].max(), max_volume)
+    if max_volume is not None and 'Volume' in data.columns and data['Volume'].max() > max_volume:
+        logging.warning("Abnormal volume values detected (max %.0f > %.0f).", data['Volume'].max(), max_volume)
         return False
 
     return True
@@ -882,42 +773,19 @@ def analyze_stock(data):
 
     return data
 
-# === Shared Utility Functions ===
-
 def get_atr_multiplier(adx):
-    """
-    Determines ATR multiplier based on ADX strength.
-    ADX > 25 → Strong trend → Higher stop loss buffer.
-    """
     return 3.0 if pd.notnull(adx) and adx > 25 else 1.5
 
 def get_adjusted_rr_ratio(adx, base_ratio=3):
-    """
-    Adjusts risk-reward ratio based on ADX.
-    Higher ADX (trend strength) allows more aggressive targets.
-    """
     return min(base_ratio, 5) if pd.notnull(adx) and adx > 25 else min(base_ratio, 3)
 
 def cap_stop_loss(stop_loss, close):
-    """
-    Ensures stop loss is not too close (no more than 10% below entry).
-    """
     return max(stop_loss, close * 0.9)
 
 def cap_target(target, close):
-    """
-    Limits target to 20% above entry to avoid unrealistic expectations.
-    """
     return min(target, close * 1.2)
 
-# === DataFrame-Level Calculations ===
-
 def calculate_buy_at(data):
-    """
-    Calculates the buy price.
-    - If RSI < 30: slight discount (oversold).
-    - Else: use the current close.
-    """
     if data.empty or 'RSI' not in data.columns or 'Close' not in data.columns:
         st.warning("⚠️ Missing RSI or Close data.")
         return None
@@ -931,11 +799,6 @@ def calculate_buy_at(data):
     return round(buy_at, 2)
 
 def calculate_stop_loss(data):
-    """
-    Calculates stop loss using ATR and trend strength (ADX).
-    - Strong trend → wider stop loss (to avoid noise).
-    - Ensures SL is not below 10% of close.
-    """
     if data.empty or 'ATR' not in data.columns or 'ADX' not in data.columns:
         st.warning("⚠️ Missing ATR or ADX data.")
         return None
@@ -953,12 +816,6 @@ def calculate_stop_loss(data):
     return round(stop_loss, 2)
 
 def calculate_target(data, risk_reward_ratio=3):
-    """
-    Calculates the profit target.
-    - Based on risk (Close - Stop Loss).
-    - Adjusts target based on ADX strength.
-    - Capped at 20% above current price.
-    """
     stop_loss = calculate_stop_loss(data)
     if stop_loss is None:
         st.warning("⚠️ Cannot calculate Target due to missing Stop Loss.")
@@ -972,22 +829,12 @@ def calculate_target(data, risk_reward_ratio=3):
     target = cap_target(target, last_close)
     return round(target, 2)
 
-# === Row-Level Calculations ===
-
 def calculate_buy_at_row(row):
-    """
-    Row-level buy price logic.
-    Returns buy price based on RSI < 30 condition.
-    """
     if pd.isnull(row.get('RSI')) or pd.isnull(row.get('Close')):
         return None
     return round(row['Close'] * 0.99, 2) if row['RSI'] < 30 else round(row['Close'], 2)
 
 def calculate_stop_loss_row(row):
-    """
-    Row-level stop loss calculation using ATR and ADX.
-    Handles missing or invalid data by returning None.
-    """
     if pd.isnull(row.get('ATR')) or pd.isnull(row.get('Close')):
         return None
     atr_multiplier = get_atr_multiplier(row.get('ADX'))
@@ -996,10 +843,6 @@ def calculate_stop_loss_row(row):
     return round(stop_loss, 2)
 
 def calculate_target_row(row, risk_reward_ratio=3):
-    """
-    Row-level target calculation based on stop loss and trend strength.
-    Risk is calculated as Close - SL, and reward is adjusted by ADX.
-    """
     stop_loss = calculate_stop_loss_row(row)
     if stop_loss is None:
         return None
@@ -1018,19 +861,6 @@ def fetch_fundamentals(symbol):
     except Exception:
         return {'P/E': float('inf'), 'EPS': 0, 'RevenueGrowth': 0}
 
-# Improved strategy logic using adaptive regime detection, signal scoring, and volatility-aware filters
-
-import pandas as pd
-import numpy as np
-import logging
-import ta
-
-logging.basicConfig(level=logging.INFO)
-
-# ============================ #
-#       INDICATOR SETUP        #
-# ============================ #
-
 _indicator_cache = {}
 
 def compute_indicators(df, symbol=None):
@@ -1042,62 +872,47 @@ def compute_indicators(df, symbol=None):
     if df.empty or 'Close' not in df.columns:
         return df
 
-    # Trend indicators
     df['SMA_20'] = df['Close'].rolling(20).mean()
     df['SMA_50'] = df['Close'].rolling(50).mean()
     df['SMA_200'] = df['Close'].rolling(200).mean()
 
-    # Momentum indicators
     df['RSI'] = ta.momentum.RSIIndicator(df['Close']).rsi()
     macd = ta.trend.MACD(df['Close'])
     df['MACD'] = macd.macd()
     df['MACD_signal'] = macd.macd_signal()
 
-    # Ichimoku indicators
     ichimoku = ta.trend.IchimokuIndicator(df['High'], df['Low'])
     df['Ichimoku_Span_A'] = ichimoku.ichimoku_a()
     df['Ichimoku_Span_B'] = ichimoku.ichimoku_b()
 
-    # Volume indicators
     df['CMF'] = ta.volume.ChaikinMoneyFlowIndicator(
         df['High'], df['Low'], df['Close'], df['Volume']
     ).chaikin_money_flow()
 
-    # Volatility indicators
     df['ATR'] = ta.volatility.AverageTrueRange(
         df['High'], df['Low'], df['Close']
     ).average_true_range()
 
-    # Donchian Channels (for breakout)
     df['Donchian_Upper'] = df['High'].rolling(20).max()
     df['Donchian_Lower'] = df['Low'].rolling(20).min()
 
-    # Bollinger Bands (for mean reversion)
     bb = ta.volatility.BollingerBands(close=df['Close'])
     df['Bollinger_Upper'] = bb.bollinger_hband()
     df['Bollinger_Lower'] = bb.bollinger_lband()
 
-    # Stochastic Oscillator (secondary momentum)
     stoch = ta.momentum.StochasticOscillator(df['High'], df['Low'], df['Close'])
     df['Stoch_K'] = stoch.stoch()
     df['Stoch_D'] = stoch.stoch_signal()
 
-    # Trend strength
     df['ADX'] = ta.trend.ADXIndicator(df['High'], df['Low'], df['Close']).adx()
 
-    # VWAP (Volume Weighted Average Price)
     df['Typical_Price'] = (df['High'] + df['Low'] + df['Close']) / 3
     df['VWAP'] = (df['Typical_Price'] * df['Volume']).cumsum() / df['Volume'].cumsum()
 
-    # Average volume (for filters or spike detection)
     df['Avg_Volume'] = df['Volume'].rolling(20).mean()
 
     _indicator_cache[cache_key] = df
     return df
-
-# ============================ #
-#       TREND & REGIME         #
-# ============================ #
 
 def classify_market_regime(df):
     try:
@@ -1142,10 +957,6 @@ def get_signal_correlation(df):
 def get_higher_timeframe_trend(df, tf='W'):
     higher = df[['Close']].resample(tf).last()
     return 'Uptrend' if higher['Close'].iloc[-1] > higher['Close'].iloc[-2] else 'Downtrend'
-
-# ============================ #
-#       SCORING ENGINE         #
-# ============================ #
 
 def compute_signal_score(df, regime):
     w = {
@@ -1219,10 +1030,6 @@ def compute_signal_score(df, regime):
         score *= 0.85
 
     return round(np.clip(score, -10, 10), 2)
-
-# ============================ #
-#     MAIN RECOMMENDATION      #
-# ============================ #
 
 def adaptive_recommendation(df, symbol=None, account_size=30000, max_position_size=100):
     try:
@@ -1312,7 +1119,6 @@ def generate_recommendations(data, symbol=None):
         buy_score = 0
         sell_score = 0
 
-        # RSI logic
         if 'RSI' in data.columns and pd.notna(data['RSI'].iloc[-1]):
             rsi = data['RSI'].iloc[-1]
             if isinstance(rsi, (int, float, np.integer, np.floating)):
@@ -1323,7 +1129,6 @@ def generate_recommendations(data, symbol=None):
                 elif rsi > 70:
                     sell_score += 2
 
-        # MACD logic
         if 'MACD' in data.columns and 'MACD_signal' in data.columns:
             macd = data['MACD'].iloc[-1]
             macd_sig = data['MACD_signal'].iloc[-1]
@@ -1333,7 +1138,6 @@ def generate_recommendations(data, symbol=None):
                 elif macd < macd_sig:
                     sell_score += 1
 
-        # Bollinger Band breakout
         if 'Close' in data.columns and 'Lower_Band' in data.columns and 'Upper_Band' in data.columns:
             close = data['Close'].iloc[-1]
             lower = data['Lower_Band'].iloc[-1]
@@ -1344,7 +1148,6 @@ def generate_recommendations(data, symbol=None):
                 elif close > upper:
                     sell_score += 1
 
-        # VWAP logic
         if 'VWAP' in data.columns and pd.notna(data['VWAP'].iloc[-1]):
             vwap = data['VWAP'].iloc[-1]
             close = data['Close'].iloc[-1]
@@ -1354,7 +1157,6 @@ def generate_recommendations(data, symbol=None):
                 elif close < vwap:
                     sell_score += 1
 
-        # Volume/Price movement
         if 'Volume' in data.columns and 'Avg_Volume' in data.columns:
             volume = data['Volume'].iloc[-1]
             avg_vol = data['Avg_Volume'].iloc[-1]
@@ -1370,7 +1172,6 @@ def generate_recommendations(data, symbol=None):
                 elif ratio < 0.5:
                     sell_score += 1
 
-        # Volume spike logic
         if 'Volume_Spike' in data.columns and data['Volume_Spike'].iloc[-1]:
             close = data['Close'].iloc[-1]
             prev_close = data['Close'].iloc[-2]
@@ -1379,7 +1180,6 @@ def generate_recommendations(data, symbol=None):
             else:
                 sell_score += 1
 
-        # Divergence
         if 'Divergence' in data.columns and pd.notna(data['Divergence'].iloc[-1]):
             div = data['Divergence'].iloc[-1]
             if div == "Bullish Divergence":
@@ -1387,7 +1187,6 @@ def generate_recommendations(data, symbol=None):
             elif div == "Bearish Divergence":
                 sell_score += 1
 
-        # Ichimoku trend
         if 'Ichimoku_Span_A' in data.columns and 'Ichimoku_Span_B' in data.columns:
             span_a = data['Ichimoku_Span_A'].iloc[-1]
             span_b = data['Ichimoku_Span_B'].iloc[-1]
@@ -1400,7 +1199,6 @@ def generate_recommendations(data, symbol=None):
                     sell_score += 1
                     recommendations["Ichimoku_Trend"] = "Sell"
 
-        # Ichimoku confirmation (Tenkan/Kijun)
         if 'Ichimoku_Tenkan' in data.columns and 'Ichimoku_Kijun' in data.columns:
             tenkan = data['Ichimoku_Tenkan'].iloc[-1]
             kijun = data['Ichimoku_Kijun'].iloc[-1]
@@ -1415,7 +1213,6 @@ def generate_recommendations(data, symbol=None):
                     sell_score += 1
                     recommendations["Ichimoku_Trend"] = "Strong Sell"
 
-        # CMF (volume + price strength)
         if 'CMF' in data.columns and pd.notna(data['CMF'].iloc[-1]):
             cmf = data['CMF'].iloc[-1]
             if cmf > 0:
@@ -1423,7 +1220,6 @@ def generate_recommendations(data, symbol=None):
             elif cmf < 0:
                 sell_score += 1
 
-        # Donchian channel breakout
         if 'Donchian_Upper' in data.columns and 'Donchian_Lower' in data.columns:
             upper = data['Donchian_Upper'].iloc[-1]
             lower = data['Donchian_Lower'].iloc[-1]
@@ -1436,7 +1232,6 @@ def generate_recommendations(data, symbol=None):
                     sell_score += 1
                     recommendations["Breakout"] = "Sell"
 
-        # Mean reversion via RSI and Bollinger Bands
         if 'RSI' in data.columns and 'Lower_Band' in data.columns and 'Upper_Band' in data.columns:
             rsi = data['RSI'].iloc[-1]
             close = data['Close'].iloc[-1]
@@ -1450,7 +1245,6 @@ def generate_recommendations(data, symbol=None):
                     sell_score += 2
                     recommendations["Mean_Reversion"] = "Sell"
 
-        # Fundamentals (optional)
         if symbol:
             fundamentals = fetch_fundamentals(symbol)
             if fundamentals['P/E'] < 15 and fundamentals['EPS'] > 0:
@@ -1462,7 +1256,6 @@ def generate_recommendations(data, symbol=None):
             elif fundamentals['RevenueGrowth'] < 0:
                 sell_score += 0.5
 
-        # Final recommendations
         net_score = buy_score - sell_score
         if buy_score > sell_score and buy_score >= 4:
             recommendations["Intraday"] = "Strong Buy"
@@ -1485,7 +1278,6 @@ def generate_recommendations(data, symbol=None):
             recommendations["Short-Term"] = "Sell" if net_score <= -1 else "Hold"
             recommendations["Long-Term"] = "Hold"
 
-        # Final values
         recommendations["Buy At"] = calculate_buy_at(data)
         recommendations["Stop Loss"] = calculate_stop_loss(data)
         recommendations["Target"] = calculate_target(data)
@@ -1496,13 +1288,14 @@ def generate_recommendations(data, symbol=None):
 
     return recommendations
 
-@st.cache_data(ttl=3600)  # Cache results for 1 hour to avoid repeated API hits
-def get_top_sectors_cached(rate_limit_delay=2, stocks_per_sector=2):
+@st.cache_data(ttl=7200)
+def get_top_sectors_cached(rate_limit_delay=5, stocks_per_sector=3):
     sector_scores = {}
     for sector, stocks in SECTORS.items():
         total_score = 0
         count = 0
-        for symbol in stocks[:stocks_per_sector]:  # Only analyze top N stocks per sector
+        sector_stocks = stocks[:stocks_per_sector]
+        for symbol in sector_stocks:
             data = fetch_stock_data_cached(symbol)
             if data.empty:
                 continue
@@ -1510,16 +1303,16 @@ def get_top_sectors_cached(rate_limit_delay=2, stocks_per_sector=2):
             rec = generate_recommendations(data, symbol)
             total_score += rec.get("Score", 0)
             count += 1
-            time.sleep(rate_limit_delay)  # Delay per API call
+            time.sleep(rate_limit_delay)
         avg_score = total_score / count if count else 0
         sector_scores[sector] = avg_score
-        time.sleep(1)  # Optional: delay between sectors
+        time.sleep(2)
     return sorted(sector_scores.items(), key=lambda x: x[1], reverse=True)[:3]
 
 @st.cache_data(ttl=3600)
 def backtest_stock(data, symbol, strategy="Swing", _data_hash=None):
     INITIAL_CAPITAL = 30000
-    commission = 0.001  # 0.1% round-trip
+    commission = 0.001
     position_size_pct = st.session_state.get('position_size', 1.0)
 
     results = {
@@ -1559,7 +1352,6 @@ def backtest_stock(data, symbol, strategy="Swing", _data_hash=None):
             rec = generate_recommendations(sliced_data, symbol)
             signal = rec.get(strategy, "Hold")
 
-        # Execute sell first (if needed)
         if signal == "Sell" and position == "Long":
             gross_profit = (current_price - entry_price) * trade_qty
             trade_cost = (entry_price + current_price) * trade_qty * commission / 2
@@ -1582,7 +1374,6 @@ def backtest_stock(data, symbol, strategy="Swing", _data_hash=None):
             entry_date = None
             trade_qty = 0
 
-        # Execute buy (if no position)
         if signal == "Buy" and position is None:
             entry_price = current_price
             entry_date = current_date
@@ -1595,11 +1386,9 @@ def backtest_stock(data, symbol, strategy="Swing", _data_hash=None):
             position = "Long"
             results["buy_signals"].append((current_date, current_price))
 
-        # Track portfolio value *after* trade logic
         portfolio_value = cash + (trade_qty * current_price if position else 0)
         equity_curve.append((current_date, portfolio_value))
 
-    # Close open position at end
     if position == "Long":
         current_price = data['Close'].iloc[-1]
         current_date = data.index[-1]
@@ -1621,14 +1410,12 @@ def backtest_stock(data, symbol, strategy="Swing", _data_hash=None):
         results["sell_signals"].append((current_date, current_price))
         equity_curve.append((current_date, portfolio_value))
 
-    # Final stats
     if trades:
         results["trade_details"] = trades
         results["trades"] = len(trades)
         results["total_return"] = (portfolio_value - INITIAL_CAPITAL) / INITIAL_CAPITAL * 100
         results["win_rate"] = len([t for t in trades if t["profit"] > 0]) / len(trades) * 100
 
-        # Annual return
         holding_periods = [
             (pd.to_datetime(t["exit_date"]) - pd.to_datetime(t["entry_date"])).days
             for t in trades if t["entry_date"] != t["exit_date"]
@@ -1637,15 +1424,13 @@ def backtest_stock(data, symbol, strategy="Swing", _data_hash=None):
         annual_factor = 252 / avg_holding if avg_holding else 1
         results["annual_return"] = np.mean(returns) * annual_factor * 100 if returns else 0
 
-        # Sharpe
         std_dev = np.std(returns)
         results["sharpe_ratio"] = (np.mean(returns) / (std_dev + 1e-9)) * np.sqrt(252) if returns else 0
 
-    # Max drawdown
     equity_df = pd.DataFrame(equity_curve, columns=["Date", "Equity"])
     equity_df["RunningMax"] = equity_df["Equity"].cummax()
     equity_df["Drawdown"] = (equity_df["Equity"] - equity_df["RunningMax"]) / equity_df["RunningMax"]
-    results["max_drawdown"] = equity_df["Drawdown"].min() * 100  # usually negative
+    results["max_drawdown"] = equity_df["Drawdown"].min() * 100
     results["equity_curve"] = equity_df
 
     return results
@@ -1715,10 +1500,6 @@ def insert_top_picks(results_df, pick_type="daily"):
     conn.close()
 
 def analyze_batch(stock_batch):
-    """
-    Analyzes a batch of stocks in parallel, aggregating errors for summary reporting.
-    Returns a list of valid results.
-    """
     results = []
     errors = []
     with ThreadPoolExecutor(max_workers=3) as executor:
@@ -1736,7 +1517,6 @@ def analyze_batch(stock_batch):
 
     if errors:
         logging.error(f"Batch errors: {len(errors)} total\n" + "\n".join(errors))
-        # Display summary warning in main thread
         st.session_state['batch_errors'] = f"Encountered {len(errors)} errors during batch processing. Check logs for details."
 
     return results
@@ -1744,10 +1524,7 @@ def analyze_batch(stock_batch):
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
 def analyze_stock_parallel(symbol):
-    """
-    Analyzes a single stock, logging detailed context on errors.
-    Returns a dictionary with analysis results or None on failure.
-    """
+    time.sleep(2)  # Delay per stock for rate limits
     try:
         logging.info(f"Starting analysis for {symbol}")
         data = fetch_stock_data_cached(symbol)
@@ -1816,20 +1593,30 @@ def analyze_stock_parallel(symbol):
         logging.error(error_msg)
         return None
 
-def analyze_all_stocks(stock_list, batch_size=10, progress_callback=None):
+def analyze_all_stocks(stock_list, batch_size=3, progress_callback=None):
     results = []
-    total_batches = (len(stock_list) // batch_size) + (1 if len(stock_list) % batch_size != 0 else 0)
-    for i in range(0, len(stock_list), batch_size):
+    skipped_count = 0
+    total = len(stock_list)
+    for i in range(0, total, batch_size):
         batch = stock_list[i:i + batch_size]
         batch_results = analyze_batch(batch)
-        results.extend([r for r in batch_results if r is not None])
+        valid_results = [r for r in batch_results if r is not None]
+        results.extend(valid_results)
+        skipped = len(batch) - len(valid_results)
+        skipped_count += skipped
+        if skipped > 0:
+            st.warning(f"Skipped {skipped} stocks in batch due to rate limits/errors.")
         if progress_callback:
-            progress_callback((i + len(batch)) / len(stock_list))
-        time.sleep(3)
+            progress_callback((i + len(batch)) / total)
+        time.sleep(10)  # Delay between batches
+    
+    if skipped_count > total * 0.5:
+        st.warning("High skip rate due to rate limits. Pausing for 60s...")
+        time.sleep(60)
     
     results_df = pd.DataFrame(results)
     if results_df.empty:
-        st.warning("⚠️ No valid stock data retrieved.")
+        st.warning("⚠️ No valid stock data retrieved (likely rate limits). Try smaller sectors.")
         return pd.DataFrame()
     if "Score" not in results_df.columns:
         results_df["Score"] = 0
@@ -1840,12 +1627,13 @@ def analyze_all_stocks(stock_list, batch_size=10, progress_callback=None):
         results_df = results_df[results_df["Recommendation"].str.contains("Buy|Sell", na=False)]
     return results_df.sort_values(by="Score", ascending=False).head(5)
 
-def analyze_intraday_stocks(stock_list, batch_size=10, delay=3, top_n=5, progress_callback=None):
+def analyze_intraday_stocks(stock_list, batch_size=3, delay=10, top_n=5, progress_callback=None):
     if not stock_list:
         st.warning("Empty stock list provided.")
         return pd.DataFrame()
 
     results = []
+    skipped_count = 0
     total = len(stock_list)
 
     for i in range(0, total, batch_size):
@@ -1854,25 +1642,31 @@ def analyze_intraday_stocks(stock_list, batch_size=10, delay=3, top_n=5, progres
 
         try:
             batch_results = analyze_batch(batch)
-            if batch_results:
-                results.extend([r for r in batch_results if r is not None])
-                st.info(f"Batch {batch_num} processed successfully with {len(batch_results)} results.")
-            else:
-                st.warning(f"Batch {batch_num} returned no results.")
+            valid_results = [r for r in batch_results if r is not None]
+            results.extend(valid_results)
+            skipped = len(batch) - len(valid_results)
+            skipped_count += skipped
+            if skipped > 0:
+                st.warning(f"Skipped {skipped} stocks in batch {batch_num} due to rate limits.")
+            st.info(f"Batch {batch_num} processed: {len(valid_results)} valid results.")
         except Exception as e:
             st.warning(f"Error analyzing batch {batch_num}: {e}")
+            skipped_count += len(batch)
             continue
 
         if progress_callback:
-            progress = min(1.0, (i + len(batch)) / total)
+        progress = min(1.0, (i + len(batch)) / total)
             progress_callback(progress)
 
-        if i + batch_size < total:
-            time.sleep(delay)
+        time.sleep(delay)
+
+    if skipped_count > total * 0.5:
+        st.warning("High skip rate. Pausing for 60s...")
+        time.sleep(60)
 
     results_df = pd.DataFrame(results)
     if results_df.empty:
-        st.warning("No results found after processing all batches.")
+        st.warning("No results found (rate limits?). Try smaller batches.")
         return pd.DataFrame()
 
     if "Score" not in results_df.columns:
@@ -1886,7 +1680,7 @@ def analyze_intraday_stocks(stock_list, batch_size=10, delay=3, top_n=5, progres
     elif "Intraday" in results_df.columns:
         results_df = results_df[results_df["Intraday"].str.contains("Buy", case=False, na=False)]
     else:
-        st.warning("Neither 'Recommendation' nor 'Intraday' columns found for filtering.")
+        st.warning("No filterable recommendations found.")
         return pd.DataFrame()
 
     return results_df.sort_values(by="Score", ascending=False).head(top_n)
@@ -1911,7 +1705,6 @@ def update_progress(progress_bar, loading_text, progress_value, loading_messages
 
     dots = "." * (int(progress_value * 10) % 4)
 
-    # Reliable 5% step tracking (0–20 steps)
     current_step = int(progress_value * 20)
 
     if not hasattr(update_progress, '_last_text_update'):
@@ -1947,13 +1740,14 @@ def display_dashboard(symbol=None, data=None, recommendations=None):
     st.title("📊 StockGenie Pro - NSE Analysis")
     st.subheader(f"📅 Analysis for {datetime.now().strftime('%d %b %Y')}")
 
-    # Sector selection
+    # Sector selection (improved UI)
     sector_options = ["All"] + list(SECTORS.keys())
-    st.session_state.selected_sectors = st.sidebar.multiselect(
+    st.session_state.selected_sectors = st.multiselect(
         "Select Sectors",
         options=sector_options,
         default=st.session_state.selected_sectors,
-        help="Choose one or more sectors to analyze. Select 'All' to include all sectors."
+        help="Choose one or more sectors to analyze. Select 'All' to include all sectors.",
+        key="sector_select"
     )
 
     if "All" in st.session_state.selected_sectors:
@@ -1965,16 +1759,473 @@ def display_dashboard(symbol=None, data=None, recommendations=None):
         st.warning("⚠️ No stocks selected. Please choose at least one sector.")
         return
 
+    # Top sectors button (with improved styling)
+    col1, col2 = st.columns([3, 1])
+    with col1:
+        if st.button("🔎 Analyze Top Performing Sectors", use_container_width=True):
+            with st.spinner("🔍 Analyzing sectors (may take time due to rate limits)..."):
+                top_sectors = get_top_sectors_cached(rate_limit_delay=5, stocks_per_sector=st.session_state.get('stocks_per_sector', 3))
+                st.subheader("🔝 Top 3 Performing Sectors")
+                for i, (name, score) in enumerate(top_sectors):
+                    trend_icon = "🟢" if score > 0 else "🔴" if score < 0 else "⚪"
+                    st.markdown(f"{trend_icon} **{name}** - Score: {score:.2f}/7")
+    with col2:
+        st.caption("Limited to top stocks per sector to avoid rate limits.")
+
+    # Daily top picks button (with progress and rate limit info)
+    col1, col2 = st.columns([3, 1])
+    with col1:
+        if st.button("🚀 Generate Daily Top Picks", use_container_width=True):
+            progress_bar = st.progress(0)
+            loading_text = st.empty()
+            loading_messages = itertools.cycle([
+                "Fetching data...", "Analyzing trends...", "Computing scores...", "Finalizing picks..."
+            ])
+            results_df = analyze_all_stocks(
+                selected_stocks,
+                batch_size=st.session_state.get('batch_size', 3),
+                progress_callback=lambda x: update_progress(progress_bar, loading_text, x, loading_messages)
+            )
+            insert_top_picks(results_df, pick_type="daily")
+            progress_bar.empty()
+            loading_text.empty()
+            if not results_df.empty:
+                st.subheader("🏆 Today's Top 5 Stocks")
+                for _, row in results_df.iterrows():
+                    with st.expander(f"**{row['Symbol']}** - Score: {row['Score']:.1f}/7", expanded=False):
+                        current_price = row.get('Current Price', 'N/A')
+                        buy_at = row.get('Buy At', 'N/A')
+                        stop_loss = row.get('Stop Loss', 'N/A')
+                        target = row.get('Target', 'N/A')
+                        if st.session_state.recommendation_mode == "Adaptive":
+                            st.markdown(f"""
+                            **Current Price**: ₹{current_price}  
+                            **Buy At**: ₹{buy_at} | **Stop Loss**: ₹{stop_loss}  
+                            **Target**: ₹{target}  
+                            **Recommendation**: {colored_recommendation(row.get('Recommendation', 'N/A'))}  
+                            **Regime**: {row.get('Regime', 'N/A')}  
+                            **Position Size**: ₹{row.get('Position Size', 'N/A')}  
+                            **Trailing Stop**: ₹{row.get('Trailing Stop', 'N/A')}  
+                            **Reason**: {row.get('Reason', 'N/A')}
+                            """)
+                        else:
+                            st.markdown(f"""
+                            **Current Price**: ₹{current_price}  
+                            **Buy At**: ₹{buy_at} | **Stop Loss**: ₹{stop_loss}  
+                            **Target**: ₹{target}  
+                            **Intraday**: {colored_recommendation(row.get('Intraday', 'N/A'))}  
+                            **Swing**: {colored_recommendation(row.get('Swing', 'N/A'))}  
+                            **Short-Term**: {colored_recommendation(row.get('Short-Term', 'N/A'))}  
+                            **Long-Term**: {colored_recommendation(row.get('Long-Term', 'N/A'))}  
+                            **Mean Reversion**: {colored_recommendation(row.get('Mean_Reversion', 'N/A'))}  
+                            **Breakout**: {colored_recommendation(row.get('Breakout', 'N/A'))}  
+                            **Ichimoku Trend**: {colored_recommendation(row.get('Ichimoku_Trend', 'N/A'))}
+                            """)
+            else:
+                st.warning("⚠️ No top picks available due to data issues or rate limits.")
+    with col2:
+        st.caption("Uses batch size and delays to respect API limits.")
+
+    # Intraday top picks button
+    col1, col2 = st.columns([3, 1])
+    with col1:
+        if st.button("⚡ Generate Intraday Top 5 Picks", use_container_width=True):
+            progress_bar = st.progress(0)
+            loading_text = st.empty()
+            loading_messages = itertools.cycle([
+                "Scanning intraday trends...", "Detecting buy signals...", "Calculating stop-loss levels...",
+                "Optimizing targets...", "Finalizing top picks..."
+            ])
+            intraday_results = analyze_intraday_stocks(
+                selected_stocks,
+                batch_size=st.session_state.get('batch_size', 3),
+                delay=st.session_state.get('delay_per_batch', 10),
+                top_n=5,
+                progress_callback=lambda x: update_progress(progress_bar, loading_text, x, loading_messages)
+            )
+            insert_top_picks(intraday_results, pick_type="intraday")
+            progress_bar.empty()
+            loading_text.empty()
+            if not intraday_results.empty:
+                st.subheader("🏆 Top 5 Intraday Stocks")
+                for _, row in intraday_results.iterrows():
+                    with st.expander(f"**{row['Symbol']}** - Score: {row['Score']:.1f}/7", expanded=False):
+                        current_price = row.get('Current Price', 'N/A')
+                        buy_at = row.get('Buy At', 'N/A')
+                        stop_loss = row.get('Stop Loss', 'N/A')
+                        target = row.get('Target', 'N/A')
+                        if st.session_state.recommendation_mode == "Adaptive":
+                            st.markdown(f"""
+                            **Current Price**: ₹{current_price}  
+                            **Buy At**: ₹{buy_at} | **Stop Loss**: ₹{stop_loss}  
+                            **Target**: ₹{target}  
+                            **Recommendation**: {colored_recommendation(row.get('Recommendation', 'N/A'))}  
+                            **Regime**: {row.get('Regime', 'N/A')}  
+                            **Position Size**: ₹{row.get('Position Size', 'N/A')}  
+                            **Trailing Stop**: ₹{row.get('Trailing Stop', 'N/A')}  
+                            **Reason**: {row.get('Reason', 'N/A')}
+                            """)
+                        else:
+                            st.markdown(f"""
+                            **Current Price**: ₹{current_price}  
+                            **Buy At**: ₹{buy_at} | **Stop Loss**: ₹{stop_loss}  
+                            **Target**: ₹{target}  
+                            **Intraday**: {colored_recommendation(row.get('Intraday', 'N/A'))}
+                            """)
+            else:
+                st.warning("⚠️ No intraday picks available due to data issues or rate limits.")
+    with col2:
+        st.caption("Focuses on immediate buy signals.")
+
+    # Historical picks button
+    if st.button("📜 View Historical Picks", use_container_width=True):
+        conn = sqlite3.connect('stock_picks.db')
+        history_df = pd.read_sql_query("SELECT * FROM daily_picks ORDER BY date DESC LIMIT 50", conn)
+        conn.close()
+        if not history_df.empty:
+            st.subheader("📜 Recent Historical Picks")
+            col1, col2 = st.columns(2)
+            with col1:
+                date_filter = st.selectbox("Filter by Date", ["All"] + sorted(history_df['date'].unique(), reverse=True)[:10])
+            with col2:
+                pick_type_filter = st.selectbox("Filter by Type", ["All", "daily", "intraday"])
+            filtered_df = history_df.copy()
+            if pick_type_filter != "All":
+                filtered_df = filtered_df[filtered_df['pick_type'] == pick_type_filter]
+            if date_filter != "All":
+                filtered_df = filtered_df[filtered_df['date'] == date_filter]
+            st.dataframe(filtered_df[['date', 'symbol', 'score', 'recommendation', 'pick_type']], use_container_width=True)
+        else:
+            st.info("📝 No historical picks yet. Generate some first!")
+
+    # Display stock analysis if symbol is available (improved layout)
+    if st.session_state.symbol and st.session_state.data is not None and st.session_state.recommendations is not None:
+        symbol = st.session_state.symbol
+        data = st.session_state.data
+        recommendations = st.session_state.recommendations
+
+        st.markdown("---")
+        st.header(f"📋 Detailed Analysis: {symbol.split('.')[0].upper()}")
+
+        # Key Metrics Row (responsive columns)
+        col1, col2, col3, col4 = st.columns(4)
+        with col1:
+            current_price = recommendations.get('Current Price', 'N/A')
+            st.metric("Current Price", f"₹{current_price}", help="Latest closing price")
+        with col2:
+            buy_at = recommendations.get('Buy At', 'N/A')
+            st.metric("Suggested Buy", f"₹{buy_at}", help="Optimal entry point")
+        with col3:
+            stop_loss = recommendations.get('Stop Loss', 'N/A')
+            st.metric("Stop Loss", f"₹{stop_loss}", help=TOOLTIPS['Stop Loss'])
+        with col4:
+            target = recommendations.get('Target', 'N/A')
+            st.metric("Target Price", f"₹{target}", help="Profit target based on risk-reward")
+
+        # Recommendations Section (tabs for better UX)
+        tab1, tab2 = st.tabs(["📈 Trading Signals", "⚠️ Risk Assessment"])
+
+        with tab1:
+            if st.session_state.recommendation_mode == "Adaptive":
+                col1, col2 = st.columns(2)
+                with col1:
+                    st.markdown(f"**Overall Recommendation**: {colored_recommendation(recommendations.get('Recommendation', 'N/A'))}")
+                    st.markdown(f"**Market Regime**: {recommendations.get('Regime', 'N/A')}")
+                    st.markdown(f"**Score**: {recommendations.get('Score', 0):.1f}/10")
+                with col2:
+                    st.markdown(f"**Position Size**: ₹{recommendations.get('Position Size', 'N/A')}")
+                    st.markdown(f"**Trailing Stop**: ₹{recommendations.get('Trailing Stop', 'N/A')}")
+                    st.markdown(f"**Reason**: {recommendations.get('Reason', 'N/A')}")
+            else:
+                col1, col2, col3 = st.columns(3)
+                with col1:
+                    st.markdown(f"**Intraday**: {colored_recommendation(recommendations.get('Intraday', 'N/A'))}")
+                    st.markdown(f"**Swing**: {colored_recommendation(recommendations.get('Swing', 'N/A'))}")
+                with col2:
+                    st.markdown(f"**Short-Term**: {colored_recommendation(recommendations.get('Short-Term', 'N/A'))}")
+                    st.markdown(f"**Long-Term**: {colored_recommendation(recommendations.get('Long-Term', 'N/A'))}")
+                with col3:
+                    st.markdown(f"**Mean Reversion**: {colored_recommendation(recommendations.get('Mean_Reversion', 'N/A'))}")
+                    st.markdown(f"**Breakout**: {colored_recommendation(recommendations.get('Breakout', 'N/A'))}")
+                st.markdown(f"**Overall Score**: {recommendations.get('Score', 0):.1f}/7")
+                st.markdown(f"**Volatility**: {assess_risk(data)}")
+
+        with tab2:
+            # Risk metrics
+            col1, col2 = st.columns(2)
+            with col1:
+                if 'ATR' in data.columns:
+                    atr_value = data['ATR'].iloc[-1]
+                    st.metric("ATR (Volatility)", f"{atr_value:.2f}", help=TOOLTIPS['ATR'])
+                if 'ADX' in data.columns:
+                    adx_value = data['ADX'].iloc[-1]
+                    trend_strength = "Strong" if adx_value > 25 else "Weak" if adx_value < 20 else "Moderate"
+                    st.metric("ADX (Trend Strength)", f"{adx_value:.1f} ({trend_strength})", help=TOOLTIPS['ADX'])
+            with col2:
+                if 'RSI' in data.columns:
+                    rsi_value = data['RSI'].iloc[-1]
+                    rsi_status = "Oversold" if rsi_value < 30 else "Overbought" if rsi_value > 70 else "Neutral"
+                    st.metric("RSI", f"{rsi_value:.1f} ({rsi_status})", help=TOOLTIPS['RSI'])
+                confidence = calculate_confidence_score(data)
+                st.metric("Signal Confidence", f"{confidence:.1%}", help="Based on indicator alignment")
+
+            # Monte Carlo simulation (optional, for advanced users)
+            if st.checkbox("Run Monte Carlo Simulation (30 days)"):
+                with st.spinner("Simulating price paths..."):
+                    sim_data = monte_carlo_simulation(data, simulations=500, days=30)
+                    if sim_data:
+                        sim_df = pd.DataFrame(sim_data).T
+                        fig = px.line(sim_df, title="Monte Carlo Price Simulation (50th Percentile = Median Path)")
+                        fig.add_hline(y=data['Close'].iloc[-1] * 1.05, line_dash="dash", line_color="green", annotation_text="5% Upside")
+                        fig.add_hline(y=data['Close'].iloc[-1] * 0.95, line_dash="dash", line_color="red", annotation_text="5% Downside")
+                        st.plotly_chart(fig, use_container_width=True)
+                        median_path = sim_df.median(axis=1).iloc[-1]
+                        st.info(f"**Median Projected Price (30 days)**: ₹{median_path:.2f} (from current ₹{data['Close'].iloc[-1]:.2f})")
+
+        # Backtest Section (improved form)
+        st.subheader("🔍 Backtesting")
+        with st.form(key="backtest_form"):
+            col1, col2 = st.columns(2)
+            with col1:
+                swing_button = st.form_submit_button("Run Swing Strategy Backtest", use_container_width=True)
+            with col2:
+                intraday_button = st.form_submit_button("Run Intraday Strategy Backtest", use_container_width=True)
+            
+            if swing_button or intraday_button:
+                strategy = "Swing" if swing_button else "Intraday"
+                with st.spinner(f"Running {strategy} backtest (historical simulation)..."):
+                    data_hash = hash(data.to_string())
+                    backtest_results = backtest_stock(data, symbol, strategy=strategy, _data_hash=data_hash)
+                    if strategy == "Swing":
+                        st.session_state.backtest_results_swing = backtest_results
+                    else:
+                        st.session_state.backtest_results_intraday = backtest_results
+
+        # Display Backtest Results (if available)
+        for strategy_name, results_key in [("Swing", "backtest_results_swing"), ("Intraday", "backtest_results_intraday")]:
+            backtest_results = st.session_state.get(results_key)
+            if backtest_results:
+                st.markdown("---")
+                st.subheader(f"📊 {strategy_name} Strategy Backtest Results")
+                col1, col2, col3, col4 = st.columns(4)
+                with col1:
+                    st.metric("Total Return", f"{backtest_results['total_return']:.2f}%")
+                with col2:
+                    st.metric("Annualized Return", f"{backtest_results['annual_return']:.2f}%")
+                with col3:
+                    st.metric("Sharpe Ratio", f"{backtest_results['sharpe_ratio']:.2f}")
+                with col4:
+                    st.metric("Max Drawdown", f"{backtest_results['max_drawdown']:.2f}%")
+                
+                st.metric("Total Trades", backtest_results['trades'])
+                st.metric("Win Rate", f"{backtest_results['win_rate']:.1f}%")
+
+                with st.expander("View Trade Details", expanded=False):
+                    trade_df = pd.DataFrame(backtest_results["trade_details"])
+                    if not trade_df.empty:
+                        st.dataframe(trade_df, use_container_width=True)
+
+                # Equity Curve Chart
+                equity_df = backtest_results["equity_curve"]
+                if not equity_df.empty:
+                    fig = px.line(equity_df, x='Date', y='Equity', title=f"{strategy_name} Strategy Equity Curve")
+                    fig.add_hline(y=30000, line_dash="dash", line_color="gray", annotation_text="Initial Capital")
+                    st.plotly_chart(fig, use_container_width=True)
+
+                # Price Chart with Signals
+                fig = px.line(data.tail(100), x=data.tail(100).index, y='Close', title=f"{symbol.split('.')[0].upper()} Price History with Signals")
+                if backtest_results["buy_signals"]:
+                    buy_dates, buy_prices = zip(*backtest_results["buy_signals"])
+                    fig.add_scatter(x=buy_dates, y=buy_prices, mode='markers', name='Buy Signals',
+                                    marker=dict(color='green', symbol='triangle-up', size=10))
+                if backtest_results["sell_signals"]:
+                    sell_dates, sell_prices = zip(*backtest_results["sell_signals"])
+                    fig.add_scatter(x=sell_dates, y=sell_prices, mode='markers', name='Sell Signals',
+                                    marker=dict(color='red', symbol='triangle-down', size=10))
+                st.plotly_chart(fig, use_container_width=True)
+
+        # Technical Indicators (compact grid)
+        st.subheader("📊 Key Technical Indicators")
+        indicators_data = [
+            ("RSI", data['RSI'].iloc[-1] if 'RSI' in data else None, TOOLTIPS['RSI']),
+            ("MACD", data['MACD'].iloc[-1] if 'MACD' in data else None, TOOLTIPS['MACD']),
+            ("ATR", data['ATR'].iloc[-1] if 'ATR' in data else None, TOOLTIPS['ATR']),
+            ("ADX", data['ADX'].iloc[-1] if 'ADX' in data else None, TOOLTIPS['ADX']),
+            ("VWAP", data['VWAP'].iloc[-1] if 'VWAP' in data else None, TOOLTIPS['VWAP']),
+            ("CMF", data['CMF'].iloc[-1] if 'CMF' in data else None, TOOLTIPS['CMF']),
+            ("Bollinger Upper", data['Upper_Band'].iloc[-1] if 'Upper_Band' in data else None, TOOLTIPS['Bollinger']),
+            ("Bollinger Lower", data['Lower_Band'].iloc[-1] if 'Lower_Band' in data else None, TOOLTIPS['Bollinger']),
+            ("Ichimoku Span A", data['Ichimoku_Span_A'].iloc[-1] if 'Ichimoku_Span_A' in data else None, TOOLTIPS['Ichimoku'])
+        ]
+        
+        cols = st.columns(3)
+        for i, (name, value, tooltip_text) in enumerate(indicators_data):
+            col = cols[i % 3]
+            with col:
+                display_value = round(value, 2) if isinstance(value, (int, float, np.integer, np.floating)) and not pd.isna(value) else "N/A"
+                st.metric(name, display_value, help=tooltip_text)
+
+@st.cache_data(ttl=300)
+def fetch_market_overview():
+    """Fetch and return market overview data."""
+    try:
+        headers = {"User-Agent": random.choice(USER_AGENTS)}
+        response = requests.get("https://brkpoint.in/api/indexscan", headers=headers, timeout=10)
+        response.raise_for_status()
+        return response.json()
+    except Exception as e:
+        st.warning(f"⚠️ Failed to fetch market overview: {str(e)}")
+        return []
+
+def display_market_overview():
+    """Improved Market Overview with metric cards."""
+    if st.button("🔄 Refresh Market Overview", use_container_width=True):
+        st.cache_data.clear()
+    data = fetch_market_overview()
+    if not data:
+        st.warning("No market data available.")
+        return
+
+    st.subheader("📈 Market Overview")
+    # Responsive grid: 2 cols on small screens, 4 on large
+    num_cols = min(4, len(data))
+    cols = st.columns(num_cols)
+    for i, index_data in enumerate(data):
+        col = cols[i % num_cols]
+        with col:
+            change_pct = index_data["percentage_change"]
+            delta_icon = "🟢" if change_pct >= 0 else "🔴"
+            delta_str = f"{delta_icon} {index_data['points_change']:.1f} ({change_pct:.2f}%)"
+            st.metric(
+                label=index_data["index"],
+                value=f"₹{index_data['price']:.2f}",
+                delta=delta_str,
+                help="Price | Points Change | % Change"
+            )
+            st.caption(f"Updated: {pd.to_datetime(index_data['last_updated']).strftime('%H:%M IST')}", help="Last update time")
+
+@st.cache_data(ttl=300)
+def fetch_holidays():
+    """Fetch upcoming holidays."""
+    try:
+        headers = {"User-Agent": random.choice(USER_AGENTS)}
+        response = requests.get("https://brkpoint.in/api/holidays/upcoming", headers=headers, timeout=10)
+        response.raise_for_status()
+        result = response.json()
+        return result.get("holidays", []) if result.get("success") else []
+    except Exception as e:
+        st.warning(f"Failed to fetch holidays: {str(e)}")
+        return []
+
+def display_holiday_alerts():
+    """Improved Holiday Alerts with clean banner."""
+    if st.button("🔄 Refresh Holidays", use_container_width=True):
+        st.cache_data.clear()
+    holidays = fetch_holidays()
+    upcoming = [h for h in holidays if h.get("days_until", 0) <= 3]
+
+    if upcoming:
+        st.error("🚨 Upcoming Market Holidays")
+        for h in upcoming:
+            date_str = pd.to_datetime(h['holiday_date']).strftime('%d %b %Y')
+            st.warning(f"**{h['holiday_name']}** - {date_str} ({h['days_until']} days away)")
+    else:
+        st.success("✅ No market holidays within the next 3 days. Trading as usual!")
+
+def display_market_dashboard():
+    """Simplified Dashboard with 2 tabs and better UI."""
+    st.markdown("---")  # Divider for clean separation
+    container = st.container()
+    with container:
+        st.header("📊 Market Dashboard")
+        tab1, tab2 = st.tabs(["Market Overview", "Holiday Alerts"])
+
+        with tab1:
+            display_market_overview()
+
+        with tab2:
+            display_holiday_alerts()
+
+def main():
+    init_database()
+    st.sidebar.title("🔍 Stock Selection")
+
+    # Improved Dashboard Toggle
+    show_dashboard = st.sidebar.checkbox("📊 Show Market Dashboard", value=True, help="Toggle real-time market insights")
+
+    if show_dashboard:
+        display_market_dashboard()
+
+    # Sidebar Controls for Rate Limits (new)
+    st.sidebar.subheader("⚙️ Rate Limit Controls")
+    batch_size = st.sidebar.slider("Batch Size (stocks per batch)", 1, 5, 3, help="Smaller = safer from rate limits")
+    st.session_state['batch_size'] = batch_size  # Store in session state
+    delay_per_batch = st.sidebar.slider("Delay Between Batches (seconds)", 5, 15, 10, help="Longer = reduces API hits")
+    st.session_state['delay_per_batch'] = delay_per_batch
+    stocks_per_sector = st.sidebar.slider("Stocks per Sector (for analysis)", 1, 5, 3, help="Limit to avoid overload")
+    st.session_state['stocks_per_sector'] = stocks_per_sector
+
+    stock_list = fetch_nse_stock_list()
+    if not stock_list:
+        st.error("❌ Could not fetch stock list. Please check your internet connection or API status.")
+        return
+
+    # Set default session states
+    if 'symbol' not in st.session_state:
+        st.session_state.symbol = stock_list[0]
+    if 'recommendation_mode' not in st.session_state:
+        st.session_state.recommendation_mode = "Standard"
+
+    # Stock selection
+    selected_index = stock_list.index(st.session_state.symbol) if st.session_state.symbol in stock_list else 0
+    symbol = st.sidebar.selectbox(
+        "Select Stock",
+        stock_list,
+        index=selected_index,
+        key="stock_select"
+    )
+
+    # Recommendation mode selection
+    recommendation_mode = st.sidebar.radio(
+        "Recommendation Mode",
+        ["Standard", "Adaptive"],
+        index=0 if st.session_state.recommendation_mode == "Standard" else 1,
+        help="Standard: Timeframe-specific recommendations. Adaptive: Regime-based with position sizing."
+    )
+    st.session_state.recommendation_mode = recommendation_mode
+
+    # Sector selection for picks
+    sector_options = ["All"] + list(SECTORS.keys())
+    selected_sectors = st.sidebar.multiselect(
+        "Select Sectors for Picks",
+        options=sector_options,
+        default=["Bank"],  # Default to one sector
+        help="Choose sectors for generating top picks."
+    )
+    st.session_state.selected_sectors = selected_sectors
+
+    if "All" in selected_sectors:
+        selected_stocks = list(set([stock for sector in SECTORS.values() for stock in sector]))
+    else:
+        selected_stocks = list(set([stock for sector in selected_sectors for stock in SECTORS.get(sector, [])]))
+
     # Top sectors button
     if st.button("🔎 Analyze Top Performing Sectors"):
-        with st.spinner("🔍 Crunching sector data ..."):
-            top_sectors = get_top_sectors_cached(rate_limit_delay=2, stocks_per_sector=2)
-            st.subheader("🔝 Top 3 Performing Sectors Today")
+        with st.spinner("🔍 Analyzing sectors (may take time due to rate limits)..."):
+            top_sectors = get_top_sectors_cached(
+                rate_limit_delay=5, 
+                stocks_per_sector=st.session_state.get('stocks_per_sector', 3)
+            )
+            st.subheader("🔝 Top 3 Performing Sectors")
             for name, score in top_sectors:
-                st.markdown(f"- **{name}**: {score:.2f}/7")
+                trend_icon = "🟢" if score > 0 else "🔴" if score < 0 else "⚪"
+                st.markdown(f"{trend_icon} **{name}**: {score:.2f}/7")
 
     # Daily top picks button
     if st.button("🚀 Generate Daily Top Picks"):
+        if not selected_stocks:
+            st.warning("⚠️ Select at least one sector first.")
+            return
         progress_bar = st.progress(0)
         loading_text = st.empty()
         loading_messages = itertools.cycle([
@@ -1983,7 +2234,7 @@ def display_dashboard(symbol=None, data=None, recommendations=None):
         ])
         results_df = analyze_all_stocks(
             selected_stocks,
-            batch_size=10,
+            batch_size=st.session_state.get('batch_size', 3),
             progress_callback=lambda x: update_progress(progress_bar, loading_text, x, loading_messages)
         )
         insert_top_picks(results_df, pick_type="daily")
@@ -2026,6 +2277,9 @@ def display_dashboard(symbol=None, data=None, recommendations=None):
 
     # Intraday top picks button
     if st.button("⚡ Generate Intraday Top 5 Picks"):
+        if not selected_stocks:
+            st.warning("⚠️ Select at least one sector first.")
+            return
         progress_bar = st.progress(0)
         loading_text = st.empty()
         loading_messages = itertools.cycle([
@@ -2034,7 +2288,9 @@ def display_dashboard(symbol=None, data=None, recommendations=None):
         ])
         intraday_results = analyze_intraday_stocks(
             selected_stocks,
-            batch_size=10,
+            batch_size=st.session_state.get('batch_size', 3),
+            delay=st.session_state.get('delay_per_batch', 10),
+            top_n=5,
             progress_callback=lambda x: update_progress(progress_bar, loading_text, x, loading_messages)
         )
         insert_top_picks(intraday_results, pick_type="intraday")
@@ -2043,25 +2299,25 @@ def display_dashboard(symbol=None, data=None, recommendations=None):
         if not intraday_results.empty:
             st.subheader("🏆 Top 5 Intraday Stocks")
             for _, row in intraday_results.iterrows():
-                with st.expander(f"{row['Symbol']} - {tooltip('Score', TOOLTIPS['Score'])}: {row['Score']}/7"):
+                with st.expander(f"{row['Symbol']} - Score: {row['Score']}/7"):
                     current_price = row.get('Current Price', 'N/A')
                     buy_at = row.get('Buy At', 'N/A')
                     stop_loss = row.get('Stop Loss', 'N/A')
                     target = row.get('Target', 'N/A')
                     if st.session_state.recommendation_mode == "Adaptive":
                         st.markdown(f"""
-                        {tooltip('Current Price', TOOLTIPS['Stop Loss'])}: ₹{current_price}  
+                        Current Price: ₹{current_price}  
                         Buy At: ₹{buy_at} | Stop Loss: ₹{stop_loss}  
                         Target: ₹{target}  
                         Recommendation: {colored_recommendation(row.get('Recommendation', 'N/A'))}  
                         Regime: {row.get('Regime', 'N/A')}  
-                        Position Size (₹): {row.get('Position Size', 'N/A')}  
+                        Position Size: ₹{row.get('Position Size', 'N/A')}  
                         Trailing Stop: ₹{row.get('Trailing Stop', 'N/A')}  
                         Reason: {row.get('Reason', 'N/A')}
                         """)
                     else:
                         st.markdown(f"""
-                        {tooltip('Current Price', TOOLTIPS['Stop Loss'])}: ₹{current_price}  
+                        Current Price: ₹{current_price}  
                         Buy At: ₹{buy_at} | Stop Loss: ₹{stop_loss}  
                         Target: ₹{target}  
                         Intraday: {colored_recommendation(row.get('Intraday', 'N/A'))}
@@ -2072,442 +2328,123 @@ def display_dashboard(symbol=None, data=None, recommendations=None):
     # Historical picks button
     if st.button("📜 View Historical Picks"):
         conn = sqlite3.connect('stock_picks.db')
-        history_df = pd.read_sql_query("SELECT * FROM daily_picks ORDER BY date DESC", conn)
+        history_df = pd.read_sql_query("SELECT * FROM daily_picks ORDER BY date DESC LIMIT 100", conn)
         conn.close()
         if not history_df.empty:
             st.subheader("📜 Historical Top Picks")
-            all_dates = sorted(history_df['date'].unique(), reverse=True)
-            date_filter = st.selectbox("Filter by Date", ["All"] + all_dates)
-            pick_type_filter = st.selectbox("Filter by Pick Type", ["All", "daily", "intraday"])
+            col1, col2 = st.columns(2)
+            with col1:
+                date_filter = st.selectbox("Filter by Date", ["All"] + sorted(history_df['date'].unique(), reverse=True))
+            with col2:
+                pick_type_filter = st.selectbox("Filter by Pick Type", ["All", "daily", "intraday"])
             filtered_df = history_df.copy()
             if pick_type_filter != "All":
                 filtered_df = filtered_df[filtered_df['pick_type'] == pick_type_filter]
             if date_filter != "All":
                 filtered_df = filtered_df[filtered_df['date'] == date_filter]
-            st.dataframe(filtered_df)
+            st.dataframe(filtered_df[['date', 'symbol', 'score', 'intraday', 'swing', 'recommendation', 'pick_type']], use_container_width=True)
         else:
             st.warning("⚠️ No historical data available.")
 
-    # Display stock analysis if symbol is available
+    # Analyze Selected Stock Button (in main, but called here if session state has data)
     if st.session_state.symbol and st.session_state.data is not None and st.session_state.recommendations is not None:
-        symbol = st.session_state.symbol
-        data = st.session_state.data
-        recommendations = st.session_state.recommendations
+        display_dashboard(st.session_state.symbol, st.session_state.data, st.session_state.recommendations)
 
-        st.header(f"📋 {symbol.split('-')[0]} Analysis")
-        col1, col2, col3, col4, col5 = st.columns(5)
-        with col1:
-            current_price = recommendations.get('Current Price', 'N/A')
-            st.metric(tooltip("Current Price", TOOLTIPS['RSI']), f"₹{current_price}")
-        with col2:
-            buy_at = recommendations.get('Buy At', 'N/A')
-            st.metric("Buy At", f"₹{buy_at}")
-        with col3:
-            stop_loss = recommendations.get('Stop Loss', 'N/A')
-            st.metric(tooltip("Stop Loss", TOOLTIPS['Stop Loss']), f"₹{stop_loss}")
-        with col4:
-            target = recommendations.get('Target', 'N/A')
-            st.metric("Target", f"₹{target}")
-        with col5:
-            regime = recommendations.get('Regime', 'N/A') if st.session_state.recommendation_mode == "Adaptive" else 'N/A'
-            st.metric("Market Regime", regime)
-
-        st.subheader("📈 Trading Recommendations")
-        if st.session_state.recommendation_mode == "Adaptive":
-            col1, col2, col3 = st.columns(3)
-            with col1:
-                st.write(f"**Recommendation**: {colored_recommendation(recommendations.get('Recommendation', 'N/A'))}")
-                st.write(f"**Reason**: {recommendations.get('Reason', 'N/A')}")
-            with col2:
-                st.write(f"**{tooltip('Score', TOOLTIPS['Score'])}**: {recommendations.get('Score', 'N/A')}/7")
-                st.write(f"**Position Size (₹)**: {recommendations.get('Position Size', 'N/A')}")
-            with col3:
-                st.write(f"**Trailing Stop**: ₹{recommendations.get('Trailing Stop', 'N/A')}")
-                st.write(f"**Volatility**: {assess_risk(data)}")
-        else:
-            col1, col2, col3 = st.columns(3)
-            with col1:
-                st.write(f"**Intraday**: {colored_recommendation(recommendations.get('Intraday', 'N/A'))}")
-                st.write(f"**Swing**: {colored_recommendation(recommendations.get('Swing', 'N/A'))}")
-            with col2:
-                st.write(f"**Short-Term**: {colored_recommendation(recommendations.get('Short-Term', 'N/A'))}")
-                st.write(f"**Long-Term**: {colored_recommendation(recommendations.get('Long-Term', 'N/A'))}")
-            with col3:
-                st.write(f"**Mean Reversion**: {colored_recommendation(recommendations.get('Mean_Reversion', 'N/A'))}")
-                st.write(f"**Breakout**: {colored_recommendation(recommendations.get('Breakout', 'N/A'))}")
-                st.write(f"**Ichimoku Trend**: {colored_recommendation(recommendations.get('Ichimoku_Trend', 'N/A'))}")
-            st.write(f"**{tooltip('Score', TOOLTIPS['Score'])}**: {recommendations.get('Score', 'N/A')}/7")
-            st.write(f"**Volatility**: {assess_risk(data)}")
-
-        # Backtest form
-        with st.form(key="backtest_form"):
-            col1, col2 = st.columns(2)
-            with col1:
-                swing_button = st.form_submit_button("🔍 Backtest Swing Strategy")
-            with col2:
-                intraday_button = st.form_submit_button("🔍 Backtest Intraday Strategy")
-            
-            if swing_button or intraday_button:
-                strategy = "Swing" if swing_button else "Intraday"
-                with st.spinner(f"Running {strategy} Strategy backtest..."):
-                    data_hash = hash(data.to_string())
-                    backtest_results = backtest_stock(data, symbol, strategy=strategy, _data_hash=data_hash)
-                    if strategy == "Swing":
-                        st.session_state.backtest_results_swing = backtest_results
-                    else:
-                        st.session_state.backtest_results_intraday = backtest_results
-
-        # Backtest results
-        for strategy, results_key in [("Swing", "backtest_results_swing"), ("Intraday", "backtest_results_intraday")]:
-            backtest_results = st.session_state.get(results_key)
-            if backtest_results:
-                st.subheader(f"📈 Backtest Results ({strategy} Strategy)")
-                st.write(f"**Total Return**: {backtest_results['total_return']:.2f}%")
-                st.write(f"**Annualized Return**: {backtest_results['annual_return']:.2f}%")
-                st.write(f"**Sharpe Ratio**: {backtest_results['sharpe_ratio']:.2f}")
-                st.write(f"**Max Drawdown**: {backtest_results['max_drawdown']:.2f}%")
-                st.write(f"**Number of Trades**: {backtest_results['trades']}")
-                st.write(f"**Win Rate**: {backtest_results['win_rate']:.2f}%")
-                with st.expander("Trade Details"):
-                    for trade in backtest_results["trade_details"]:
-                        profit = trade.get("profit", 0)
-                        st.write(f"Entry: {trade['entry_date']} @ ₹{trade['entry_price']:.2f}, "
-                                 f"Exit: {trade['exit_date']} @ ₹{trade['exit_price']:.2f}, "
-                                 f"Profit: ₹{profit:.2f}")
-
-                fig = px.line(data, x=data.index, y='Close', title=f"{symbol.split('-')[0]} Price with Signals")
-                if backtest_results["buy_signals"]:
-                    buy_dates, buy_prices = zip(*backtest_results["buy_signals"])
-                    fig.add_scatter(x=buy_dates, y=buy_prices, mode='markers', name='Buy Signals',
-                                   marker=dict(color='green', symbol='triangle-up', size=10))
-                if backtest_results["sell_signals"]:
-                    sell_dates, sell_prices = zip(*backtest_results["sell_signals"])
-                    fig.add_scatter(x=sell_dates, y=sell_prices, mode='markers', name='Sell Signals',
-                                   marker=dict(color='red', symbol='triangle-down', size=10))
-                st.plotly_chart(fig, use_container_width=True)
-
-        # Technical Indicators
-        st.subheader("📊 Technical Indicators")
-        indicators = [
-            ("RSI", data['RSI'].iloc[-1], TOOLTIPS['RSI']),
-            ("MACD", data['MACD'].iloc[-1], TOOLTIPS['MACD']),
-            ("ATR", data['ATR'].iloc[-1], TOOLTIPS['ATR']),
-            ("ADX", data['ADX'].iloc[-1], TOOLTIPS['ADX']),
-            ("Bollinger Upper", data['Upper_Band'].iloc[-1], TOOLTIPS['Bollinger']),
-            ("Bollinger Lower", data['Lower_Band'].iloc[-1], TOOLTIPS['Bollinger']),
-            ("VWAP", data['VWAP'].iloc[-1] if 'VWAP' in data.columns and not data['VWAP'].isna().all() else "N/A", TOOLTIPS['VWAP']),
-            ("Ichimoku Span A", data['Ichimoku_Span_A'].iloc[-1], TOOLTIPS['Ichimoku']),
-            ("CMF", data['CMF'].iloc[-1], TOOLTIPS['CMF']),
-        ]
-        col1, col2 = st.columns(2)
-        for i, (name, value, tooltip_text) in enumerate(indicators):
-            value = round(value, 2) if isinstance(value, (int, float, np.integer, np.floating)) else value
-            if i % 2 == 0:
-                with col1:
-                    st.write(f"**{tooltip(name, tooltip_text)}**: {value}")
-            else:
-                with col2:
-                    st.write(f"**{tooltip(name, tooltip_text)}**: {value}")
-
-# === NEW FUNCTIONS FOR API INTEGRATION ===
-
-@st.cache_data(ttl=300)  # Cache for 5 minutes
-def fetch_market_overview():
-    """Fetch and return market overview data."""
-    try:
-        headers = {"User-Agent": random.choice(USER_AGENTS)}
-        response = requests.get("https://brkpoint.in/api/indexscan", headers=headers, timeout=10)
-        response.raise_for_status()
-        return response.json()
-    except Exception as e:
-        st.warning(f"⚠️ Failed to fetch market overview: {str(e)}")
-        return []
-
-def display_market_overview():
-    """Display Market Overview tab."""
-    if st.button("🔄 Refresh Market Overview"):
-        st.cache_data.clear()  # Clear cache for refresh
-    data = fetch_market_overview()
-    if not data:
-        st.warning("No market data available.")
-        return
-
-    st.subheader("📈 Market Overview")
-    cols = st.columns(len(data) if len(data) <= 4 else 4)  # Responsive grid
-    for i, index in enumerate(data):
-        col = cols[i % len(cols)]
-        with col:
-            change_class = "🟢" if index["percentage_change"] >= 0 else "🔴"
-            st.metric(
-                label=index["index"],
-                value=f"₹{index['price']:.2f}",
-                delta=f"{change_class} {index['points_change']:.1f} ({index['percentage_change']:.2f}%)"
-            )
-            st.caption(f"Updated: {pd.to_datetime(index['last_updated']).strftime('%H:%M')}")
-
-@st.cache_data(ttl=300)
-def fetch_holidays():
-    """Fetch and return upcoming holidays."""
-    try:
-        headers = {"User-Agent": random.choice(USER_AGENTS)}
-        response = requests.get("https://brkpoint.in/api/holidays/upcoming", headers=headers, timeout=10)
-        response.raise_for_status()
-        result = response.json()
-        return result.get("holidays", []) if result.get("success") else []
-    except Exception as e:
-        st.warning(f"⚠️ Failed to fetch holidays: {str(e)}")
-        return []
-
-def display_holiday_alerts():
-    """Display Holiday Alerts tab."""
-    if st.button("🔄 Refresh Holidays"):
-        st.cache_data.clear()
-    holidays = fetch_holidays()
-    upcoming = [h for h in holidays if h.get("days_until", 0) <= 3]
-
-    if upcoming:
-        st.error("🚨 Upcoming Market Holidays Alert!")
-        for h in upcoming:
-            st.warning(
-                f"**{h['holiday_name']}** on {pd.to_datetime(h['holiday_date']).strftime('%d %b %Y')} "
-                f"({h['days_until']} days away)"
-            )
-    else:
-        st.success("✅ No market holidays in the next 3 days.")
-
-@st.cache_data(ttl=300)
-def fetch_industry_strength():
-    """Fetch and return industry strength analysis."""
-    try:
-        headers = {"User-Agent": random.choice(USER_AGENTS)}
-        response = requests.get("https://brkpoint.in/api/brkview/industry-strength-analysis", headers=headers, timeout=10)
-        response.raise_for_status()
-        return response.json()
-    except Exception as e:
-        st.warning(f"⚠️ Failed to fetch industry strength: {str(e)}")
-        return {"industries": []}
-
-def display_industry_strength():
-    """Display Industry Strength Analysis tab."""
-    if st.button("🔄 Refresh Industry Strength"):
-        st.cache_data.clear()
-    data = fetch_industry_strength()
-    industries = data.get("industries", [])
-    summary = data.get("summary", {})
-
-    if not industries:
-        st.warning("No industry data available.")
-        return
-
-    st.subheader("💪 Industry Strength Analysis")
-    
-    # Summary Cards
-    col1, col2, col3, col4 = st.columns(4)
-    with col1:
-        strongest = summary.get("strongest_day", {})
-        st.metric("Strongest Industry (Day)", strongest.get("industry", "N/A"), f"{strongest.get('momentum_score', 0):.2f}")
-    with col2:
-        weakest = summary.get("weakest_day", {})
-        st.metric("Weakest Industry (Day)", weakest.get("industry", "N/A"), f"{weakest.get('momentum_score', 0):.2f}")
-    with col3:
-        st.metric("Total Industries", data.get("total_industries", 0))
-    with col4:
-        rotation = data.get("rotation_analysis", {})
-        st.metric("Sustained Leaders", len(rotation.get("sustained_leaders", [])))
-
-    # Top 10 Industries Table (sorted by momentum score)
-    df = pd.DataFrame(industries)
-    if not df.empty:
-        df = df.sort_values("momentum_score", ascending=False).head(10)
-        df["Trend Color"] = df["overall_trend"].apply(lambda x: "🟢" if x == "Positive" else "🔴")
-        st.dataframe(
-            df[["industry", "Trend Color", "momentum_score", "day_performance_change", "rotation_pattern"]].rename(
-                columns={
-                    "industry": "Industry",
-                    "Trend Color": "Trend",
-                    "momentum_score": "Momentum Score",
-                    "day_performance_change": "Day Change (%)",
-                    "rotation_pattern": "Signal"
-                }
-            ),
-            use_container_width=True
-        )
-
-@st.cache_data(ttl=300)
-def fetch_industry_breadth():
-    """Fetch and return industry breadth data."""
-    try:
-        headers = {"User-Agent": random.choice(USER_AGENTS)}
-        response = requests.get("https://brkpoint.in/api/brkview/industry-breadth", headers=headers, timeout=10)
-        response.raise_for_status()
-        return response.json()
-    except Exception as e:
-        st.warning(f"⚠️ Failed to fetch industry breadth: {str(e)}")
-        return {"industries": []}
-
-def display_industry_breadth():
-    """Display Industry Breadth tab."""
-    if st.button("🔄 Refresh Industry Breadth"):
-        st.cache_data.clear()
-    data = fetch_industry_breadth()
-    industries = data.get("industries", [])
-
-    if not industries:
-        st.warning("No breadth data available.")
-        return
-
-    st.subheader("📊 Industry Breadth - What's Trending Today?")
-    st.caption(f"Snapshot: {pd.to_datetime(data.get('snapshot_time', '')).strftime('%d %b %Y %H:%M')}")
-
-    df = pd.DataFrame(industries)
-    if not df.empty:
-        df = df.sort_values("advance_decline_ratio", key=lambda x: pd.to_numeric(x, errors='coerce'), ascending=False)
-        for _, row in df.iterrows():
-            advance_pct = (row["total_advancing"] / row["total_stocks"]) * 100
-            col1, col2 = st.columns([3, 1])
-            with col1:
-                st.write(f"**{row['industry']}** (A/D: {row['total_advancing']}/{row['total_declining']})")
-                st.caption(f"Avg Change: {row['avg_change_percent']:.2f}% | Top Gainer: {row['top_gainer_symbol']} (+{row['top_gainer_change']}%)")
-            with col2:
-                st.progress(advance_pct / 100)
-            st.divider()
-
-@st.cache_data(ttl=300)
-def fetch_headlines(page=1, limit=10):
-    """Fetch and return financial headlines."""
-    try:
-        params = {
-            "page": page,
-            "limit": limit,
-            "sentiment": "",
-            "relevance": "",
-            "sortBy": "timestamp",
-            "sortOrder": "-1",
-            "startDate": "",
-            "endDate": "",
-            "source": ""
-        }
-        headers = {"User-Agent": random.choice(USER_AGENTS)}
-        response = requests.get("https://brkpoint.in/api/headlines", params=params, headers=headers, timeout=10)
-        response.raise_for_status()
-        return response.json().get("headlines", [])
-    except Exception as e:
-        st.warning(f"⚠️ Failed to fetch headlines: {str(e)}")
-        return []
-
-def display_financial_headlines():
-    """Display Financial Headlines tab."""
-    page = st.number_input("Page Number", min_value=1, value=1, step=1)
-    if st.button("🔄 Refresh Headlines"):
-        st.cache_data.clear()
-    headlines = fetch_headlines(page=page, limit=10)
-
-    if not headlines:
-        st.warning("No headlines available.")
-        return
-
-    st.subheader("📰 Financial Headlines")
-    for h in headlines:
-        sentiment_color = "🟢" if h["sentiment_label"] == "Positive" else "🔴" if h["sentiment_label"] == "Negative" else "⚪"
-        relevance_badge = " 🇮🇳" if h.get("is_relevant_india") else ""
-        st.markdown(f"""
-        **{sentiment_color} {h['headline']}** {relevance_badge}  
-        *{h['sentiment_label']} ({h['sentiment_score']:.2f})* | {pd.to_datetime(h['timestamp']).strftime('%d %b %Y %H:%M')}  
-        [Read more]({h['url']})
-        """)
-        st.divider()
-
-def display_market_dashboard():
-    """Display the new Market Dashboard with tabs."""
-    tab1, tab2, tab3, tab4, tab5 = st.tabs(["Market Overview", "Holiday Alerts", "Industry Strength", "Industry Breadth", "Headlines"])
-
-    with tab1:
-        display_market_overview()
-
-    with tab2:
-        display_holiday_alerts()
-
-    with tab3:
-        display_industry_strength()
-
-    with tab4:
-        display_industry_breadth()
-
-    with tab5:
-        display_financial_headlines()
-
+# Main function
 def main():
     init_database()
-    st.sidebar.title("🔍 Stock Selection")
-
-    # NEW: Market Dashboard Section (added at the top)
-    if st.sidebar.checkbox("📊 Show Market Dashboard", value=True):
+    
+    # Sidebar for stock selection and controls
+    st.sidebar.title("🔍 Controls")
+    
+    # Dashboard toggle
+    show_dashboard = st.sidebar.checkbox("📊 Show Market Dashboard", value=True)
+    if show_dashboard:
         display_market_dashboard()
-
+    
+    # Rate limit controls
+    st.sidebar.subheader("⚙️ API Rate Limit Settings")
+    batch_size = st.sidebar.slider("Batch Size", 1, 5, 3)
+    delay_per_batch = st.sidebar.slider("Delay Between Batches (s)", 5, 20, 10)
+    stocks_per_sector = st.sidebar.slider("Stocks per Sector", 1, 5, 3)
+    
+    # Update session state
+    st.session_state['batch_size'] = batch_size
+    st.session_state['delay_per_batch'] = delay_per_batch
+    st.session_state['stocks_per_sector'] = stocks_per_sector
+    
+    # Fetch stock list
     stock_list = fetch_nse_stock_list()
     if not stock_list:
-        st.error("❌ Could not fetch stock list. Please check your internet connection or API status.")
+        st.error("❌ Failed to load stock list. Check connection.")
         return
-
-    # Set default session states
+    
+    # Default symbol
     if 'symbol' not in st.session_state:
         st.session_state.symbol = stock_list[0]
-    if 'recommendation_mode' not in st.session_state:
-        st.session_state.recommendation_mode = "Standard"
-
-    # Stock selection
+    
+    # Stock selector
     selected_index = stock_list.index(st.session_state.symbol) if st.session_state.symbol in stock_list else 0
-    symbol = st.sidebar.selectbox(
-        "Select Stock",
-        stock_list,
-        index=selected_index,
-        key="stock_select"
-    )
-
-    # Recommendation mode selection
-    recommendation_mode = st.sidebar.radio(
-        "Recommendation Mode",
-        ["Standard", "Adaptive"],
-        index=0 if st.session_state.recommendation_mode == "Standard" else 1,
-        help="Standard: Timeframe-specific recommendations. Adaptive: Regime-based with position sizing."
-    )
+    symbol = st.sidebar.selectbox("Select Stock", stock_list, index=selected_index)
+    
+    # Recommendation mode
+    recommendation_mode = st.sidebar.radio("Mode", ["Standard", "Adaptive"], index=0 if st.session_state.get('recommendation_mode') == "Standard" else 1)
     st.session_state.recommendation_mode = recommendation_mode
-
-    # Analyze button
-    if st.sidebar.button("Analyze Selected Stock"):
-        if symbol:
-            with st.spinner("📊 Loading and analyzing stock data..."):
-                try:
-                    data = fetch_stock_data_with_auth(symbol)
-                    if not data.empty:
-                        analyzed_data = analyze_stock(data)
-                        recommendations = (
-                            adaptive_recommendation(analyzed_data)
-                            if recommendation_mode == "Adaptive"
-                            else generate_recommendations(analyzed_data, symbol)
-                        )
-
-                        # Update session state
-                        st.session_state.symbol = symbol
-                        st.session_state.data = analyzed_data
-                        st.session_state.recommendations = recommendations
-                        st.session_state.backtest_results_swing = None
-                        st.session_state.backtest_results_intraday = None
-
-                        display_dashboard(symbol, analyzed_data, recommendations)
-                    else:
-                        st.warning("⚠️ No data available for the selected stock.")
-                except Exception as e:
-                    st.error(f"❌ Error fetching or analyzing data: {str(e)}")
-    elif 'data' in st.session_state and 'recommendations' in st.session_state:
-        # Display previous results if available
-        display_dashboard(
-            st.session_state.symbol,
-            st.session_state.data,
-            st.session_state.recommendations
-        )
+    
+    # Sector selection for picks
+    sector_options = ["All"] + list(SECTORS.keys())
+    selected_sectors = st.sidebar.multiselect("Sectors for Picks", sector_options, default=["Bank"])
+    st.session_state.selected_sectors = selected_sectors
+    
+    if "All" in selected_sectors:
+        selected_stocks = list(set([stock for sector in SECTORS.values() for stock in sector]))
     else:
-        st.info("👈 Select a stock and click 'Analyze Selected Stock' to begin.")
+        selected_stocks = list(set([stock for sector in selected_sectors for stock in SECTORS.get(sector, [])]))
+    
+    # Buttons for analysis
+    col1, col2 = st.columns(2)
+    with col1:
+        if st.button("🚀 Generate Daily Top Picks"):
+            if not selected_stocks:
+                st.warning("Select sectors first.")
+            else:
+                # Call analyze_all_stocks with session state params
+                results_df = analyze_all_stocks(selected_stocks, batch_size=batch_size)
+                if not results_df.empty:
+                    st.success(f"Generated {len(results_df)} top picks!")
+                    st.dataframe(results_df[['Symbol', 'Score', 'Recommendation', 'Current Price']], use_container_width=True)
+                else:
+                    st.warning("No picks generated (rate limits?).")
+    
+    with col2:
+        if st.button("⚡ Generate Intraday Picks"):
+            if not selected_stocks:
+                st.warning("Select sectors first.")
+            else:
+                intraday_results = analyze_intraday_stocks(selected_stocks, batch_size=batch_size, delay=delay_per_batch)
+                if not intraday_results.empty:
+                    st.success(f"Generated {len(intraday_results)} intraday picks!")
+                    st.dataframe(intraday_results[['Symbol', 'Score', 'Intraday', 'Current Price']], use_container_width=True)
+                else:
+                    st.warning("No intraday picks (rate limits?).")
+    
+    # Analyze individual stock
+    if st.sidebar.button("Analyze Selected Stock", use_container_width=True):
+        with st.spinner("Analyzing stock..."):
+            data = fetch_stock_data_with_auth(symbol)
+            if not data.empty:
+                analyzed_data = analyze_stock(data)
+                recs = adaptive_recommendation(analyzed_data) if recommendation_mode == "Adaptive" else generate_recommendations(analyzed_data, symbol)
+                st.session_state.symbol = symbol
+                st.session_state.data = analyzed_data
+                st.session_state.recommendations = recs
+                display_dashboard(symbol, analyzed_data, recs)
+            else:
+                st.warning("No data for this stock.")
+    
+    # Show previous analysis if available
+    if 'data' in st.session_state and st.session_state.data is not None:
+        display_dashboard(st.session_state.symbol, st.session_state.data, st.session_state.recommendations)
 
 if __name__ == "__main__":
     main()
