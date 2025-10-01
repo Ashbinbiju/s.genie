@@ -1434,7 +1434,7 @@ def backtest_stock(data, symbol, strategy="Swing", _data_hash=None):
     results["equity_curve"] = equity_df
 
     return results
-    
+
 def init_database():
     conn = sqlite3.connect('stock_picks.db')
     conn.execute('''
@@ -1739,14 +1739,14 @@ def display_dashboard(symbol=None, data=None, recommendations=None):
     st.title("📊 StockGenie Pro - NSE Analysis")
     st.subheader(f"📅 Analysis for {datetime.now().strftime('%d %b %Y')}")
 
-    # Sector selection (improved UI)
+    # Sector selection (improved UI) - FIXED: Unique key
     sector_options = ["All"] + list(SECTORS.keys())
     st.session_state.selected_sectors = st.multiselect(
         "Select Sectors",
         options=sector_options,
-        default=st.session_state.selected_sectors,
+        default=st.session_state.selected_sectors if 'selected_sectors' in st.session_state else ["All"],
         help="Choose one or more sectors to analyze. Select 'All' to include all sectors.",
-        key="sector_select"
+        key="dashboard_sector_select"
     )
 
     if "All" in st.session_state.selected_sectors:
@@ -1875,27 +1875,6 @@ def display_dashboard(symbol=None, data=None, recommendations=None):
                 st.warning("⚠️ No intraday picks available due to data issues or rate limits.")
     with col2:
         st.caption("Focuses on immediate buy signals.")
-
-    # Historical picks button
-    if st.button("📜 View Historical Picks", use_container_width=True):
-        conn = sqlite3.connect('stock_picks.db')
-        history_df = pd.read_sql_query("SELECT * FROM daily_picks ORDER BY date DESC LIMIT 50", conn)
-        conn.close()
-        if not history_df.empty:
-            st.subheader("📜 Recent Historical Picks")
-            col1, col2 = st.columns(2)
-            with col1:
-                date_filter = st.selectbox("Filter by Date", ["All"] + sorted(history_df['date'].unique(), reverse=True)[:10])
-            with col2:
-                pick_type_filter = st.selectbox("Filter by Type", ["All", "daily", "intraday"])
-            filtered_df = history_df.copy()
-            if pick_type_filter != "All":
-                filtered_df = filtered_df[filtered_df['pick_type'] == pick_type_filter]
-            if date_filter != "All":
-                filtered_df = filtered_df[filtered_df['date'] == date_filter]
-            st.dataframe(filtered_df[['date', 'symbol', 'score', 'recommendation', 'pick_type']], use_container_width=True)
-        else:
-            st.info("📝 No historical picks yet. Generate some first!")
 
     # Display stock analysis if symbol is available (improved layout)
     if st.session_state.symbol and st.session_state.data is not None and st.session_state.recommendations is not None:
@@ -2147,213 +2126,25 @@ def display_market_dashboard():
 
 def main():
     init_database()
-    st.sidebar.title("🔍 Stock Selection")
-
-    # Improved Dashboard Toggle
-    show_dashboard = st.sidebar.checkbox("📊 Show Market Dashboard", value=True, help="Toggle real-time market insights")
-
-    if show_dashboard:
-        display_market_dashboard()
-
-    # Sidebar Controls for Rate Limits (new)
-    st.sidebar.subheader("⚙️ Rate Limit Controls")
-    batch_size = st.sidebar.slider("Batch Size (stocks per batch)", 1, 5, 3, help="Smaller = safer from rate limits")
-    st.session_state['batch_size'] = batch_size  # Store in session state
-    delay_per_batch = st.sidebar.slider("Delay Between Batches (seconds)", 5, 15, 10, help="Longer = reduces API hits")
-    st.session_state['delay_per_batch'] = delay_per_batch
-    stocks_per_sector = st.sidebar.slider("Stocks per Sector (for analysis)", 1, 5, 3, help="Limit to avoid overload")
-    st.session_state['stocks_per_sector'] = stocks_per_sector
-
-    stock_list = fetch_nse_stock_list()
-    if not stock_list:
-        st.error("❌ Could not fetch stock list. Please check your internet connection or API status.")
-        return
-
-    # Set default session states
+    
+    # Initialize session state (moved to top to avoid duplicates)
+    if 'selected_sectors' not in st.session_state:
+        st.session_state.selected_sectors = ["Bank"]
     if 'symbol' not in st.session_state:
-        st.session_state.symbol = stock_list[0]
+        st.session_state.symbol = None
+    if 'data' not in st.session_state:
+        st.session_state.data = None
+    if 'recommendations' not in st.session_state:
+        st.session_state.recommendations = None
     if 'recommendation_mode' not in st.session_state:
         st.session_state.recommendation_mode = "Standard"
+    if 'batch_size' not in st.session_state:
+        st.session_state.batch_size = 3
+    if 'delay_per_batch' not in st.session_state:
+        st.session_state.delay_per_batch = 10
+    if 'stocks_per_sector' not in st.session_state:
+        st.session_state.stocks_per_sector = 3
 
-    # Stock selection
-    selected_index = stock_list.index(st.session_state.symbol) if st.session_state.symbol in stock_list else 0
-    symbol = st.sidebar.selectbox(
-        "Select Stock",
-        stock_list,
-        index=selected_index,
-        key="stock_select"
-    )
-
-    # Recommendation mode selection
-    recommendation_mode = st.sidebar.radio(
-        "Recommendation Mode",
-        ["Standard", "Adaptive"],
-        index=0 if st.session_state.recommendation_mode == "Standard" else 1,
-        help="Standard: Timeframe-specific recommendations. Adaptive: Regime-based with position sizing."
-    )
-    st.session_state.recommendation_mode = recommendation_mode
-
-    # Sector selection for picks
-    sector_options = ["All"] + list(SECTORS.keys())
-    selected_sectors = st.sidebar.multiselect(
-        "Select Sectors for Picks",
-        options=sector_options,
-        default=["Bank"],  # Default to one sector
-        help="Choose sectors for generating top picks."
-    )
-    st.session_state.selected_sectors = selected_sectors
-
-    if "All" in selected_sectors:
-        selected_stocks = list(set([stock for sector in SECTORS.values() for stock in sector]))
-    else:
-        selected_stocks = list(set([stock for sector in selected_sectors for stock in SECTORS.get(sector, [])]))
-
-    # Top sectors button
-    if st.button("🔎 Analyze Top Performing Sectors"):
-        with st.spinner("🔍 Analyzing sectors (may take time due to rate limits)..."):
-            top_sectors = get_top_sectors_cached(
-                rate_limit_delay=5, 
-                stocks_per_sector=st.session_state.get('stocks_per_sector', 3)
-            )
-            st.subheader("🔝 Top 3 Performing Sectors")
-            for name, score in top_sectors:
-                trend_icon = "🟢" if score > 0 else "🔴" if score < 0 else "⚪"
-                st.markdown(f"{trend_icon} **{name}**: {score:.2f}/7")
-
-    # Daily top picks button
-    if st.button("🚀 Generate Daily Top Picks"):
-        if not selected_stocks:
-            st.warning("⚠️ Select at least one sector first.")
-            return
-        progress_bar = st.progress(0)
-        loading_text = st.empty()
-        loading_messages = itertools.cycle([
-            "Analyzing trends...", "Fetching data...", "Crunching numbers...",
-            "Evaluating indicators...", "Finalizing results..."
-        ])
-        results_df = analyze_all_stocks(
-            selected_stocks,
-            batch_size=st.session_state.get('batch_size', 3),
-            progress_callback=lambda x: update_progress(progress_bar, loading_text, x, loading_messages)
-        )
-        insert_top_picks(results_df, pick_type="daily")
-        progress_bar.empty()
-        loading_text.empty()
-        if not results_df.empty:
-            st.subheader("🏆 Today's Top 5 Stocks")
-            for _, row in results_df.iterrows():
-                with st.expander(f"{row['Symbol']} - {tooltip('Score', TOOLTIPS['Score'])}: {row['Score']}/7"):
-                    current_price = row.get('Current Price', 'N/A')
-                    buy_at = row.get('Buy At', 'N/A')
-                    stop_loss = row.get('Stop Loss', 'N/A')
-                    target = row.get('Target', 'N/A')
-                    if st.session_state.recommendation_mode == "Adaptive":
-                        st.markdown(f"""
-                        {tooltip('Current Price', TOOLTIPS['Stop Loss'])}: ₹{current_price}  
-                        Buy At: ₹{buy_at} | Stop Loss: ₹{stop_loss}  
-                        Target: ₹{target}  
-                        Recommendation: {colored_recommendation(row.get('Recommendation', 'N/A'))}  
-                        Regime: {row.get('Regime', 'N/A')}  
-                        Position Size (₹): {row.get('Position Size', 'N/A')}  
-                        Trailing Stop: ₹{row.get('Trailing Stop', 'N/A')}  
-                        Reason: {row.get('Reason', 'N/A')}
-                        """)
-                    else:
-                        st.markdown(f"""
-                        {tooltip('Current Price', TOOLTIPS['Stop Loss'])}: ₹{current_price}  
-                        Buy At: ₹{buy_at} | Stop Loss: ₹{stop_loss}  
-                        Target: ₹{target}  
-                        Intraday: {colored_recommendation(row.get('Intraday', 'N/A'))}  
-                        Swing: {colored_recommendation(row.get('Swing', 'N/A'))}  
-                        Short-Term: {colored_recommendation(row.get('Short-Term', 'N/A'))}  
-                        Long-Term: {colored_recommendation(row.get('Long-Term', 'N/A'))}  
-                        Mean Reversion: {colored_recommendation(row.get('Mean_Reversion', 'N/A'))}  
-                        Breakout: {colored_recommendation(row.get('Breakout', 'N/A'))}  
-                        Ichimoku Trend: {colored_recommendation(row.get('Ichimoku_Trend', 'N/A'))}
-                        """)
-        else:
-            st.warning("⚠️ No top picks available due to data issues.")
-
-    # Intraday top picks button
-    if st.button("⚡ Generate Intraday Top 5 Picks"):
-        if not selected_stocks:
-            st.warning("⚠️ Select at least one sector first.")
-            return
-        progress_bar = st.progress(0)
-        loading_text = st.empty()
-        loading_messages = itertools.cycle([
-            "Scanning intraday trends...", "Detecting buy signals...", "Calculating stop-loss levels...",
-            "Optimizing targets...", "Finalizing top picks..."
-        ])
-        intraday_results = analyze_intraday_stocks(
-            selected_stocks,
-            batch_size=st.session_state.get('batch_size', 3),
-            delay=st.session_state.get('delay_per_batch', 10),
-            top_n=5,
-            progress_callback=lambda x: update_progress(progress_bar, loading_text, x, loading_messages)
-        )
-        insert_top_picks(intraday_results, pick_type="intraday")
-        progress_bar.empty()
-        loading_text.empty()
-        if not intraday_results.empty:
-            st.subheader("🏆 Top 5 Intraday Stocks")
-            for _, row in intraday_results.iterrows():
-                with st.expander(f"{row['Symbol']} - Score: {row['Score']}/7"):
-                    current_price = row.get('Current Price', 'N/A')
-                    buy_at = row.get('Buy At', 'N/A')
-                    stop_loss = row.get('Stop Loss', 'N/A')
-                    target = row.get('Target', 'N/A')
-                    if st.session_state.recommendation_mode == "Adaptive":
-                        st.markdown(f"""
-                        Current Price: ₹{current_price}  
-                        Buy At: ₹{buy_at} | Stop Loss: ₹{stop_loss}  
-                        Target: ₹{target}  
-                        Recommendation: {colored_recommendation(row.get('Recommendation', 'N/A'))}  
-                        Regime: {row.get('Regime', 'N/A')}  
-                        Position Size: ₹{row.get('Position Size', 'N/A')}  
-                        Trailing Stop: ₹{row.get('Trailing Stop', 'N/A')}  
-                        Reason: {row.get('Reason', 'N/A')}
-                        """)
-                    else:
-                        st.markdown(f"""
-                        Current Price: ₹{current_price}  
-                        Buy At: ₹{buy_at} | Stop Loss: ₹{stop_loss}  
-                        Target: ₹{target}  
-                        Intraday: {colored_recommendation(row.get('Intraday', 'N/A'))}
-                        """)
-        else:
-            st.warning("⚠️ No intraday picks available due to data issues.")
-
-    # Historical picks button
-    if st.button("📜 View Historical Picks"):
-        conn = sqlite3.connect('stock_picks.db')
-        history_df = pd.read_sql_query("SELECT * FROM daily_picks ORDER BY date DESC LIMIT 100", conn)
-        conn.close()
-        if not history_df.empty:
-            st.subheader("📜 Historical Top Picks")
-            col1, col2 = st.columns(2)
-            with col1:
-                date_filter = st.selectbox("Filter by Date", ["All"] + sorted(history_df['date'].unique(), reverse=True))
-            with col2:
-                pick_type_filter = st.selectbox("Filter by Pick Type", ["All", "daily", "intraday"])
-            filtered_df = history_df.copy()
-            if pick_type_filter != "All":
-                filtered_df = filtered_df[filtered_df['pick_type'] == pick_type_filter]
-            if date_filter != "All":
-                filtered_df = filtered_df[filtered_df['date'] == date_filter]
-            st.dataframe(filtered_df[['date', 'symbol', 'score', 'intraday', 'swing', 'recommendation', 'pick_type']], use_container_width=True)
-        else:
-            st.warning("⚠️ No historical data available.")
-
-    # Analyze Selected Stock Button (in main, but called here if session state has data)
-    if st.session_state.symbol and st.session_state.data is not None and st.session_state.recommendations is not None:
-        display_dashboard(st.session_state.symbol, st.session_state.data, st.session_state.recommendations)
-
-# Main function
-def main():
-    init_database()
-    
-    # Sidebar for stock selection and controls
     st.sidebar.title("🔍 Controls")
     
     # Dashboard toggle
@@ -2363,9 +2154,9 @@ def main():
     
     # Rate limit controls
     st.sidebar.subheader("⚙️ API Rate Limit Settings")
-    batch_size = st.sidebar.slider("Batch Size", 1, 5, 3)
-    delay_per_batch = st.sidebar.slider("Delay Between Batches (s)", 5, 20, 10)
-    stocks_per_sector = st.sidebar.slider("Stocks per Sector", 1, 5, 3)
+    batch_size = st.sidebar.slider("Batch Size", 1, 5, st.session_state.batch_size)
+    delay_per_batch = st.sidebar.slider("Delay Between Batches (s)", 5, 20, st.session_state.delay_per_batch)
+    stocks_per_sector = st.sidebar.slider("Stocks per Sector", 1, 5, st.session_state.stocks_per_sector)
     
     # Update session state
     st.session_state['batch_size'] = batch_size
@@ -2379,71 +2170,102 @@ def main():
         return
     
     # Default symbol
-    if 'symbol' not in st.session_state:
+    if st.session_state.symbol not in stock_list:
         st.session_state.symbol = stock_list[0]
     
     # Stock selector
-    selected_index = stock_list.index(st.session_state.symbol) if st.session_state.symbol in stock_list else 0
+    selected_index = stock_list.index(st.session_state.symbol)
     symbol = st.sidebar.selectbox("Select Stock", stock_list, index=selected_index)
+    st.session_state.symbol = symbol  # Persist selection
     
     # Recommendation mode
-    recommendation_mode = st.sidebar.radio("Mode", ["Standard", "Adaptive"], index=0 if st.session_state.get('recommendation_mode') == "Standard" else 1)
+    recommendation_mode = st.sidebar.radio(
+        "Recommendation Mode", 
+        ["Standard", "Adaptive"], 
+        index=0 if st.session_state.recommendation_mode == "Standard" else 1
+    )
     st.session_state.recommendation_mode = recommendation_mode
     
-    # Sector selection for picks
+    # Sector selection for picks - FIXED: Unique key
     sector_options = ["All"] + list(SECTORS.keys())
-    selected_sectors = st.sidebar.multiselect("Sectors for Picks", sector_options, default=["Bank"])
+    selected_sectors = st.sidebar.multiselect(
+        "Select Sectors for Picks", 
+        options=sector_options, 
+        default=st.session_state.selected_sectors,
+        key="sidebar_sector_select"  # Unique key
+    )
     st.session_state.selected_sectors = selected_sectors
     
-    if "All" in selected_sectors:
+    # Resolve selected stocks
+    if "All" in st.session_state.selected_sectors:
         selected_stocks = list(set([stock for sector in SECTORS.values() for stock in sector]))
     else:
-        selected_stocks = list(set([stock for sector in selected_sectors for stock in SECTORS.get(sector, [])]))
+        selected_stocks = list(set([stock for sector in st.session_state.selected_sectors for stock in SECTORS.get(sector, [])]))
     
-    # Buttons for analysis
+    # Buttons for analysis (using session state params)
     col1, col2 = st.columns(2)
     with col1:
         if st.button("🚀 Generate Daily Top Picks"):
             if not selected_stocks:
-                st.warning("Select sectors first.")
+                st.warning("⚠️ Select at least one sector first.")
             else:
-                # Call analyze_all_stocks with session state params
-                results_df = analyze_all_stocks(selected_stocks, batch_size=batch_size)
+                progress_bar = st.progress(0)
+                loading_text = st.empty()
+                loading_messages = itertools.cycle(["Fetching data...", "Analyzing trends...", "Computing scores...", "Finalizing picks..."])
+                results_df = analyze_all_stocks(
+                    selected_stocks,
+                    batch_size=st.session_state.batch_size,
+                    progress_callback=lambda x: update_progress(progress_bar, loading_text, x, loading_messages)
+                )
+                insert_top_picks(results_df, pick_type="daily")
+                progress_bar.empty()
+                loading_text.empty()
                 if not results_df.empty:
-                    st.success(f"Generated {len(results_df)} top picks!")
-                    st.dataframe(results_df[['Symbol', 'Score', 'Recommendation', 'Current Price']], use_container_width=True)
+                    st.subheader("🏆 Today's Top 5 Stocks")
+                    st.dataframe(results_df[['Symbol', 'Score', 'Recommendation', 'Current Price']].head(5), use_container_width=True)
                 else:
-                    st.warning("No picks generated (rate limits?).")
+                    st.warning("⚠️ No top picks available due to data issues or rate limits.")
     
     with col2:
-        if st.button("⚡ Generate Intraday Picks"):
+        if st.button("⚡ Generate Intraday Top 5 Picks"):
             if not selected_stocks:
-                st.warning("Select sectors first.")
+                st.warning("⚠️ Select at least one sector first.")
             else:
-                intraday_results = analyze_intraday_stocks(selected_stocks, batch_size=batch_size, delay=delay_per_batch)
+                progress_bar = st.progress(0)
+                loading_text = st.empty()
+                loading_messages = itertools.cycle(["Scanning intraday...", "Detecting signals...", "Calculating levels...", "Finalizing picks..."])
+                intraday_results = analyze_intraday_stocks(
+                    selected_stocks,
+                    batch_size=st.session_state.batch_size,
+                    delay=st.session_state.delay_per_batch,
+                    top_n=5,
+                    progress_callback=lambda x: update_progress(progress_bar, loading_text, x, loading_messages)
+                )
+                insert_top_picks(intraday_results, pick_type="intraday")
+                progress_bar.empty()
+                loading_text.empty()
                 if not intraday_results.empty:
-                    st.success(f"Generated {len(intraday_results)} intraday picks!")
-                    st.dataframe(intraday_results[['Symbol', 'Score', 'Intraday', 'Current Price']], use_container_width=True)
+                    st.subheader("🏆 Top 5 Intraday Stocks")
+                    st.dataframe(intraday_results[['Symbol', 'Score', 'Intraday', 'Current Price']].head(5), use_container_width=True)
                 else:
-                    st.warning("No intraday picks (rate limits?).")
+                    st.warning("⚠️ No intraday picks available due to data issues or rate limits.")
     
-    # Analyze individual stock
+    # Analyze individual stock button
     if st.sidebar.button("Analyze Selected Stock", use_container_width=True):
-        with st.spinner("Analyzing stock..."):
+        with st.spinner("🔍 Analyzing stock..."):
             data = fetch_stock_data_with_auth(symbol)
-            if not data.empty:
+            if not data.empty and len(data) >= 50:  # Validate data
                 analyzed_data = analyze_stock(data)
-                recs = adaptive_recommendation(analyzed_data) if recommendation_mode == "Adaptive" else generate_recommendations(analyzed_data, symbol)
-                st.session_state.symbol = symbol
+                recs = adaptive_recommendation(analyzed_data, symbol) if recommendation_mode == "Adaptive" else generate_recommendations(analyzed_data, symbol)
                 st.session_state.data = analyzed_data
                 st.session_state.recommendations = recs
-                display_dashboard(symbol, analyzed_data, recs)
             else:
-                st.warning("No data for this stock.")
+                st.warning("⚠️ No sufficient data for this stock.")
     
-    # Show previous analysis if available
+    # Show previous analysis if available - FIXED: Call only once, with unique keys handled
     if 'data' in st.session_state and st.session_state.data is not None:
         display_dashboard(st.session_state.symbol, st.session_state.data, st.session_state.recommendations)
 
 if __name__ == "__main__":
     main()
+```
