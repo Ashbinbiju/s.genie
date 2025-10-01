@@ -443,57 +443,57 @@ def fetch_stock_data_with_auth(symbol, period="2y", interval="1d"):
     except Exception as e:
         st.warning(f"⚠️ Error fetching data for {symbol}: {str(e)}")
         return pd.DataFrame()
-
 @lru_cache(maxsize=1000)
 def fetch_stock_data_cached(symbol, period="2y", interval="1d"):
-return fetch_stock_data_with_auth(symbol, period, interval)
+    return fetch_stock_data_with_auth(symbol, period, interval)
+
 
 def calculate_advance_decline_ratio(stock_list):
-advances = 0
-declines = 0
-for symbol in stock_list:
-data = fetch_stock_data_cached(symbol)
-if not data.empty:
-if data['Close'].iloc[-1] > data['Close'].iloc[-2]:
-advances += 1
-else:
-declines += 1
-return advances / declines if declines != 0 else 0
+    advances = 0
+    declines = 0
+    for symbol in stock_list:
+        data = fetch_stock_data_cached(symbol)
+        if not data.empty:
+            if data['Close'].iloc[-1] > data['Close'].iloc[-2]:
+                advances += 1
+            else:
+                declines += 1
+    return advances / declines if declines != 0 else 0
+
 
 def monte_carlo_simulation(data, simulations=1000, days=30, garch_min_obs=80, winsorize_limit=0.01):
-# === Validation ===
-if data is None or not isinstance(data, pd.DataFrame) or 'Close' not in data.columns:
-raise ValueError("Input 'data' must be a DataFrame with a 'Close' column.")
+    # === Validation ===
+    if data is None or not isinstance(data, pd.DataFrame) or 'Close' not in data.columns:
+        raise ValueError("Input 'data' must be a DataFrame with a 'Close' column.")
 
-text
+    close_prices = pd.to_numeric(data['Close'], errors='coerce').dropna()
+    if len(close_prices) < 2:
+        raise ValueError("Not enough valid 'Close' prices for simulation.")
 
-close_prices = pd.to_numeric(data['Close'], errors='coerce').dropna()
-if len(close_prices) < 2:
-    raise ValueError("Not enough valid 'Close' prices for simulation.")
+    returns = close_prices.pct_change().dropna()
+    if returns.empty:
+        raise ValueError("Insufficient return data after computing percentage change.")
 
-returns = close_prices.pct_change().dropna()
-if returns.empty:
-    raise ValueError("Insufficient return data after computing percentage change.")
+    last_price = close_prices.iloc[-1]
 
-last_price = close_prices.iloc[-1]
+    # === Optional: Winsorize to reduce effect of outliers ===
+    if winsorize_limit > 0:
+        returns = pd.Series(winsorize(returns, limits=winsorize_limit))
 
-# === Optional: Winsorize to reduce effect of outliers ===
-if winsorize_limit > 0:
-    returns = pd.Series(winsorize(returns, limits=winsorize_limit))
+    # === Use geometric mean return for better forward-looking estimate ===
+    log_returns = np.log1p(returns)
+    geo_mean = np.expm1(log_returns.mean())  # annualized drift is another option
 
-# === Use geometric mean return for better forward-looking estimate ===
-log_returns = np.log1p(returns)
-geo_mean = np.expm1(log_returns.mean())  # annualized drift is another option
+    std_return = returns.std()
 
-std_return = returns.std()
+    # === Choose method based on data length ===
+    if len(returns) < garch_min_obs:
+        # === Simple vectorized Monte Carlo ===
+        rand_returns = np.random.normal(geo_mean, std_return, (simulations, days))
+        price_paths = last_price * np.cumprod(1 + rand_returns, axis=1)
+        price_paths = np.hstack([np.full((simulations, 1), last_price), price_paths])
+        return price_paths.tolist()
 
-# === Choose method based on data length ===
-if len(returns) < garch_min_obs:
-    # === Simple vectorized Monte Carlo ===
-    rand_returns = np.random.normal(geo_mean, std_return, (simulations, days))
-    price_paths = last_price * np.cumprod(1 + rand_returns, axis=1)
-    price_paths = np.hstack([np.full((simulations, 1), last_price), price_paths])
-    return price_paths.tolist()
 
 else:
     # === GARCH Simulation with volatility forecasting ===
