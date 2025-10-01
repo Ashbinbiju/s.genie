@@ -33,15 +33,20 @@ load_dotenv()
 
 @st.cache_data(ttl=86400)
 def load_symbol_token_map():
-try:
-url = "https://margincalculator.angelbroking.com/OpenAPI_File/files/OpenAPIScripMaster.json"
-response = requests.get(url)
-response.raise_for_status()
-data = response.json()
-return {entry["symbol"]: entry["token"] for entry in data if "symbol" in entry and "token" in entry}
-except Exception as e:
-st.warning(f"⚠️ Failed to load instrument list: {str(e)}")
-return {}
+    try:
+        url = "https://margincalculator.angelbroking.com/OpenAPI_File/files/OpenAPIScripMaster.json"
+        response = requests.get(url)
+        response.raise_for_status()
+        data = response.json()
+        return {
+            entry["symbol"]: entry["token"]
+            for entry in data
+            if "symbol" in entry and "token" in entry
+        }
+    except Exception as e:
+        st.warning(f"⚠️ Failed to load instrument list: {str(e)}")
+        return {}
+
 
 warnings.filterwarnings("ignore", category=FutureWarning)
 warnings.filterwarnings("ignore", category=UserWarning)
