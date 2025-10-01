@@ -1655,10 +1655,9 @@ def analyze_intraday_stocks(stock_list, batch_size=3, delay=10, top_n=5, progres
             continue
 
         if progress_callback:
-        progress = min(1.0, (i + len(batch)) / total)
-            progress_callback(progress)
-
-        time.sleep(delay)
+            progress = min(1.0, (i + len(batch)) / total)
+                progress_callback(progress)
+            time.sleep(delay)
 
     if skipped_count > total * 0.5:
         st.warning("High skip rate. Pausing for 60s...")
