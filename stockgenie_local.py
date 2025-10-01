@@ -28,6 +28,7 @@ from dotenv import load_dotenv
 from scipy.stats.mstats import winsorize
 from streamlit import cache_data
 from itertools import cycle
+import json  # Added for API response parsing
 
 load_dotenv()
 
@@ -726,7 +727,7 @@ def validate_data(
     # 4 — positive prices
     price_cols = [c for c in ('Open', 'High', 'Low', 'Close') if c in data.columns]
     if check_positive_prices and (data[price_cols] <= 0).any().any():
-        logging.warning("Invalid price values (≤ 0 detected).")
+        logging.warning("Invalid price values (≤ 0 detected).")
         return False
 
     # 5 — volume sanity
@@ -2208,9 +2209,240 @@ def display_dashboard(symbol=None, data=None, recommendations=None):
                 with col2:
                     st.write(f"**{tooltip(name, tooltip_text)}**: {value}")
 
+# === NEW FUNCTIONS FOR API INTEGRATION ===
+
+@st.cache_data(ttl=300)  # Cache for 5 minutes
+def fetch_market_overview():
+    """Fetch and return market overview data."""
+    try:
+        headers = {"User-Agent": random.choice(USER_AGENTS)}
+        response = requests.get("https://brkpoint.in/api/indexscan", headers=headers, timeout=10)
+        response.raise_for_status()
+        return response.json()
+    except Exception as e:
+        st.warning(f"⚠️ Failed to fetch market overview: {str(e)}")
+        return []
+
+def display_market_overview():
+    """Display Market Overview tab."""
+    if st.button("🔄 Refresh Market Overview"):
+        st.cache_data.clear()  # Clear cache for refresh
+    data = fetch_market_overview()
+    if not data:
+        st.warning("No market data available.")
+        return
+
+    st.subheader("📈 Market Overview")
+    cols = st.columns(len(data) if len(data) <= 4 else 4)  # Responsive grid
+    for i, index in enumerate(data):
+        col = cols[i % len(cols)]
+        with col:
+            change_class = "🟢" if index["percentage_change"] >= 0 else "🔴"
+            st.metric(
+                label=index["index"],
+                value=f"₹{index['price']:.2f}",
+                delta=f"{change_class} {index['points_change']:.1f} ({index['percentage_change']:.2f}%)"
+            )
+            st.caption(f"Updated: {pd.to_datetime(index['last_updated']).strftime('%H:%M')}")
+
+@st.cache_data(ttl=300)
+def fetch_holidays():
+    """Fetch and return upcoming holidays."""
+    try:
+        headers = {"User-Agent": random.choice(USER_AGENTS)}
+        response = requests.get("https://brkpoint.in/api/holidays/upcoming", headers=headers, timeout=10)
+        response.raise_for_status()
+        result = response.json()
+        return result.get("holidays", []) if result.get("success") else []
+    except Exception as e:
+        st.warning(f"⚠️ Failed to fetch holidays: {str(e)}")
+        return []
+
+def display_holiday_alerts():
+    """Display Holiday Alerts tab."""
+    if st.button("🔄 Refresh Holidays"):
+        st.cache_data.clear()
+    holidays = fetch_holidays()
+    upcoming = [h for h in holidays if h.get("days_until", 0) <= 3]
+
+    if upcoming:
+        st.error("🚨 Upcoming Market Holidays Alert!")
+        for h in upcoming:
+            st.warning(
+                f"**{h['holiday_name']}** on {pd.to_datetime(h['holiday_date']).strftime('%d %b %Y')} "
+                f"({h['days_until']} days away)"
+            )
+    else:
+        st.success("✅ No market holidays in the next 3 days.")
+
+@st.cache_data(ttl=300)
+def fetch_industry_strength():
+    """Fetch and return industry strength analysis."""
+    try:
+        headers = {"User-Agent": random.choice(USER_AGENTS)}
+        response = requests.get("https://brkpoint.in/api/brkview/industry-strength-analysis", headers=headers, timeout=10)
+        response.raise_for_status()
+        return response.json()
+    except Exception as e:
+        st.warning(f"⚠️ Failed to fetch industry strength: {str(e)}")
+        return {"industries": []}
+
+def display_industry_strength():
+    """Display Industry Strength Analysis tab."""
+    if st.button("🔄 Refresh Industry Strength"):
+        st.cache_data.clear()
+    data = fetch_industry_strength()
+    industries = data.get("industries", [])
+    summary = data.get("summary", {})
+
+    if not industries:
+        st.warning("No industry data available.")
+        return
+
+    st.subheader("💪 Industry Strength Analysis")
+    
+    # Summary Cards
+    col1, col2, col3, col4 = st.columns(4)
+    with col1:
+        strongest = summary.get("strongest_day", {})
+        st.metric("Strongest Industry (Day)", strongest.get("industry", "N/A"), f"{strongest.get('momentum_score', 0):.2f}")
+    with col2:
+        weakest = summary.get("weakest_day", {})
+        st.metric("Weakest Industry (Day)", weakest.get("industry", "N/A"), f"{weakest.get('momentum_score', 0):.2f}")
+    with col3:
+        st.metric("Total Industries", data.get("total_industries", 0))
+    with col4:
+        rotation = data.get("rotation_analysis", {})
+        st.metric("Sustained Leaders", len(rotation.get("sustained_leaders", [])))
+
+    # Top 10 Industries Table (sorted by momentum score)
+    df = pd.DataFrame(industries)
+    if not df.empty:
+        df = df.sort_values("momentum_score", ascending=False).head(10)
+        df["Trend Color"] = df["overall_trend"].apply(lambda x: "🟢" if x == "Positive" else "🔴")
+        st.dataframe(
+            df[["industry", "Trend Color", "momentum_score", "day_performance_change", "rotation_pattern"]].rename(
+                columns={
+                    "industry": "Industry",
+                    "Trend Color": "Trend",
+                    "momentum_score": "Momentum Score",
+                    "day_performance_change": "Day Change (%)",
+                    "rotation_pattern": "Signal"
+                }
+            ),
+            use_container_width=True
+        )
+
+@st.cache_data(ttl=300)
+def fetch_industry_breadth():
+    """Fetch and return industry breadth data."""
+    try:
+        headers = {"User-Agent": random.choice(USER_AGENTS)}
+        response = requests.get("https://brkpoint.in/api/brkview/industry-breadth", headers=headers, timeout=10)
+        response.raise_for_status()
+        return response.json()
+    except Exception as e:
+        st.warning(f"⚠️ Failed to fetch industry breadth: {str(e)}")
+        return {"industries": []}
+
+def display_industry_breadth():
+    """Display Industry Breadth tab."""
+    if st.button("🔄 Refresh Industry Breadth"):
+        st.cache_data.clear()
+    data = fetch_industry_breadth()
+    industries = data.get("industries", [])
+
+    if not industries:
+        st.warning("No breadth data available.")
+        return
+
+    st.subheader("📊 Industry Breadth - What's Trending Today?")
+    st.caption(f"Snapshot: {pd.to_datetime(data.get('snapshot_time', '')).strftime('%d %b %Y %H:%M')}")
+
+    df = pd.DataFrame(industries)
+    if not df.empty:
+        df = df.sort_values("advance_decline_ratio", key=lambda x: pd.to_numeric(x, errors='coerce'), ascending=False)
+        for _, row in df.iterrows():
+            advance_pct = (row["total_advancing"] / row["total_stocks"]) * 100
+            col1, col2 = st.columns([3, 1])
+            with col1:
+                st.write(f"**{row['industry']}** (A/D: {row['total_advancing']}/{row['total_declining']})")
+                st.caption(f"Avg Change: {row['avg_change_percent']:.2f}% | Top Gainer: {row['top_gainer_symbol']} (+{row['top_gainer_change']}%)")
+            with col2:
+                st.progress(advance_pct / 100)
+            st.divider()
+
+@st.cache_data(ttl=300)
+def fetch_headlines(page=1, limit=10):
+    """Fetch and return financial headlines."""
+    try:
+        params = {
+            "page": page,
+            "limit": limit,
+            "sentiment": "",
+            "relevance": "",
+            "sortBy": "timestamp",
+            "sortOrder": "-1",
+            "startDate": "",
+            "endDate": "",
+            "source": ""
+        }
+        headers = {"User-Agent": random.choice(USER_AGENTS)}
+        response = requests.get("https://brkpoint.in/api/headlines", params=params, headers=headers, timeout=10)
+        response.raise_for_status()
+        return response.json().get("headlines", [])
+    except Exception as e:
+        st.warning(f"⚠️ Failed to fetch headlines: {str(e)}")
+        return []
+
+def display_financial_headlines():
+    """Display Financial Headlines tab."""
+    page = st.number_input("Page Number", min_value=1, value=1, step=1)
+    if st.button("🔄 Refresh Headlines"):
+        st.cache_data.clear()
+    headlines = fetch_headlines(page=page, limit=10)
+
+    if not headlines:
+        st.warning("No headlines available.")
+        return
+
+    st.subheader("📰 Financial Headlines")
+    for h in headlines:
+        sentiment_color = "🟢" if h["sentiment_label"] == "Positive" else "🔴" if h["sentiment_label"] == "Negative" else "⚪"
+        relevance_badge = " 🇮🇳" if h.get("is_relevant_india") else ""
+        st.markdown(f"""
+        **{sentiment_color} {h['headline']}** {relevance_badge}  
+        *{h['sentiment_label']} ({h['sentiment_score']:.2f})* | {pd.to_datetime(h['timestamp']).strftime('%d %b %Y %H:%M')}  
+        [Read more]({h['url']})
+        """)
+        st.divider()
+
+def display_market_dashboard():
+    """Display the new Market Dashboard with tabs."""
+    tab1, tab2, tab3, tab4, tab5 = st.tabs(["Market Overview", "Holiday Alerts", "Industry Strength", "Industry Breadth", "Headlines"])
+
+    with tab1:
+        display_market_overview()
+
+    with tab2:
+        display_holiday_alerts()
+
+    with tab3:
+        display_industry_strength()
+
+    with tab4:
+        display_industry_breadth()
+
+    with tab5:
+        display_financial_headlines()
+
 def main():
     init_database()
     st.sidebar.title("🔍 Stock Selection")
+
+    # NEW: Market Dashboard Section (added at the top)
+    if st.sidebar.checkbox("📊 Show Market Dashboard", value=True):
+        display_market_dashboard()
 
     stock_list = fetch_nse_stock_list()
     if not stock_list:
@@ -2279,6 +2511,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
-
-how is it
