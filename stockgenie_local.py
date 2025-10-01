@@ -47,50 +47,68 @@ def load_symbol_token_map():
         st.warning(f"⚠️ Failed to load instrument list: {str(e)}")
         return {}
 
+
 warnings.filterwarnings("ignore", category=FutureWarning)
 warnings.filterwarnings("ignore", category=UserWarning)
 
 CLIENT_ID = os.getenv("CLIENT_ID")
 PASSWORD = os.getenv("PASSWORD")
 TOTP_SECRET = os.getenv("TOTP_SECRET")
+
 API_KEYS = {
     "Historical": "c3C0tMGn",
     "Trading": os.getenv("TRADING_API_KEY"),
     "Market": os.getenv("MARKET_API_KEY")
 }
 
+
 USER_AGENTS = [
     # Chrome on Windows 11
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36",
+
     # Chrome on macOS Sonoma
     "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36",
+
     # Chrome on macOS with Apple Silicon
     "Mozilla/5.0 (Macintosh; Intel Mac OS X 14_5) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36",
+
     # Firefox on Windows 11
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:127.0) Gecko/20100101 Firefox/127.0",
+
     # Firefox on macOS
     "Mozilla/5.0 (Macintosh; Intel Mac OS X 14.5; rv:127.0) Gecko/20100101 Firefox/127.0",
+
     # Safari on macOS Sonoma
     "Mozilla/5.0 (Macintosh; Intel Mac OS X 14_5) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.5 Safari/605.1.15",
+
     # Edge on Windows 11
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36 Edg/126.0.0.0",
+
     # Chrome on Android 14 (Samsung Galaxy)
     "Mozilla/5.0 (Linux; Android 14; SM-S928B) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Mobile Safari/537.36",
+
     # Chrome on Android 14 (Pixel)
     "Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Mobile Safari/537.36",
+
     # Safari on iPhone (iOS 17.5)
     "Mozilla/5.0 (iPhone; CPU iPhone OS 17_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.5 Mobile/15E148 Safari/604.1",
+
     # Safari on iPad (iOS 17.5)
     "Mozilla/5.0 (iPad; CPU OS 17_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.5 Mobile/15E148 Safari/604.1",
+
     # Opera on Windows 11
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36 OPR/112.0.0.0",
+
     # Samsung Internet on Android
     "Mozilla/5.0 (Linux; Android 14; SM-S928B) AppleWebKit/537.36 (KHTML, like Gecko) SamsungBrowser/25.0 Chrome/121.0.0.0 Mobile Safari/537.36",
+
     # Brave on Windows 11
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36 Brave/126.0.0.0",
+
     # Chrome on Linux (Ubuntu)
     "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36"
 ]
+
 
 cache = Cache("stock_data_cache")
 
@@ -105,175 +123,195 @@ TOOLTIPS = {
     "Ichimoku": "Ichimoku Cloud - Comprehensive trend indicator",
     "CMF": "Chaikin Money Flow - Buying/selling pressure",
     "Donchian": "Donchian Channels - Breakout detection",
-    "Score": "Measured by RSI, MACD, Ichimoku Cloud, and ATR volatility. Low score = weak signal, high score = strong signal."
+    "Score": "Measured by RSI, MACD, Ichimoku Cloud, and ATR volatility. "
+             "Low score = weak signal, high score = strong signal."
 }
 
 SECTORS = {
-    "Bank": [
-        "HDFCBANK.NS", "ICICIBANK.NS", "SBIN.NS", "KOTAKBANK.NS", "AXISBANK.NS",
-        "INDUSINDBK.NS", "PNB.NS", "BANKBARODA.NS", "CANBK.NS", "UNIONBANK.NS",
-        "IDFCFIRSTB.NS", "FEDERALBNK.NS", "RBLBANK.NS", "BANDHANBNK.NS", "INDIANB.NS",
-        "BANKINDIA.NS", "KARURVYSYA.NS", "CUB.NS", "J&KBANK.NS", "DCBBANK.NS",
-        "AUBANK.NS", "YESBANK.NS", "IDBI.NS", "SOUTHBANK.NS", "CSBBANK.NS",
-        "TMB.NS", "KTKBANK.NS", "EQUITASBNK.NS", "UJJIVANSFB.NS"
-    ],
-    "Software & IT Services": [
-        "TCS.NS", "INFY.NS", "HCLTECH.NS", "WIPRO.NS", "TECHM.NS", "LTIM.NS",
-        "MPHASIS.NS", "FSL.NS", "BSOFT.NS", "NEWGEN.NS", "ZENSARTECH.NS",
-        "RATEGAIN.NS", "TANLA.NS", "COFORGE.NS", "PERSISTENT.NS", "CYIENT.NS",
-        "SONATSOFTW.NS", "KPITTECH.NS", "BIRLASOFT.NS", "TATAELXSI.NS", "MINDTREE.NS",
-        "INTELLECT.NS", "HAPPSTMNDS.NS", "MASTEK.NS", "ECLERX.NS", "NIITLTD.NS",
-        "RSYSTEMS.NS", "XCHANGING.NS", "OFSS.NS", "AURIONPRO.NS", "DATAMATICS.NS",
-        "QUICKHEAL.NS", "CIGNITITEC.NS", "SAGILITY.NS", "ALLSEC.NS"
-    ],
-    "Finance": [
-        "HDFCBANK.NS", "ICICIBANK.NS", "SBIN.NS", "KOTAKBANK.NS", "BAJFINANCE.NS",
-        "AXISBANK.NS", "BAJAJFINSV.NS", "INDUSINDBK.NS", "SHRIRAMFIN.NS", "CHOLAFIN.NS",
-        "SBICARD.NS", "M&MFIN.NS", "MUTHOOTFIN.NS", "LICHSGFIN.NS", "IDFCFIRSTB.NS",
-        "AUBANK.NS", "POONAWALLA.NS", "SUNDARMFIN.NS", "IIFL.NS", "ABCAPITAL.NS",
-        "L&TFH.NS", "CREDITACC.NS", "MANAPPURAM.NS", "DHANI.NS", "JMFINANCIL.NS",
-        "EDELWEISS.NS", "INDIASHLTR.NS", "MOTILALOFS.NS", "CDSL.NS", "BSE.NS",
-        "MCX.NS", "ANGELONE.NS", "KARURVYSYA.NS", "RBLBANK.NS", "PNB.NS",
-        "CANBK.NS", "UNIONBANK.NS", "IOB.NS", "YESBANK.NS", "UCOBANK.NS",
-        "BANKINDIA.NS", "CENTRALBK.NS", "IDBI.NS", "J&KBANK.NS", "DCBBANK.NS",
-        "FEDERALBNK.NS", "SOUTHBANK.NS", "CSBBANK.NS", "TMB.NS", "KTKBANK.NS",
-        "EQUITASBNK.NS", "UJJIVANSFB.NS", "BANDHANBNK.NS", "SURYODAY.NS", "FSL.NS",
-        "PSB.NS", "PFS.NS", "HDFCAMC.NS", "NAM-INDIA.NS", "UTIAMC.NS", "ABSLAMC.NS",
-        "360ONE.NS", "ANANDRATHI.NS", "PNBHOUSING.NS", "HOMEFIRST.NS", "AAVAS.NS",
-        "APTUS.NS", "RECLTD.NS", "PFC.NS", "IREDA.NS", "SMCGLOBAL.NS", "CHOICEIN.NS",
-        "KFINTECH.NS", "CAMSBANK.NS", "MASFIN.NS", "TRIDENT.NS", "SBFC.NS",
-        "UGROCAP.NS", "FUSION.NS", "PAISALO.NS", "CAPITALSFB.NS", "NSIL.NS",
-        "SATIN.NS", "CREDAGRI.NS"
-    ],
-    "Automobile & Ancillaries": [
-        "MARUTI.NS", "TATAMOTORS.NS", "M&M.NS", "BAJAJ-AUTO.NS", "HEROMOTOCO.NS",
-        "EICHERMOT.NS", "TVSMOTOR.NS", "ASHOKLEY.NS", "MRF.NS", "BALKRISIND.NS",
-        "APOLLOTYRE.NS", "CEATLTD.NS", "JKTYRE.NS", "MOTHERSON.NS", "BHARATFORG.NS",
-        "SUNDRMFAST.NS", "EXIDEIND.NS", "AMARAJABAT.NS", "BOSCHLTD.NS", "ENDURANCE.NS",
-        "MINDAIND.NS", "WABCOINDIA.NS", "GABRIEL.NS", "SUPRAJIT.NS", "LUMAXTECH.NS",
-        "FIEMIND.NS", "SUBROS.NS", "JAMNAAUTO.NS", "SHRIRAMCIT.NS", "ESCORTS.NS",
-        "ATULAUTO.NS", "OLECTRA.NS", "GREAVESCOT.NS", "SMLISUZU.NS", "VSTTILLERS.NS",
-        "HINDMOTORS.NS", "MAHSCOOTER.NS", "HINDMOTORS.NS"
-    ],
-    "Healthcare": [
-        "SUNPHARMA.NS", "CIPLA.NS", "DRREDDY.NS", "APOLLOHOSP.NS", "LUPIN.NS",
-        "DIVISLAB.NS", "AUROPHARMA.NS", "ALKEM.NS", "TORNTPHARM.NS", "ZYDUSLIFE.NS",
-        "IPCALAB.NS", "GLENMARK.NS", "BIOCON.NS", "ABBOTINDIA.NS", "SANOFI.NS",
-        "PFIZER.NS", "GLAXO.NS", "NATCOPHARM.NS", "AJANTPHARM.NS", "GRANULES.NS",
-        "LAURUSLABS.NS", "STAR.NS", "JUBLPHARMA.NS", "ASTRAZEN.NS", "WOCKPHARDT.NS", "PPLPHARMA.NS",
-        "FORTIS.NS", "MAXHEALTH.NS", "METROPOLIS.NS", "THYROCARE.NS", "POLYMED.NS",
-        "KIMS.NS", "NH.NS", "LALPATHLAB.NS", "MEDPLUS.NS", "ERIS.NS", "INDOCO.NS",
-        "CAPLIPOINT.NS", "NEULANDLAB.NS", "SHILPAMED.NS", "SUVENPHAR.NS", "AARTIDRUGS.NS",
-        "PGHL.NS", "SYNGENE.NS", "VINATIORGA.NS", "GLAND.NS", "JBCHEPHARM.NS",
-        "HCG.NS", "RAINBOW.NS", "ASTERDM.NS", "KRSNAA.NS", "VIJAYA.NS", "MEDANTA.NS",
-        "NETMEDS.NS", "BLISSGVS.NS", "MOREPENLAB.NS", "RPGLIFE.NS"
-    ],
-    "Metals & Mining": [
-        "TATASTEEL.NS", "JSWSTEEL.NS", "HINDALCO.NS", "VEDL.NS", "SAIL.NS",
-        "NMDC.NS", "HINDZINC.NS", "NALCO.NS", "JINDALSTEL.NS", "MOIL.NS",
-        "APLAPOLLO.NS", "RATNAMANI.NS", "JSL.NS", "WELCORP.NS", "TINPLATE.NS",
-        "SHYAMMETL.NS", "MIDHANI.NS", "GRAVITA.NS", "SARDAEN.NS", "ASHAPURMIN.NS",
-        "JTLIND.NS", "RAMASTEEL.NS", "MAITHANALL.NS", "KIOCL.NS", "IMFA.NS",
-        "GMDCLTD.NS", "VISHNU.NS", "SANDUMA.NS", "VRAJ.NS", "COALINDIA.NS", "NILE.BO"
-    ],
-    "FMCG": [
-        "HINDUNILVR.NS", "ITC.NS", "NESTLEIND.NS", "VARBEV.NS", "BRITANNIA.NS",
-        "GODREJCP.NS", "DABUR.NS", "COLPAL.NS", "MARICO.NS", "PGHH.NS",
-        "EMAMILTD.NS", "GILLETTE.NS", "HATSUN.NS", "JYOTHYLAB.NS", "BAJAJCON.NS",
-        "RADICO.NS", "TATACONSUM.NS", "UNITDSPR.NS", "CCL.NS", "AVANTIFEED.NS",
-        "BIKAJI.NS", "PATANJALI.NS", "VBL.NS", "ZOMATO.NS", "DOMS.NS",
-        "GODREJAGRO.NS", "SAPPHIRE.NS", "VENKEYS.NS", "BECTORFOOD.NS", "KRBL.NS"
-    ],
-    "Power": [
-        "NTPC.NS", "POWERGRID.NS", "ADANIPOWER.NS", "TATAPOWER.NS", "JSWENERGY.NS",
-        "NHPC.NS", "SJVN.NS", "TORNTPOWER.NS", "CESC.NS", "ADANIENSOL.NS",
-        "INDIAGRID.NS", "POWERMECH.NS", "KEC.NS", "INOXWIND.NS", "KALPATPOWR.NS",
-        "SUZLON.NS", "BHEL.NS", "THERMAX.NS", "GEPIL.NS", "VOLTAMP.NS",
-        "TRIL.NS", "TDPOWERSYS.NS", "JYOTISTRUC.NS", "IWEL.NS"
-    ],
-    "Capital Goods": [
-        "LT.NS", "SHAKTIPUMP.NS", "SIEMENS.NS", "ABB.NS", "BEL.NS", "BHEL.NS", "HAL.NS",
-        "CUMMINSIND.NS", "THERMAX.NS", "AIAENG.NS", "SKFINDIA.NS", "GRINDWELL.NS",
-        "TIMKEN.NS", "KSB.NS", "ELGIEQUIP.NS", "LAKSHMIMACH.NS", "KIRLOSENG.NS",
-        "GREAVESCOT.NS", "TRITURBINE.NS", "VOLTAS.NS", "BLUESTARCO.NS", "HAVELLS.NS",
-        "DIXON.NS", "KAYNES.NS", "SYRMA.NS", "AMBER.NS", "SUZLON.NS", "CGPOWER.NS",
-        "APARINDS.NS", "HBLPOWER.NS", "KEI.NS", "POLYCAB.NS", "RRKABEL.NS",
-        "SCHNEIDER.NS", "TDPOWERSYS.NS", "KIRLOSBROS.NS", "JYOTICNC.NS", "DATAPATTNS.NS",
-        "INOXWIND.NS", "KALPATPOWR.NS", "MAZDOCK.NS", "COCHINSHIP.NS", "GRSE.NS",
-        "POWERMECH.NS", "ISGEC.NS", "HPL.NS", "VTL.NS", "DYNAMATECH.NS", "JASH.NS",
-        "GMMPFAUDLR.NS", "ESABINDIA.NS", "CENTURYEXT.NS", "SALASAR.NS", "TITAGARH.NS",
-        "VGUARD.NS", "WABAG.NS", "AZAD.NS"
-    ],
-    "Oil & Gas": [
-        "RELIANCE.NS", "ONGC.NS", "IOC.NS", "BPCL.NS", "HPCL.NS", "GAIL.NS",
-        "PETRONET.NS", "OIL.NS", "IGL.NS", "MGL.NS", "GUJGASLTD.NS", "GSPL.NS",
-        "AEGISCHEM.NS", "CHENNPETRO.NS", "MRPL.NS", "GULFOILLUB.NS", "CASTROLIND.NS",
-        "SOTL.NS", "PANAMAPET.NS", "GOCLCORP.NS"
-    ],
-    "Chemicals": [
-        "PIDILITIND.NS", "SRF.NS", "DEEPAKNTR.NS", "ATUL.NS", "AARTIIND.NS",
-        "NAVINFLUOR.NS", "VINATIORGA.NS", "FINEORG.NS", "ALKYLAMINE.NS", "BALAMINES.NS",
-        "GUJFLUORO.NS", "CLEAN.NS", "JUBLINGREA.NS", "GALAXYSURF.NS", "PCBL.NS",
-        "NOCIL.NS", "BASF.NS", "SUDARSCHEM.NS", "NEOGEN.NS", "PRIVISCL.NS",
-        "ROSSARI.NS", "LXCHEM.NS", "ANURAS.NS", "JUBLPHARMA.NS", "CHEMCON.NS",
-        "DMCC.NS", "TATACHEM.NS", "COROMANDEL.NS", "UPL.NS", "BAYERCROP.NS",
-        "SUMICHEM.NS", "PIIND.NS", "DHARAMSI.NS", "EIDPARRY.NS", "CHEMPLASTS.NS",
-        "VISHNU.NS", "IGPL.NS", "TIRUMALCHM.NS"
-    ],
-    "Telecom": [
-        "BHARTIARTL.NS", "VODAFONEIDEA.NS", "INDUSTOWER.NS", "TATACOMM.NS",
-        "HFCL.NS", "TEJASNET.NS", "STLTECH.NS", "ITI.NS", "ASTEC.NS"
-    ],
-    "Infrastructure": [
-        "LT.NS", "GMRINFRA.NS", "IRB.NS", "NBCC.NS", "RVNL.NS", "KEC.NS",
-        "PNCINFRA.NS", "KNRCON.NS", "GRINFRA.NS", "NCC.NS", "HGINFRA.NS",
-        "ASHOKA.NS", "SADBHAV.NS", "JWL.NS", "PATELENG.NS", "KALPATPOWR.NS",
-        "IRCON.NS", "ENGINERSIN.NS", "AHLUWALIA.NS", "PSPPROJECTS.NS", "CAPACITE.NS",
-        "WELSPUNIND.NS", "TITAGARH.NS", "HCC.NS", "MANINFRA.NS", "RIIL.NS",
-        "DBREALTY.NS", "JWL.NS"
-    ],
-    "Insurance": [
-        "SBILIFE.NS", "HDFCLIFE.NS", "ICICIGI.NS", "ICICIPRULI.NS", "LICI.NS",
-        "GICRE.NS", "NIACL.NS", "STARHEALTH.NS", "BAJAJFINSV.NS", "MAXFIN.NS"
-    ],
-    "Diversified": [
-        "ITC.NS", "RELIANCE.NS", "ADANIENT.NS", "GRASIM.NS", "HINDUNILVR.NS",
-        "DCMSHRIRAM.NS", "3MINDIA.NS", "CENTURYPLY.NS", "KFINTECH.NS", "BALMERLAWRI.NS",
-        "GODREJIND.NS", "VBL.NS", "BIRLACORPN.NS"
-    ],
-    "Construction Materials": [
-        "ULTRACEMCO.NS", "SHREECEM.NS", "AMBUJACEM.NS", "ACC.NS", "JKCEMENT.NS",
-        "DALBHARAT.NS", "RAMCOCEM.NS", "NUVOCO.NS", "JKLAKSHMI.NS", "BIRLACORPN.NS",
-        "HEIDELBERG.NS", "INDIACEM.NS", "PRISMJOHNS.NS", "STARCEMENT.NS", "SAGCEM.NS",
-        "DECCANCE.NS", "KCP.NS", "ORIENTCEM.NS", "HIL.NS", "EVERESTIND.NS",
-        "VISAKAIND.NS", "BIGBLOC.NS"
-    ],
-    "Real Estate": [
-        "DLF.NS", "GODREJPROP.NS", "OBEROIRLTY.NS", "PHOENIXLTD.NS", "PRESTIGE.NS",
-        "BRIGADE.NS", "SOBHA.NS", "SUNTECK.NS", "MAHLIFE.NS", "ANANTRAJ.NS",
-        "KOLTEPATIL.NS", "PURVA.NS", "ARVSMART.NS", "RUSTOMJEE.NS", "DBREALTY.NS",
-        "IBREALEST.NS", "OMAXE.NS", "ASHIANA.NS", "ELDEHSG.NS", "TARC.NS"
-    ],
-    "Aviation": [
-        "INDIGO.NS", "SPICEJET.NS", "AAI.NS", "GMRINFRA.NS"
-    ],
-    "Retailing": [
-        "DMART.NS", "TRENT.NS", "ABFRL.NS", "VMART.NS", "SHOPERSTOP.NS",
-        "BATAINDIA.NS", "METROBRAND.NS", "ARVINDFASN.NS", "CANTABIL.NS", "ZOMATO.NS",
-        "NYKAA.NS", "MANYAVAR.NS", "ELECTRONICSMRKT.NS", "LANDMARK.NS", "V2RETAIL.NS",
-        "THANGAMAYL.NS", "KALYANKJIL.NS", "TITAN.NS"
-    ],
-    "Miscellaneous": [
-        "PIDILITIND.NS", "BSE.NS", "CDSL.NS", "MCX.NS", "NAUKRI.NS",
-        "JUSTDIAL.NS", "TEAMLEASE.NS", "QUESS.NS", "SIS.NS", "DELHIVERY.NS",
-        "PRUDENT.NS", "MEDIASSIST.NS", "AWFIS.NS", "JUBLFOOD.NS", "DEVYANI.NS",
-        "WESTLIFE.NS", "SAPPHIRE.NS", "BARBEQUE.NS", "EASEMYTRIP.NS", "THOMASCOOK.NS",
-        "MSTC.NS", "IRCTC.NS", "POLICYBZR.NS", "PAYTM.NS", "INFIBEAM.NS",
-        "CARTRADE.NS", "HONASA.NS", "ONE97COMM.NS", "SIGNATURE.NS", "RRKABEL.NS",
-        "HMAAGRO.NS", "RKFORGE.NS", "CAMPUS.NS", "SENCO.NS", "CONCORDBIO.NS"
-    ]
-}
 
+"Bank": [
+"HDFCBANK.NS", "ICICIBANK.NS", "SBIN.NS", "KOTAKBANK.NS", "AXISBANK.NS",
+"INDUSINDBK.NS", "PNB.NS", "BANKBARODA.NS", "CANBK.NS", "UNIONBANK.NS",
+"IDFCFIRSTB.NS", "FEDERALBNK.NS", "RBLBANK.NS", "BANDHANBNK.NS", "INDIANB.NS",
+"BANKINDIA.NS", "KARURVYSYA.NS", "CUB.NS", "J&KBANK.NS", "DCBBANK.NS",
+"AUBANK.NS", "YESBANK.NS", "IDBI.NS", "SOUTHBANK.NS", "CSBBANK.NS",
+"TMB.NS", "KTKBANK.NS", "EQUITASBNK.NS", "UJJIVANSFB.NS"
+],
+
+"Software & IT Services": [
+"TCS.NS", "INFY.NS", "HCLTECH.NS", "WIPRO.NS", "TECHM.NS", "LTIM.NS",
+"MPHASIS.NS", "FSL.NS", "BSOFT.NS", "NEWGEN.NS", "ZENSARTECH.NS",
+"RATEGAIN.NS", "TANLA.NS", "COFORGE.NS", "PERSISTENT.NS", "CYIENT.NS",
+"SONATSOFTW.NS", "KPITTECH.NS", "BIRLASOFT.NS", "TATAELXSI.NS", "MINDTREE.NS",
+"INTELLECT.NS", "HAPPSTMNDS.NS", "MASTEK.NS", "ECLERX.NS", "NIITLTD.NS",
+"RSYSTEMS.NS", "XCHANGING.NS", "OFSS.NS", "AURIONPRO.NS", "DATAMATICS.NS",
+"QUICKHEAL.NS", "CIGNITITEC.NS","SAGILITY.NS" "ALLSEC.NS"
+],
+
+"Finance": [
+"HDFCBANK.NS", "ICICIBANK.NS", "SBIN.NS", "KOTAKBANK.NS", "BAJFINANCE.NS",
+"AXISBANK.NS", "BAJAJFINSV.NS", "INDUSINDBK.NS", "SHRIRAMFIN.NS", "CHOLAFIN.NS",
+"SBICARD.NS", "M&MFIN.NS", "MUTHOOTFIN.NS", "LICHSGFIN.NS", "IDFCFIRSTB.NS",
+"AUBANK.NS", "POONAWALLA.NS", "SUNDARMFIN.NS", "IIFL.NS", "ABCAPITAL.NS",
+"L&TFH.NS", "CREDITACC.NS", "MANAPPURAM.NS", "DHANI.NS", "JMFINANCIL.NS",
+"EDELWEISS.NS", "INDIASHLTR.NS", "MOTILALOFS.NS", "CDSL.NS", "BSE.NS",
+"MCX.NS", "ANGELONE.NS", "KARURVYSYA.NS", "RBLBANK.NS", "PNB.NS",
+"CANBK.NS", "UNIONBANK.NS", "IOB.NS", "YESBANK.NS", "UCOBANK.NS",
+"BANKINDIA.NS", "CENTRALBK.NS", "IDBI.NS", "J&KBANK.NS", "DCBBANK.NS",
+"FEDERALBNK.NS", "SOUTHBANK.NS", "CSBBANK.NS", "TMB.NS", "KTKBANK.NS",
+"EQUITASBNK.NS", "UJJIVANSFB.NS", "BANDHANBNK.NS", "SURYODAY.NS", "FSL.NS",
+"PSB.NS", "PFS.NS", "HDFCAMC.NS", "NAM-INDIA.NS", "UTIAMC.NS", "ABSLAMC.NS",
+"360ONE.NS", "ANANDRATHI.NS", "PNBHOUSING.NS", "HOMEFIRST.NS", "AAVAS.NS",
+"APTUS.NS", "RECLTD.NS", "PFC.NS", "IREDA.NS", "SMCGLOBAL.NS", "CHOICEIN.NS",
+"KFINTECH.NS", "CAMSBANK.NS", "MASFIN.NS", "TRIDENT.NS", "SBFC.NS",
+"UGROCAP.NS", "FUSION.NS", "PAISALO.NS", "CAPITALSFB.NS", "NSIL.NS",
+"SATIN.NS", "CREDAGRI.NS"
+],
+
+"Automobile & Ancillaries": [
+"MARUTI.NS", "TATAMOTORS.NS", "M&M.NS", "BAJAJ-AUTO.NS", "HEROMOTOCO.NS",
+"EICHERMOT.NS", "TVSMOTOR.NS", "ASHOKLEY.NS", "MRF.NS", "BALKRISIND.NS",
+"APOLLOTYRE.NS", "CEATLTD.NS", "JKTYRE.NS", "MOTHERSON.NS", "BHARATFORG.NS",
+"SUNDRMFAST.NS", "EXIDEIND.NS", "AMARAJABAT.NS", "BOSCHLTD.NS", "ENDURANCE.NS",
+"MINDAIND.NS", "WABCOINDIA.NS", "GABRIEL.NS", "SUPRAJIT.NS", "LUMAXTECH.NS",
+"FIEMIND.NS", "SUBROS.NS", "JAMNAAUTO.NS", "SHRIRAMCIT.NS", "ESCORTS.NS",
+"ATULAUTO.NS", "OLECTRA.NS", "GREAVESCOT.NS", "SMLISUZU.NS", "VSTTILLERS.NS",
+"HINDMOTORS.NS", "MAHSCOOTER.NS","HINDMOTORS.NS"
+],
+
+"Healthcare": [
+"SUNPHARMA.NS", "CIPLA.NS", "DRREDDY.NS", "APOLLOHOSP.NS", "LUPIN.NS",
+"DIVISLAB.NS", "AUROPHARMA.NS", "ALKEM.NS", "TORNTPHARM.NS", "ZYDUSLIFE.NS",
+"IPCALAB.NS", "GLENMARK.NS", "BIOCON.NS", "ABBOTINDIA.NS", "SANOFI.NS",
+"PFIZER.NS", "GLAXO.NS", "NATCOPHARM.NS", "AJANTPHARM.NS", "GRANULES.NS",
+"LAURUSLABS.NS", "STAR.NS", "JUBLPHARMA.NS", "ASTRAZEN.NS", "WOCKPHARDT.NS","PPLPHARMA.NS"
+"FORTIS.NS", "MAXHEALTH.NS", "METROPOLIS.NS", "THYROCARE.NS", "POLYMED.NS",
+"KIMS.NS", "NH.NS", "LALPATHLAB.NS", "MEDPLUS.NS", "ERIS.NS", "INDOCO.NS",
+"CAPLIPOINT.NS", "NEULANDLAB.NS", "SHILPAMED.NS", "SUVENPHAR.NS", "AARTIDRUGS.NS",
+"PGHL.NS", "SYNGENE.NS", "VINATIORGA.NS", "GLAND.NS", "JBCHEPHARM.NS",
+"HCG.NS", "RAINBOW.NS", "ASTERDM.NS", "KRSNAA.NS", "VIJAYA.NS", "MEDANTA.NS",
+"NETMEDS.NS", "BLISSGVS.NS", "MOREPENLAB.NS", "RPGLIFE.NS"
+],
+
+"Metals & Mining": [
+"TATASTEEL.NS", "JSWSTEEL.NS", "HINDALCO.NS", "VEDL.NS", "SAIL.NS",
+"NMDC.NS", "HINDZINC.NS", "NALCO.NS", "JINDALSTEL.NS", "MOIL.NS",
+"APLAPOLLO.NS", "RATNAMANI.NS", "JSL.NS", "WELCORP.NS", "TINPLATE.NS",
+"SHYAMMETL.NS", "MIDHANI.NS", "GRAVITA.NS", "SARDAEN.NS", "ASHAPURMIN.NS",
+"JTLIND.NS", "RAMASTEEL.NS", "MAITHANALL.NS", "KIOCL.NS", "IMFA.NS",
+"GMDCLTD.NS", "VISHNU.NS", "SANDUMA.NS","VRAJ.NS","COALINDIA.NS ","NILE.BO"
+],
+
+"FMCG": [
+"HINDUNILVR.NS", "ITC.NS", "NESTLEIND.NS", "VARBEV.NS", "BRITANNIA.NS",
+"GODREJCP.NS", "DABUR.NS", "COLPAL.NS", "MARICO.NS", "PGHH.NS",
+"EMAMILTD.NS", "GILLETTE.NS", "HATSUN.NS", "JYOTHYLAB.NS", "BAJAJCON.NS",
+"RADICO.NS", "TATACONSUM.NS", "UNITDSPR.NS", "CCL.NS", "AVANTIFEED.NS",
+"BIKAJI.NS", "PATANJALI.NS", "VBL.NS", "ZOMATO.NS", "DOMS.NS",
+"GODREJAGRO.NS", "SAPPHIRE.NS", "VENKEYS.NS", "BECTORFOOD.NS", "KRBL.NS"
+],
+
+"Power": [
+"NTPC.NS", "POWERGRID.NS", "ADANIPOWER.NS", "TATAPOWER.NS", "JSWENERGY.NS",
+"NHPC.NS", "SJVN.NS", "TORNTPOWER.NS", "CESC.NS", "ADANIENSOL.NS",
+"INDIAGRID.NS", "POWERMECH.NS", "KEC.NS", "INOXWIND.NS", "KALPATPOWR.NS",
+"SUZLON.NS", "BHEL.NS", "THERMAX.NS", "GEPIL.NS", "VOLTAMP.NS",
+"TRIL.NS", "TDPOWERSYS.NS", "JYOTISTRUC.NS", "IWEL.NS"
+],
+
+"Capital Goods": [
+"LT.NS", "SHAKTIPUMP.NS","SIEMENS.NS", "ABB.NS", "BEL.NS", "BHEL.NS", "HAL.NS",
+"CUMMINSIND.NS", "THERMAX.NS", "AIAENG.NS", "SKFINDIA.NS", "GRINDWELL.NS",
+"TIMKEN.NS", "KSB.NS", "ELGIEQUIP.NS", "LAKSHMIMACH.NS", "KIRLOSENG.NS",
+"GREAVESCOT.NS", "TRITURBINE.NS", "VOLTAS.NS", "BLUESTARCO.NS", "HAVELLS.NS",
+"DIXON.NS", "KAYNES.NS", "SYRMA.NS", "AMBER.NS", "SUZLON.NS", "CGPOWER.NS",
+"APARINDS.NS", "HBLPOWER.NS", "KEI.NS", "POLYCAB.NS", "RRKABEL.NS",
+"SCHNEIDER.NS", "TDPOWERSYS.NS", "KIRLOSBROS.NS", "JYOTICNC.NS", "DATAPATTNS.NS",
+"INOXWIND.NS", "KALPATPOWR.NS", "MAZDOCK.NS", "COCHINSHIP.NS", "GRSE.NS",
+"POWERMECH.NS", "ISGEC.NS", "HPL.NS", "VTL.NS", "DYNAMATECH.NS", "JASH.NS",
+"GMMPFAUDLR.NS", "ESABINDIA.NS", "CENTURYEXT.NS", "SALASAR.NS", "TITAGARH.NS",
+"VGUARD.NS", "WABAG.NS","AZAD"
+],
+
+"Oil & Gas": [
+"RELIANCE.NS", "ONGC.NS", "IOC.NS", "BPCL.NS", "HPCL.NS", "GAIL.NS",
+"PETRONET.NS", "OIL.NS", "IGL.NS", "MGL.NS", "GUJGASLTD.NS", "GSPL.NS",
+"AEGISCHEM.NS", "CHENNPETRO.NS", "MRPL.NS", "GULFOILLUB.NS", "CASTROLIND.NS",
+"SOTL.NS", "PANAMAPET.NS", "GOCLCORP.NS"
+],
+
+"Chemicals": [
+"PIDILITIND.NS", "SRF.NS", "DEEPAKNTR.NS", "ATUL.NS", "AARTIIND.NS",
+"NAVINFLUOR.NS", "VINATIORGA.NS", "FINEORG.NS", "ALKYLAMINE.NS", "BALAMINES.NS",
+"GUJFLUORO.NS", "CLEAN.NS", "JUBLINGREA.NS", "GALAXYSURF.NS", "PCBL.NS",
+"NOCIL.NS", "BASF.NS", "SUDARSCHEM.NS", "NEOGEN.NS", "PRIVISCL.NS",
+"ROSSARI.NS", "LXCHEM.NS", "ANURAS.NS", "JUBLPHARMA.NS", "CHEMCON.NS",
+"DMCC.NS", "TATACHEM.NS", "COROMANDEL.NS", "UPL.NS", "BAYERCROP.NS",
+"SUMICHEM.NS", "PIIND.NS", "DHARAMSI.NS", "EIDPARRY.NS", "CHEMPLASTS.NS",
+"VISHNU.NS", "IGPL.NS", "TIRUMALCHM.NS"
+],
+
+"Telecom": [
+"BHARTIARTL.NS", "VODAFONEIDEA.NS", "INDUSTOWER.NS", "TATACOMM.NS",
+"HFCL.NS", "TEJASNET.NS", "STLTECH.NS", "ITI.NS", "ASTEC.NS"
+],
+
+"Infrastructure": [
+"LT.NS", "GMRINFRA.NS", "IRB.NS", "NBCC.NS", "RVNL.NS", "KEC.NS",
+"PNCINFRA.NS", "KNRCON.NS", "GRINFRA.NS", "NCC.NS", "HGINFRA.NS",
+"ASHOKA.NS", "SADBHAV.NS", "JWL.NS", "PATELENG.NS", "KALPATPOWR.NS",
+"IRCON.NS", "ENGINERSIN.NS", "AHLUWALIA.NS", "PSPPROJECTS.NS", "CAPACITE.NS",
+"WELSPUNIND.NS", "TITAGARH.NS", "HCC.NS", "MANINFRA.NS", "RIIL.NS",
+"DBREALTY.NS", "JWL.NS"
+],
+
+"Insurance": [
+"SBILIFE.NS", "HDFCLIFE.NS", "ICICIGI.NS", "ICICIPRULI.NS", "LICI.NS",
+"GICRE.NS", "NIACL.NS", "STARHEALTH.NS", "BAJAJFINSV.NS", "MAXFIN.NS"
+],
+
+"Diversified": [
+"ITC.NS", "RELIANCE.NS", "ADANIENT.NS", "GRASIM.NS", "HINDUNILVR.NS",
+"DCMSHRIRAM.NS", "3MINDIA.NS", "CENTURYPLY.NS", "KFINTECH.NS", "BALMERLAWRI.NS",
+"GODREJIND.NS", "VBL.NS", "BIRLACORPN.NS"
+],
+
+"Construction Materials": [
+"ULTRACEMCO.NS", "SHREECEM.NS", "AMBUJACEM.NS", "ACC.NS", "JKCEMENT.NS",
+"DALBHARAT.NS", "RAMCOCEM.NS", "NUVOCO.NS", "JKLAKSHMI.NS", "BIRLACORPN.NS",
+"HEIDELBERG.NS", "INDIACEM.NS", "PRISMJOHNS.NS", "STARCEMENT.NS", "SAGCEM.NS",
+"DECCANCE.NS", "KCP.NS", "ORIENTCEM.NS", "HIL.NS", "EVERESTIND.NS",
+"VISAKAIND.NS", "BIGBLOC.NS"
+],
+
+"Real Estate": [
+"DLF.NS", "GODREJPROP.NS", "OBEROIRLTY.NS", "PHOENIXLTD.NS", "PRESTIGE.NS",
+"BRIGADE.NS", "SOBHA.NS", "SUNTECK.NS", "MAHLIFE.NS", "ANANTRAJ.NS",
+"KOLTEPATIL.NS", "PURVA.NS", "ARVSMART.NS", "RUSTOMJEE.NS", "DBREALTY.NS",
+"IBREALEST.NS", "OMAXE.NS", "ASHIANA.NS", "ELDEHSG.NS", "TARC.NS"
+],
+
+"Aviation": [
+"INDIGO.NS", "SPICEJET.NS", "AAI.NS", "GMRINFRA.NS"
+],
+
+"Retailing": [
+"DMART.NS", "TRENT.NS", "ABFRL.NS", "VMART.NS", "SHOPERSTOP.NS",
+"BATAINDIA.NS", "METROBRAND.NS", "ARVINDFASN.NS", "CANTABIL.NS", "ZOMATO.NS",
+"NYKAA.NS", "MANYAVAR.NS", "ELECTRONICSMRKT.NS", "LANDMARK.NS", "V2RETAIL.NS",
+"THANGAMAYL.NS", "KALYANKJIL.NS", "TITAN.NS"
+],
+
+"Miscellaneous": [
+"PIDILITIND.NS", "BSE.NS", "CDSL.NS", "MCX.NS", "NAUKRI.NS",
+"JUSTDIAL.NS", "TEAMLEASE.NS", "QUESS.NS", "SIS.NS", "DELHIVERY.NS",
+"PRUDENT.NS", "MEDIASSIST.NS", "AWFIS.NS", "JUBLFOOD.NS", "DEVYANI.NS",
+"WESTLIFE.NS", "SAPPHIRE.NS", "BARBEQUE.NS", "EASEMYTRIP.NS", "THOMASCOOK.NS",
+"MSTC.NS", "IRCTC.NS", "POLICYBZR.NS", "PAYTM.NS", "INFIBEAM.NS",
+"CARTRADE.NS", "HONASA.NS", "ONE97COMM.NS", "SIGNATURE.NS", "RRKABEL.NS",
+"HMAAGRO.NS", "RKFORGE.NS", "CAMPUS.NS", "SENCO.NS", "CONCORDBIO.NS"
+]
+}
 def init_smartapi_client():
     try:
         smart_api = SmartConnect(api_key=API_KEYS["Historical"])
@@ -288,8 +326,10 @@ def init_smartapi_client():
         st.error(f"⚠️ Error initializing SmartAPI: {str(e)}")
         return None
 
+
 def tooltip(label, explanation):
     return f"{label} 📌 ({explanation})"
+
 
 def retry(max_retries=5, delay=5, backoff_factor=2, jitter=1):
     def decorator(func):
@@ -320,6 +360,7 @@ def retry(max_retries=5, delay=5, backoff_factor=2, jitter=1):
         return wrapper
     return decorator
 
+
 @retry(max_retries=5, delay=5)
 def fetch_nse_stock_list():
     url = "https://archives.nseindia.com/content/equities/EQUITY_L.csv"
@@ -334,13 +375,14 @@ def fetch_nse_stock_list():
     except Exception:
         return list(set([stock for sector in SECTORS.values() for stock in sector]))
 
+
 @retry(max_retries=5, delay=5)
 def fetch_stock_data_with_auth(symbol, period="2y", interval="1d"):
-    cache_key = f"{symbol}_{period}_{interval}"
+    cache_key = f"{symbol}{period}{interval}"
     cached_data = cache.get(cache_key)
     if cached_data is not None:
         return pd.read_pickle(io.BytesIO(cached_data))
-    
+
     try:
         if "-EQ" not in symbol:
             symbol = f"{symbol.split('.')[0]}-EQ"
@@ -404,93 +446,96 @@ def fetch_stock_data_with_auth(symbol, period="2y", interval="1d"):
 
 @lru_cache(maxsize=1000)
 def fetch_stock_data_cached(symbol, period="2y", interval="1d"):
-    return fetch_stock_data_with_auth(symbol, period, interval)
+return fetch_stock_data_with_auth(symbol, period, interval)
 
 def calculate_advance_decline_ratio(stock_list):
-    advances = 0
-    declines = 0
-    for symbol in stock_list:
-        data = fetch_stock_data_cached(symbol)
-        if not data.empty:
-            if data['Close'].iloc[-1] > data['Close'].iloc[-2]:
-                advances += 1
-            else:
-                declines += 1
-    return advances / declines if declines != 0 else 0
+advances = 0
+declines = 0
+for symbol in stock_list:
+data = fetch_stock_data_cached(symbol)
+if not data.empty:
+if data['Close'].iloc[-1] > data['Close'].iloc[-2]:
+advances += 1
+else:
+declines += 1
+return advances / declines if declines != 0 else 0
 
 def monte_carlo_simulation(data, simulations=1000, days=30, garch_min_obs=80, winsorize_limit=0.01):
-    # === Validation ===
-    if data is None or not isinstance(data, pd.DataFrame) or 'Close' not in data.columns:
-        raise ValueError("Input 'data' must be a DataFrame with a 'Close' column.")
-    
-    close_prices = pd.to_numeric(data['Close'], errors='coerce').dropna()
-    if len(close_prices) < 2:
-        raise ValueError("Not enough valid 'Close' prices for simulation.")
+# === Validation ===
+if data is None or not isinstance(data, pd.DataFrame) or 'Close' not in data.columns:
+raise ValueError("Input 'data' must be a DataFrame with a 'Close' column.")
 
-    returns = close_prices.pct_change().dropna()
-    if returns.empty:
-        raise ValueError("Insufficient return data after computing percentage change.")
+text
 
-    last_price = close_prices.iloc[-1]
+close_prices = pd.to_numeric(data['Close'], errors='coerce').dropna()
+if len(close_prices) < 2:
+    raise ValueError("Not enough valid 'Close' prices for simulation.")
 
-    # === Optional: Winsorize to reduce effect of outliers ===
-    if winsorize_limit > 0:
-        returns = pd.Series(winsorize(returns, limits=winsorize_limit))
+returns = close_prices.pct_change().dropna()
+if returns.empty:
+    raise ValueError("Insufficient return data after computing percentage change.")
 
-    # === Use geometric mean return for better forward-looking estimate ===
-    log_returns = np.log1p(returns)
-    geo_mean = np.expm1(log_returns.mean())  # annualized drift is another option
+last_price = close_prices.iloc[-1]
 
-    std_return = returns.std()
+# === Optional: Winsorize to reduce effect of outliers ===
+if winsorize_limit > 0:
+    returns = pd.Series(winsorize(returns, limits=winsorize_limit))
 
-    # === Choose method based on data length ===
-    if len(returns) < garch_min_obs:
-        # === Simple vectorized Monte Carlo ===
+# === Use geometric mean return for better forward-looking estimate ===
+log_returns = np.log1p(returns)
+geo_mean = np.expm1(log_returns.mean())  # annualized drift is another option
+
+std_return = returns.std()
+
+# === Choose method based on data length ===
+if len(returns) < garch_min_obs:
+    # === Simple vectorized Monte Carlo ===
+    rand_returns = np.random.normal(geo_mean, std_return, (simulations, days))
+    price_paths = last_price * np.cumprod(1 + rand_returns, axis=1)
+    price_paths = np.hstack([np.full((simulations, 1), last_price), price_paths])
+    return price_paths.tolist()
+
+else:
+    # === GARCH Simulation with volatility forecasting ===
+    try:
+        model = arch_model(returns, vol='GARCH', p=1, q=1, dist='Normal', rescale=False)
+        garch_fit = model.fit(disp='off')
+        forecasts = garch_fit.forecast(horizon=days)
+        volatility = np.sqrt(forecasts.variance.iloc[-1].values)
+
+        sim_results = []
+        for _ in range(simulations):
+            prices = [last_price]
+            for i in range(days):
+                shock = np.random.normal(geo_mean, volatility[i])
+                prices.append(prices[-1] * (1 + shock))
+            sim_results.append(prices)
+        return sim_results
+
+    except Exception as e:
+        print(f"GARCH model fitting failed: {e}. Falling back to simple simulation.")
         rand_returns = np.random.normal(geo_mean, std_return, (simulations, days))
         price_paths = last_price * np.cumprod(1 + rand_returns, axis=1)
         price_paths = np.hstack([np.full((simulations, 1), last_price), price_paths])
         return price_paths.tolist()
-
-    else:
-        # === GARCH Simulation with volatility forecasting ===
-        try:
-            model = arch_model(returns, vol='GARCH', p=1, q=1, dist='Normal', rescale=False)
-            garch_fit = model.fit(disp='off')
-            forecasts = garch_fit.forecast(horizon=days)
-            volatility = np.sqrt(forecasts.variance.iloc[-1].values)
-
-            sim_results = []
-            for _ in range(simulations):
-                prices = [last_price]
-                for i in range(days):
-                    shock = np.random.normal(geo_mean, volatility[i])
-                    prices.append(prices[-1] * (1 + shock))
-                sim_results.append(prices)
-            return sim_results
-
-        except Exception as e:
-            print(f"GARCH model fitting failed: {e}. Falling back to simple simulation.")
-            rand_returns = np.random.normal(geo_mean, std_return, (simulations, days))
-            price_paths = last_price * np.cumprod(1 + rand_returns, axis=1)
-            price_paths = np.hstack([np.full((simulations, 1), last_price), price_paths])
-            return price_paths.tolist()
-
 def extract_entities(text):
     nlp = spacy.load("en_core_web_sm")
     doc = nlp(text)
     entities = [ent.text for ent in doc.ents if ent.label_ == "ORG"]
     return entities
 
+
 def get_trending_stocks():
     pytrends = TrendReq(hl='en-US', tz=360)
     trending = pytrends.trending_searches(pn='india')
     return trending
 
+
 def calculate_confidence_score(data):
     # Safety check for empty or None data
     if data is None or len(data) == 0:
         return 0
-    
+
     score = 0
     max_score = 0
 
@@ -539,15 +584,17 @@ def calculate_confidence_score(data):
 
     return float(np.clip(score / max_score, 0, 1))
 
+
 def assess_risk(data):
     if 'ATR' in data.columns and data['ATR'].iloc[-1] is not None and data['ATR'].iloc[-1] > data['ATR'].mean():
         return "High Volatility Warning"
     else:
         return "Low Volatility"
 
+
 def optimize_rsi_window(data, windows=range(5, 15), risk_free_rate=0.025):
     best_window, best_sharpe = 9, -float('inf')
-    
+
     if data is None or data.empty or 'Close' not in data:
         return best_window
 
@@ -586,7 +633,7 @@ def optimize_rsi_window(data, windows=range(5, 15), risk_free_rate=0.025):
 def detect_divergence(data, window=10, rsi_threshold=5):
     price = data['Close']
     rsi = data['RSI']
-    
+
     # Ensure enough data
     if len(price) < window or len(rsi) < window:
         return "Insufficient data"
@@ -627,6 +674,7 @@ def detect_divergence(data, window=10, rsi_threshold=5):
     else:
         return "No Divergence"
 
+
 def calculate_cmo(close, window=14):
     try:
         diff = close.diff()
@@ -638,8 +686,11 @@ def calculate_cmo(close, window=14):
         st.warning(f"⚠️ Failed to compute custom CMO: {str(e)}")
         return None
 
-logging.basicConfig(level=logging.WARNING,
-                   format="%(levelname)s: %(message)s")
+
+logging.basicConfig(
+    level=logging.WARNING,
+    format="%(levelname)s: %(message)s"
+)
 
 def validate_data(
     data: pd.DataFrame,
@@ -650,7 +701,7 @@ def validate_data(
 ) -> bool:
     """
     Comprehensive OHLCV DataFrame validator.
-    
+
     Parameters
     ----------
     data : pd.DataFrame
@@ -696,7 +747,7 @@ def validate_data(
     # 4 — positive prices
     price_cols = [c for c in ('Open', 'High', 'Low', 'Close') if c in data.columns]
     if check_positive_prices and (data[price_cols] <= 0).any().any():
-        logging.warning("Invalid price values (≤ 0 detected).")
+        logging.warning("Invalid price values (≤ 0 detected).")
         return False
 
     # 5 — volume sanity
@@ -707,6 +758,7 @@ def validate_data(
         return False
 
     return True
+
 
 INDICATOR_MIN_LENGTHS = {
     'RSI': 14,
@@ -721,24 +773,26 @@ INDICATOR_MIN_LENGTHS = {
     'Volume_Spike': 10
 }
 
+
 def can_compute_indicator(data, indicator):
     required_length = INDICATOR_MIN_LENGTHS.get(indicator, 1)
     return len(data) >= required_length
 
+
 def analyze_stock(data):
     if not validate_data(data, min_length=50):
         columns = ['RSI', 'MACD', 'MACD_signal', 'MACD_hist',
-                  'ATR', 'ADX', 'CMF',
-                  'Upper_Band', 'Middle_Band', 'Lower_Band',
-                  'SlowK', 'SlowD',
-                  'Donchian_Upper', 'Donchian_Lower', 'Donchian_Middle',
-                  'Ichimoku_Tenkan', 'Ichimoku_Kijun',
-                  'Ichimoku_Span_A', 'Ichimoku_Span_B', 'Ichimoku_Chikou',
-                  'Volume_Spike', 'Avg_Volume']
+                   'ATR', 'ADX', 'CMF',
+                   'Upper_Band', 'Middle_Band', 'Lower_Band',
+                   'SlowK', 'SlowD',
+                   'Donchian_Upper', 'Donchian_Lower', 'Donchian_Middle',
+                   'Ichimoku_Tenkan', 'Ichimoku_Kijun',
+                   'Ichimoku_Span_A', 'Ichimoku_Span_B', 'Ichimoku_Chikou',
+                   'Volume_Spike', 'Avg_Volume']
         for col in columns:
             data[col] = None
         return data
-    
+
     try:
         if can_compute_indicator(data, 'RSI'):
             rsi_window = optimize_rsi_window(data)
@@ -859,6 +913,7 @@ def get_atr_multiplier(adx):
     """
     return 3.0 if pd.notnull(adx) and adx > 25 else 1.5
 
+
 def get_adjusted_rr_ratio(adx, base_ratio=3):
     """
     Adjusts risk-reward ratio based on ADX.
@@ -866,17 +921,20 @@ def get_adjusted_rr_ratio(adx, base_ratio=3):
     """
     return min(base_ratio, 5) if pd.notnull(adx) and adx > 25 else min(base_ratio, 3)
 
+
 def cap_stop_loss(stop_loss, close):
     """
     Ensures stop loss is not too close (no more than 10% below entry).
     """
     return max(stop_loss, close * 0.9)
 
+
 def cap_target(target, close):
     """
     Limits target to 20% above entry to avoid unrealistic expectations.
     """
     return min(target, close * 1.2)
+
 
 # === DataFrame-Level Calculations ===
 def calculate_buy_at(data):
@@ -888,10 +946,11 @@ def calculate_buy_at(data):
     if data.empty or 'RSI' not in data.columns or 'Close' not in data.columns:
         st.warning("⚠️ Missing RSI or Close data.")
         return None
+
     if np.isnan(data['RSI'].iloc[-1]) or np.isnan(data['Close'].iloc[-1]):
         st.warning("⚠️ Latest RSI or Close value is NaN.")
         return None
-    
+
     last_close = data['Close'].iloc[-1]
     last_rsi = data['RSI'].iloc[-1]
     buy_at = last_close * 0.99 if last_rsi < 30 else last_close
@@ -909,7 +968,7 @@ def calculate_stop_loss(data):
     if np.isnan(data['ATR'].iloc[-1]) or np.isnan(data['Close'].iloc[-1]):
         st.warning("⚠️ Invalid ATR or Close values.")
         return None
-    
+
     last_close = data['Close'].iloc[-1]
     last_atr = data['ATR'].iloc[-1]
     last_adx = data['ADX'].iloc[-1]
@@ -918,6 +977,7 @@ def calculate_stop_loss(data):
     stop_loss = last_close - (atr_multiplier * last_atr)
     stop_loss = cap_stop_loss(stop_loss, last_close)
     return round(stop_loss, 2)
+
 
 def calculate_target(data, risk_reward_ratio=3):
     """
@@ -930,7 +990,7 @@ def calculate_target(data, risk_reward_ratio=3):
     if stop_loss is None:
         st.warning("⚠️ Cannot calculate Target due to missing Stop Loss.")
         return None
-    
+
     last_close = data['Close'].iloc[-1]
     last_adx = data['ADX'].iloc[-1]
     risk = last_close - stop_loss
@@ -938,6 +998,7 @@ def calculate_target(data, risk_reward_ratio=3):
     target = last_close + (risk * adjusted_ratio)
     target = cap_target(target, last_close)
     return round(target, 2)
+
 
 # === Row-Level Calculations ===
 def calculate_buy_at_row(row):
@@ -948,6 +1009,7 @@ def calculate_buy_at_row(row):
     if pd.isnull(row.get('RSI')) or pd.isnull(row.get('Close')):
         return None
     return round(row['Close'] * 0.99, 2) if row['RSI'] < 30 else round(row['Close'], 2)
+
 
 def calculate_stop_loss_row(row):
     """
@@ -960,6 +1022,7 @@ def calculate_stop_loss_row(row):
     stop_loss = row['Close'] - (atr_multiplier * row['ATR'])
     stop_loss = cap_stop_loss(stop_loss, row['Close'])
     return round(stop_loss, 2)
+
 
 def calculate_target_row(row, risk_reward_ratio=3):
     """
@@ -984,6 +1047,7 @@ def fetch_fundamentals(symbol):
     except Exception:
         return {'P/E': float('inf'), 'EPS': 0, 'RevenueGrowth': 0}
 
+
 # Improved strategy logic using adaptive regime detection, signal scoring, and volatility-aware filters
 import pandas as pd
 import numpy as np
@@ -1001,7 +1065,7 @@ def compute_indicators(df, symbol=None):
     cache_key = symbol or id(df)
     if cache_key in _indicator_cache:
         return _indicator_cache[cache_key]
-    
+
     df = df.copy()
     if df.empty or 'Close' not in df.columns:
         return df
@@ -1069,7 +1133,7 @@ def classify_market_regime(df):
         sma200 = df['SMA_200'].iloc[-1]
         close = df['Close'].iloc[-1]
         atr = df['ATR'].iloc[-1]
-        
+
         slope = (sma20 - df['SMA_20'].iloc[-5]) / df['SMA_20'].iloc[-5]
 
         if any(pd.isna([sma20, sma50, close, atr])):
@@ -1092,15 +1156,18 @@ def classify_market_regime(df):
     except:
         return "Unknown"
 
+
 def detect_regime_instability(df):
     if len(df) < 5:
         return 1.0
     recent = [classify_market_regime(df.iloc[i-1:i+1]) for i in range(len(df)-4, len(df))]
     return len(set(recent)) / len(recent)
 
+
 def get_signal_correlation(df):
     subset = df[['RSI', 'Stoch_K', 'WilliamsR']].dropna()
     return subset.corr().abs().mean().mean() if not subset.empty else 0
+
 
 def get_higher_timeframe_trend(df, tf='W'):
     higher = df[['Close']].resample(tf).last()
@@ -1116,7 +1183,7 @@ def compute_signal_score(df, regime):
         'Stochastic': 1.0,
         'MeanReversion': 1.2, 'TrendStrength': 1.0
     }
-    
+
     score = 0
     close = df['Close'].iloc[-1]
     atr = df['ATR'].iloc[-1]
@@ -1221,8 +1288,16 @@ def adaptive_recommendation(df, symbol=None, account_size=30000, max_position_si
             rec = "Hold"
 
         buy_at = close * 1.005 if rec == "Buy" else None
-        stop_loss = close * 0.95 if rec == "Buy" else close * 1.05 if rec == "Sell" else None
-        target = close * 1.05 if rec == "Buy" else close * 0.95 if rec == "Sell" else None
+        stop_loss = (
+            close * 0.95 if rec == "Buy" else
+            close * 1.05 if rec == "Sell" else
+            None
+        )
+        target = (
+            close * 1.05 if rec == "Buy" else
+            close * 0.95 if rec == "Sell" else
+            None
+        )
 
         max_loss_pct = 0.12
         if stop_loss and abs(close - stop_loss) / close > max_loss_pct:
@@ -1233,7 +1308,11 @@ def adaptive_recommendation(df, symbol=None, account_size=30000, max_position_si
         position_size = min((account_size * risk_per_trade) / (close * stop_pct), max_position_size)
 
         atr_mult = 1.5 if regime == "High Volatility" else 2.0
-        trailing_stop = close - atr_mult * atr if rec == "Buy" else close + atr_mult * atr if rec == "Sell" else None
+        trailing_stop = (
+            close - atr_mult * atr if rec == "Buy" else
+            close + atr_mult * atr if rec == "Sell" else
+            None
+        )
 
         return {
             "Current Price": round(close, 2),
@@ -1248,6 +1327,7 @@ def adaptive_recommendation(df, symbol=None, account_size=30000, max_position_si
             "Position Size": int(position_size),
             "Trailing Stop": round(trailing_stop, 2) if trailing_stop else None
         }
+
     except Exception as e:
         logging.error(f"Recommendation failed: {e}")
         return {"Error": str(e)}
@@ -1457,8 +1537,328 @@ def generate_recommendations(data, symbol=None):
 
     return recommendations
 
-# Update all batch_size parameters to 5
-def analyze_all_stocks(stock_list, batch_size=5, progress_callback=None):  # Changed from 3 to 5
+@st.cache_data(ttl=3600)  # Cache results for 1 hour to avoid repeated API hits
+def get_top_sectors_cached(rate_limit_delay=2, stocks_per_sector=2):
+    sector_scores = {}
+    for sector, stocks in SECTORS.items():
+        total_score = 0
+        count = 0
+        for symbol in stocks[:stocks_per_sector]:  # Only analyze top N stocks per sector
+            data = fetch_stock_data_cached(symbol)
+            if data.empty:
+                continue
+            data = analyze_stock(data)
+            rec = generate_recommendations(data, symbol)
+            total_score += rec.get("Score", 0)
+            count += 1
+            time.sleep(rate_limit_delay)  # Delay per API call
+        avg_score = total_score / count if count else 0
+        sector_scores[sector] = avg_score
+        time.sleep(1)  # Optional: delay between sectors
+    return sorted(sector_scores.items(), key=lambda x: x[1], reverse=True)[:3]
+
+
+@st.cache_data(ttl=3600)
+def backtest_stock(data, symbol, strategy="Swing", _data_hash=None):
+    INITIAL_CAPITAL = 30000
+    commission = 0.001  # 0.1% round-trip
+    position_size_pct = st.session_state.get('position_size', 1.0)
+
+    results = {
+        "total_return": 0,
+        "annual_return": 0,
+        "sharpe_ratio": 0,
+        "max_drawdown": 0,
+        "trades": 0,
+        "win_rate": 0,
+        "buy_signals": [],
+        "sell_signals": [],
+        "trade_details": [],
+        "equity_curve": []
+    }
+
+    recommendation_mode = st.session_state.get('recommendation_mode', 'Standard')
+    portfolio_value = INITIAL_CAPITAL
+    cash = INITIAL_CAPITAL
+
+    position = None
+    entry_price = 0
+    entry_date = None
+    trade_qty = 0
+    trades = []
+    returns = []
+    equity_curve = []
+
+    for i in range(1, len(data)):
+        sliced_data = data.iloc[:i+1]
+        current_price = data['Close'].iloc[i]
+        current_date = data.index[i]
+
+        if recommendation_mode == "Adaptive":
+            rec = adaptive_recommendation(sliced_data)
+            signal = rec.get("Recommendation", "Hold")
+        else:
+            rec = generate_recommendations(sliced_data, symbol)
+            signal = rec.get(strategy, "Hold")
+
+        # Execute sell first (if needed)
+        if signal == "Sell" and position == "Long":
+            gross_profit = (current_price - entry_price) * trade_qty
+            trade_cost = (entry_price + current_price) * trade_qty * commission / 2
+            net_profit = gross_profit - trade_cost
+            cash += net_profit
+            portfolio_value = cash
+            pct_return = net_profit / (entry_price * trade_qty) if entry_price else 0
+
+            trades.append({
+                "entry_date": entry_date,
+                "entry_price": entry_price,
+                "exit_date": current_date,
+                "exit_price": current_price,
+                "profit": net_profit
+            })
+            returns.append(pct_return)
+            results["sell_signals"].append((current_date, current_price))
+            position = None
+            entry_price = 0
+            entry_date = None
+            trade_qty = 0
+
+        # Execute buy (if no position)
+        if signal == "Buy" and position is None:
+            entry_price = current_price
+            entry_date = current_date
+            allocation = portfolio_value * position_size_pct
+            trade_qty = int(allocation // current_price)
+            if trade_qty == 0:
+                continue
+            cost = trade_qty * current_price * (1 + commission / 2)
+            cash -= cost
+            position = "Long"
+            results["buy_signals"].append((current_date, current_price))
+
+        # Track portfolio value *after* trade logic
+        portfolio_value = cash + (trade_qty * current_price if position else 0)
+        equity_curve.append((current_date, portfolio_value))
+
+    # Close open position at end
+    if position == "Long":
+        current_price = data['Close'].iloc[-1]
+        current_date = data.index[-1]
+        gross_profit = (current_price - entry_price) * trade_qty
+        trade_cost = (entry_price + current_price) * trade_qty * commission / 2
+        net_profit = gross_profit - trade_cost
+        cash += net_profit
+        portfolio_value = cash
+        pct_return = net_profit / (entry_price * trade_qty) if entry_price else 0
+
+        trades.append({
+            "entry_date": entry_date,
+            "entry_price": entry_price,
+            "exit_date": current_date,
+            "exit_price": current_price,
+            "profit": net_profit
+        })
+        returns.append(pct_return)
+        results["sell_signals"].append((current_date, current_price))
+        equity_curve.append((current_date, portfolio_value))
+
+    # Final stats
+    if trades:
+        results["trade_details"] = trades
+        results["trades"] = len(trades)
+        results["total_return"] = (portfolio_value - INITIAL_CAPITAL) / INITIAL_CAPITAL * 100
+        results["win_rate"] = len([t for t in trades if t["profit"] > 0]) / len(trades) * 100
+
+        # Annual return
+        holding_periods = [
+            (pd.to_datetime(t["exit_date"]) - pd.to_datetime(t["entry_date"])).days
+            for t in trades if t["entry_date"] != t["exit_date"]
+        ]
+        avg_holding = np.mean(holding_periods) if holding_periods else 1
+        annual_factor = 252 / avg_holding if avg_holding else 1
+        results["annual_return"] = np.mean(returns) * annual_factor * 100 if returns else 0
+
+        # Sharpe
+        std_dev = np.std(returns)
+        results["sharpe_ratio"] = (np.mean(returns) / (std_dev + 1e-9)) * np.sqrt(252) if returns else 0
+
+    # Max drawdown
+    equity_df = pd.DataFrame(equity_curve, columns=["Date", "Equity"])
+    equity_df["RunningMax"] = equity_df["Equity"].cummax()
+    equity_df["Drawdown"] = (equity_df["Equity"] - equity_df["RunningMax"]) / equity_df["RunningMax"]
+    results["max_drawdown"] = equity_df["Drawdown"].min() * 100  # usually negative
+    results["equity_curve"] = equity_df
+
+    return results
+
+def init_database():
+    conn = sqlite3.connect('stock_picks.db')
+    conn.execute('''
+        CREATE TABLE IF NOT EXISTS daily_picks (
+            date TEXT,
+            symbol TEXT,
+            score REAL,
+            current_price REAL,
+            buy_at REAL,
+            stop_loss REAL,
+            target REAL,
+            intraday TEXT,
+            swing TEXT,
+            short_term TEXT,
+            long_term TEXT,
+            mean_reversion TEXT,
+            breakout TEXT,
+            ichimoku_trend TEXT,
+            recommendation TEXT,
+            regime TEXT,
+            position_size REAL,
+            trailing_stop REAL,
+            reason TEXT,
+            pick_type TEXT,
+            PRIMARY KEY (date, symbol)
+        )
+    ''')
+    conn.close()
+
+def insert_top_picks(results_df, pick_type="daily"):
+    conn = sqlite3.connect('stock_picks.db')
+    for _, row in results_df.head(5).iterrows():
+        conn.execute('''
+            INSERT OR IGNORE INTO daily_picks (
+                date, symbol, score, current_price, buy_at, stop_loss, target,
+                intraday, swing, short_term, long_term, mean_reversion, breakout,
+                ichimoku_trend, recommendation, regime, position_size, trailing_stop,
+                reason, pick_type
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ''', (
+            datetime.now().strftime('%Y-%m-%d'),
+            row.get('Symbol'),
+            row.get('Score', 0),
+            row.get('Current Price'),
+            row.get('Buy At'),
+            row.get('Stop Loss'),
+            row.get('Target'),
+            row.get('Intraday'),
+            row.get('Swing'),
+            row.get('Short-Term'),
+            row.get('Long-Term'),
+            row.get('Mean_Reversion'),
+            row.get('Breakout'),
+            row.get('Ichimoku_Trend'),
+            row.get('Recommendation'),
+            row.get('Regime'),
+            row.get('Position Size'),
+            row.get('Trailing Stop'),
+            row.get('Reason'),
+            pick_type
+        ))
+    conn.commit()
+    conn.close()
+def analyze_batch(stock_batch):
+    """
+    Analyzes a batch of stocks in parallel, aggregating errors for summary reporting.
+    Returns a list of valid results.
+    """
+    results = []
+    errors = []
+    with ThreadPoolExecutor(max_workers=3) as executor:
+        futures = {executor.submit(analyze_stock_parallel, symbol): symbol for symbol in stock_batch}
+        for future in as_completed(futures):
+            symbol = futures[future]
+            try:
+                result = future.result()
+                if result:
+                    results.append(result)
+            except Exception as e:
+                error_msg = f"Error processing {symbol}: {str(e)}"
+                errors.append(error_msg)
+                logging.error(error_msg)
+
+    if errors:
+        logging.error(f"Batch errors: {len(errors)} total\n" + "\n".join(errors))
+        # Display summary warning in main thread
+        st.session_state['batch_errors'] = f"Encountered {len(errors)} errors during batch processing. Check logs for details."
+
+    return results
+
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+
+
+def analyze_stock_parallel(symbol):
+    """
+    Analyzes a single stock, logging detailed context on errors.
+    Returns a dictionary with analysis results or None on failure.
+    """
+    try:
+        logging.info(f"Starting analysis for {symbol}")
+        data = fetch_stock_data_cached(symbol)
+
+        if data.empty or len(data) < 50:
+            logging.warning(f"No sufficient data for {symbol}: {len(data)} rows")
+            return None
+
+        data = analyze_stock(data)
+        recommendation_mode = st.session_state.get('recommendation_mode', 'Standard')
+        logging.info(f"Analyzing {symbol} in {recommendation_mode} mode (data shape: {data.shape})")
+
+        if recommendation_mode == "Adaptive":
+            rec = adaptive_recommendation(data, symbol)
+            if not isinstance(rec, dict) or not rec.get('Recommendation'):
+                logging.warning(f"No valid adaptive recommendation for {symbol}: {rec}")
+                return None
+            return {
+                "Symbol": symbol,
+                "Current Price": rec.get("Current Price"),
+                "Buy At": rec.get("Buy At"),
+                "Stop Loss": rec.get("Stop Loss"),
+                "Target": rec.get("Target"),
+                "Recommendation": rec.get("Recommendation", "Hold"),
+                "Score": rec.get("Score", 0),
+                "Regime": rec.get("Regime"),
+                "Position Size": rec.get("Position Size"),
+                "Trailing Stop": rec.get("Trailing Stop"),
+                "Reason": rec.get("Reason"),
+                "Intraday": None,
+                "Swing": None,
+                "Short-Term": None,
+                "Long-Term": None,
+                "Mean_Reversion": None,
+                "Breakout": None,
+                "Ichimoku_Trend": None
+            }
+        else:
+            rec = generate_recommendations(data, symbol)
+            if not isinstance(rec, dict) or not rec.get('Intraday'):
+                logging.warning(f"No valid standard recommendation for {symbol}: {rec}")
+                return None
+            return {
+                "Symbol": symbol,
+                "Current Price": rec.get("Current Price"),
+                "Buy At": rec.get("Buy At"),
+                "Stop Loss": rec.get("Stop Loss"),
+                "Target": rec.get("Target"),
+                "Intraday": rec.get("Intraday", "Hold"),
+                "Swing": rec.get("Swing", "Hold"),
+                "Short-Term": rec.get("Short-Term", "Hold"),
+                "Long-Term": rec.get("Long-Term", "Hold"),
+                "Mean_Reversion": rec.get("Mean_Reversion", "Hold"),
+                "Breakout": rec.get("Breakout", "Hold"),
+                "Ichimoku_Trend": rec.get("Ichimoku_Trend", "Hold"),
+                "Score": rec.get("Score", 0),
+                "Recommendation": None,
+                "Regime": None,
+                "Position Size": None,
+                "Trailing Stop": None,
+                "Reason": None
+            }
+
+    except Exception as e:
+        error_msg = f"Error in analyze_stock_parallel for {symbol}: {str(e)} (data shape: {data.shape if 'data' in locals() else 'N/A'})"
+        logging.error(error_msg)
+        return None
+
+def analyze_all_stocks(stock_list, batch_size=3, progress_callback=None):
     results = []
     total_batches = (len(stock_list) // batch_size) + (1 if len(stock_list) % batch_size != 0 else 0)
     for i in range(0, len(stock_list), batch_size):
@@ -1482,7 +1882,8 @@ def analyze_all_stocks(stock_list, batch_size=5, progress_callback=None):  # Cha
         results_df = results_df[results_df["Recommendation"].str.contains("Buy|Sell", na=False)]
     return results_df.sort_values(by="Score", ascending=False).head(5)
 
-def analyze_intraday_stocks(stock_list, batch_size=5, delay=3, top_n=5, progress_callback=None):  # Changed from 3 to 5
+
+def analyze_intraday_stocks(stock_list, batch_size=3, delay=3, top_n=5, progress_callback=None):
     if not stock_list:
         st.warning("Empty stock list provided.")
         return pd.DataFrame()
@@ -1533,6 +1934,395 @@ def analyze_intraday_stocks(stock_list, batch_size=5, delay=3, top_n=5, progress
 
     return results_df.sort_values(by="Score", ascending=False).head(top_n)
 
-# Update the main function call for daily top picks
-if __name__ == "__main__":
-    main()
+
+def colored_recommendation(recommendation):
+    if recommendation is None or not isinstance(recommendation, str):
+        return "⚪ N/A"
+    if "Buy" in recommendation:
+        return f"🟢 {recommendation}"
+    elif "Sell" in recommendation:
+        return f"🔴 {recommendation}"
+    else:
+        return f"⚪ {recommendation}"
+
+
+def update_progress(progress_bar, loading_text, progress_value, loading_messages):
+    progress_bar.progress(progress_value)
+
+    try:
+        loading_message = next(loading_messages)
+    except StopIteration:
+        loading_message = "Loading"
+
+    dots = "." * (int(progress_value * 10) % 4)
+
+    # Reliable 5% step tracking (0–20 steps)
+    current_step = int(progress_value * 20)
+
+    if not hasattr(update_progress, '_last_text_update'):
+        update_progress._last_text_update = -1
+
+    if current_step != update_progress._last_text_update:
+        loading_text.text(f"{loading_message}{dots}")
+        update_progress._last_text_update = current_step
+
+def display_dashboard(symbol=None, data=None, recommendations=None):
+# Initialize session state
+if 'selected_sectors' not in st.session_state:
+st.session_state.selected_sectors = ["Bank"]
+if 'symbol' not in st.session_state:
+st.session_state.symbol = None
+if 'data' not in st.session_state:
+st.session_state.data = None
+if 'recommendations' not in st.session_state:
+st.session_state.recommendations = None
+if 'backtest_results_swing' not in st.session_state:
+st.session_state.backtest_results_swing = None
+if 'backtest_results_intraday' not in st.session_state:
+st.session_state.backtest_results_intraday = None
+if 'recommendation_mode' not in st.session_state:
+st.session_state.recommendation_mode = "Standard"
+
+text
+
+# Update session state if new data is provided
+if symbol and data is not None and recommendations is not None:
+    st.session_state.symbol = symbol
+    st.session_state.data = data
+    st.session_state.recommendations = recommendations
+
+st.title("📊 StockGenie Pro - NSE Analysis")
+st.subheader(f"📅 Analysis for {datetime.now().strftime('%d %b %Y')}")
+
+# Sector selection
+sector_options = ["All"] + list(SECTORS.keys())
+st.session_state.selected_sectors = st.sidebar.multiselect(
+    "Select Sectors",
+    options=sector_options,
+    default=st.session_state.selected_sectors,
+    help="Choose one or more sectors to analyze. Select 'All' to include all sectors."
+)
+
+if "All" in st.session_state.selected_sectors:
+    selected_stocks = list(set([stock for sector in SECTORS.values() for stock in sector]))
+else:
+    selected_stocks = list(set([stock for sector in st.session_state.selected_sectors for stock in SECTORS.get(sector, [])]))
+
+if not selected_stocks:
+    st.warning("⚠️ No stocks selected. Please choose at least one sector.")
+    return
+
+# Top sectors button
+if st.button("🔎 Analyze Top Performing Sectors"):
+    with st.spinner("🔍 Crunching sector data ..."):
+        top_sectors = get_top_sectors_cached(rate_limit_delay=2, stocks_per_sector=2)
+        st.subheader("🔝 Top 3 Performing Sectors Today")
+        for name, score in top_sectors:
+            st.markdown(f"- **{name}**: {score:.2f}/7")
+
+# Daily top picks button
+if st.button("🚀 Generate Daily Top Picks"):
+    progress_bar = st.progress(0)
+    loading_text = st.empty()
+    loading_messages = itertools.cycle([
+        "Analyzing trends...", "Fetching data...", "Crunching numbers...",
+        "Evaluating indicators...", "Finalizing results..."
+    ])
+    results_df = analyze_all_stocks(
+        selected_stocks,
+        batch_size=3,
+        progress_callback=lambda x: update_progress(progress_bar, loading_text, x, loading_messages)
+    )
+    insert_top_picks(results_df, pick_type="daily")
+    progress_bar.empty()
+    loading_text.empty()
+    if not results_df.empty:
+        st.subheader("🏆 Today's Top 5 Stocks")
+        for _, row in results_df.iterrows():
+            with st.expander(f"{row['Symbol']} - {tooltip('Score', TOOLTIPS['Score'])}: {row['Score']}/7"):
+                current_price = row.get('Current Price', 'N/A')
+                buy_at = row.get('Buy At', 'N/A')
+                stop_loss = row.get('Stop Loss', 'N/A')
+                target = row.get('Target', 'N/A')
+                if st.session_state.recommendation_mode == "Adaptive":
+                    st.markdown(f"""
+                    {tooltip('Current Price', TOOLTIPS['Stop Loss'])}: ₹{current_price}  
+                    Buy At: ₹{buy_at} | Stop Loss: ₹{stop_loss}  
+                    Target: ₹{target}  
+                    Recommendation: {colored_recommendation(row.get('Recommendation', 'N/A'))}  
+                    Regime: {row.get('Regime', 'N/A')}  
+                    Position Size (₹): {row.get('Position Size', 'N/A')}  
+                    Trailing Stop: ₹{row.get('Trailing Stop', 'N/A')}  
+                    Reason: {row.get('Reason', 'N/A')}
+                    """)
+                else:
+                    st.markdown(f"""
+                    {tooltip('Current Price', TOOLTIPS['Stop Loss'])}: ₹{current_price}  
+                    Buy At: ₹{buy_at} | Stop Loss: ₹{stop_loss}  
+                    Target: ₹{target}  
+                    Intraday: {colored_recommendation(row.get('Intraday', 'N/A'))}  
+                    Swing: {colored_recommendation(row.get('Swing', 'N/A'))}  
+                    Short-Term: {colored_recommendation(row.get('Short-Term', 'N/A'))}  
+                    Long-Term: {colored_recommendation(row.get('Long-Term', 'N/A'))}  
+                    Mean Reversion: {colored_recommendation(row.get('Mean_Reversion', 'N/A'))}  
+                    Breakout: {colored_recommendation(row.get('Breakout', 'N/A'))}  
+                    Ichimoku Trend: {colored_recommendation(row.get('Ichimoku_Trend', 'N/A'))}
+                    """)
+    else:
+        st.warning("⚠️ No top picks available due to data issues.")
+
+# Intraday top picks button
+if st.button("⚡ Generate Intraday Top 5 Picks"):
+    progress_bar = st.progress(0)
+    loading_text = st.empty()
+    loading_messages = itertools.cycle([
+        "Scanning intraday trends...", "Detecting buy signals...", "Calculating stop-loss levels...",
+        "Optimizing targets...", "Finalizing top picks..."
+    ])
+    intraday_results = analyze_intraday_stocks(
+        selected_stocks,
+        batch_size=3,
+        progress_callback=lambda x: update_progress(progress_bar, loading_text, x, loading_messages)
+    )
+    insert_top_picks(intraday_results, pick_type="intraday")
+    progress_bar.empty()
+    loading_text.empty()
+    if not intraday_results.empty:
+        st.subheader("🏆 Top 5 Intraday Stocks")
+        for _, row in intraday_results.iterrows():
+            with st.expander(f"{row['Symbol']} - {tooltip('Score', TOOLTIPS['Score'])}: {row['Score']}/7"):
+                current_price = row.get('Current Price', 'N/A')
+                buy_at = row.get('Buy At', 'N/A')
+                stop_loss = row.get('Stop Loss', 'N/A')
+                target = row.get('Target', 'N/A')
+                if st.session_state.recommendation_mode == "Adaptive":
+                    st.markdown(f"""
+                    {tooltip('Current Price', TOOLTIPS['Stop Loss'])}: ₹{current_price}  
+                    Buy At: ₹{buy_at} | Stop Loss: ₹{stop_loss}  
+                    Target: ₹{target}  
+                    Recommendation: {colored_recommendation(row.get('Recommendation', 'N/A'))}  
+                    Regime: {row.get('Regime', 'N/A')}  
+                    Position Size (₹): {row.get('Position Size', 'N/A')}  
+                    Trailing Stop: ₹{row.get('Trailing Stop', 'N/A')}  
+                    Reason: {row.get('Reason', 'N/A')}
+                    """)
+                else:
+                    st.markdown(f"""
+                    {tooltip('Current Price', TOOLTIPS['Stop Loss'])}: ₹{current_price}  
+                    Buy At: ₹{buy_at} | Stop Loss: ₹{stop_loss}  
+                    Target: ₹{target}  
+                    Intraday: {colored_recommendation(row.get('Intraday', 'N/A'))}
+                    """)
+    else:
+        st.warning("⚠️ No intraday picks available due to data issues.")
+
+# Historical picks button
+if st.button("📜 View Historical Picks"):
+    conn = sqlite3.connect('stock_picks.db')
+    history_df = pd.read_sql_query("SELECT * FROM daily_picks ORDER BY date DESC", conn)
+    conn.close()
+    if not history_df.empty:
+        st.subheader("📜 Historical Top Picks")
+        all_dates = sorted(history_df['date'].unique(), reverse=True)
+        date_filter = st.selectbox("Filter by Date", ["All"] + all_dates)
+        pick_type_filter = st.selectbox("Filter by Pick Type", ["All", "daily", "intraday"])
+        filtered_df = history_df.copy()
+        if pick_type_filter != "All":
+            filtered_df = filtered_df[filtered_df['pick_type'] == pick_type_filter]
+        if date_filter != "All":
+            filtered_df = filtered_df[filtered_df['date'] == date_filter]
+        st.dataframe(filtered_df)
+    else:
+        st.warning("⚠️ No historical data available.")
+
+# Display stock analysis if symbol is available
+if st.session_state.symbol and st.session_state.data is not None and st.session_state.recommendations is not None:
+    symbol = st.session_state.symbol
+    data = st.session_state.data
+    recommendations = st.session_state.recommendations
+
+    st.header(f"📋 {symbol.split('-')[0]} Analysis")
+    col1, col2, col3, col4, col5 = st.columns(5)
+    with col1:
+        current_price = recommendations.get('Current Price', 'N/A')
+        st.metric(tooltip("Current Price", TOOLTIPS['RSI']), f"₹{current_price}")
+    with col2:
+        buy_at = recommendations.get('Buy At', 'N/A')
+        st.metric("Buy At", f"₹{buy_at}")
+    with col3:
+        stop_loss = recommendations.get('Stop Loss', 'N/A')
+        st.metric(tooltip("Stop Loss", TOOLTIPS['Stop Loss']), f"₹{stop_loss}")
+    with col4:
+        target = recommendations.get('Target', 'N/A')
+        st.metric("Target", f"₹{target}")
+    with col5:
+        regime = recommendations.get('Regime', 'N/A') if st.session_state.recommendation_mode == "Adaptive" else 'N/A'
+        st.metric("Market Regime", regime)
+
+    st.subheader("📈 Trading Recommendations")
+    if st.session_state.recommendation_mode == "Adaptive":
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            st.write(f"**Recommendation**: {colored_recommendation(recommendations.get('Recommendation', 'N/A'))}")
+            st.write(f"**Reason**: {recommendations.get('Reason', 'N/A')}")
+        with col2:
+            st.write(f"**{tooltip('Score', TOOLTIPS['Score'])}**: {recommendations.get('Score', 'N/A')}/7")
+            st.write(f"**Position Size (₹)**: {recommendations.get('Position Size', 'N/A')}")
+        with col3:
+            st.write(f"**Trailing Stop**: ₹{recommendations.get('Trailing Stop', 'N/A')}")
+            st.write(f"**Volatility**: {assess_risk(data)}")
+    else:
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            st.write(f"**Intraday**: {colored_recommendation(recommendations.get('Intraday', 'N/A'))}")
+            st.write(f"**Swing**: {colored_recommendation(recommendations.get('Swing', 'N/A'))}")
+        with col2:
+            st.write(f"**Short-Term**: {colored_recommendation(recommendations.get('Short-Term', 'N/A'))}")
+            st.write(f"**Long-Term**: {colored_recommendation(recommendations.get('Long-Term', 'N/A'))}")
+        with col3:
+            st.write(f"**Mean Reversion**: {colored_recommendation(recommendations.get('Mean_Reversion', 'N/A'))}")
+            st.write(f"**Breakout**: {colored_recommendation(recommendations.get('Breakout', 'N/A'))}")
+            st.write(f"**Ichimoku Trend**: {colored_recommendation(recommendations.get('Ichimoku_Trend', 'N/A'))}")
+        st.write(f"**{tooltip('Score', TOOLTIPS['Score'])}**: {recommendations.get('Score', 'N/A')}/7")
+        st.write(f"**Volatility**: {assess_risk(data)}")
+
+    # Backtest form
+    with st.form(key="backtest_form"):
+        col1, col2 = st.columns(2)
+        with col1:
+            swing_button = st.form_submit_button("🔍 Backtest Swing Strategy")
+        with col2:
+            intraday_button = st.form_submit_button("🔍 Backtest Intraday Strategy")
+        
+        if swing_button or intraday_button:
+            strategy = "Swing" if swing_button else "Intraday"
+            with st.spinner(f"Running {strategy} Strategy backtest..."):
+                data_hash = hash(data.to_string())
+                backtest_results = backtest_stock(data, symbol, strategy=strategy, _data_hash=data_hash)
+                if strategy == "Swing":
+                    st.session_state.backtest_results_swing = backtest_results
+                else:
+                    st.session_state.backtest_results_intraday = backtest_results
+
+    # Backtest results
+    for strategy, results_key in [("Swing", "backtest_results_swing"), ("Intraday", "backtest_results_intraday")]:
+        backtest_results = st.session_state.get(results_key)
+        if backtest_results:
+            st.subheader(f"📈 Backtest Results ({strategy} Strategy)")
+            st.write(f"**Total Return**: {backtest_results['total_return']:.2f}%")
+            st.write(f"**Annualized Return**: {backtest_results['annual_return']:.2f}%")
+            st.write(f"**Sharpe Ratio**: {backtest_results['sharpe_ratio']:.2f}")
+            st.write(f"**Max Drawdown**: {backtest_results['max_drawdown']:.2f}%")
+            st.write(f"**Number of Trades**: {backtest_results['trades']}")
+            st.write(f"**Win Rate**: {backtest_results['win_rate']:.2f}%")
+            with st.expander("Trade Details"):
+                for trade in backtest_results["trade_details"]:
+                    profit = trade.get("profit", 0)
+                    st.write(f"Entry: {trade['entry_date']} @ ₹{trade['entry_price']:.2f}, "
+                             f"Exit: {trade['exit_date']} @ ₹{trade['exit_price']:.2f}, "
+                             f"Profit: ₹{profit:.2f}")
+
+            fig = px.line(data, x=data.index, y='Close', title=f"{symbol.split('-')[0]} Price with Signals")
+            if backtest_results["buy_signals"]:
+                buy_dates, buy_prices = zip(*backtest_results["buy_signals"])
+                fig.add_scatter(x=buy_dates, y=buy_prices, mode='markers', name='Buy Signals',
+                               marker=dict(color='green', symbol='triangle-up', size=10))
+            if backtest_results["sell_signals"]:
+                sell_dates, sell_prices = zip(*backtest_results["sell_signals"])
+                fig.add_scatter(x=sell_dates, y=sell_prices, mode='markers', name='Sell Signals',
+                               marker=dict(color='red', symbol='triangle-down', size=10))
+            st.plotly_chart(fig, use_container_width=True)
+
+    # Technical Indicators
+    st.subheader("📊 Technical Indicators")
+    indicators = [
+        ("RSI", data['RSI'].iloc[-1], TOOLTIPS['RSI']),
+        ("MACD", data['MACD'].iloc[-1], TOOLTIPS['MACD']),
+        ("ATR", data['ATR'].iloc[-1], TOOLTIPS['ATR']),
+        ("ADX", data['ADX'].iloc[-1], TOOLTIPS['ADX']),
+        ("Bollinger Upper", data['Upper_Band'].iloc[-1], TOOLTIPS['Bollinger']),
+        ("Bollinger Lower", data['Lower_Band'].iloc[-1], TOOLTIPS['Bollinger']),
+        ("VWAP", data['VWAP'].iloc[-1] if 'VWAP' in data.columns and not data['VWAP'].isna().all() else "N/A", TOOLTIPS['VWAP']),
+        ("Ichimoku Span A", data['Ichimoku_Span_A'].iloc[-1], TOOLTIPS['Ichimoku']),
+        ("CMF", data['CMF'].iloc[-1], TOOLTIPS['CMF']),
+    ]
+    col1, col2 = st.columns(2)
+    for i, (name, value, tooltip_text) in enumerate(indicators):
+        value = round(value, 2) if isinstance(value, (int, float, np.integer, np.floating)) else value
+        if i % 2 == 0:
+            with col1:
+                st.write(f"**{tooltip(name, tooltip_text)}**: {value}")
+        else:
+            with col2:
+                st.write(f"**{tooltip(name, tooltip_text)}**: {value}")
+def main():
+init_database()
+st.sidebar.title("🔍 Stock Selection")
+
+text
+
+stock_list = fetch_nse_stock_list()
+if not stock_list:
+    st.error("❌ Could not fetch stock list. Please check your internet connection or API status.")
+    return
+
+# Set default session states
+if 'symbol' not in st.session_state:
+    st.session_state.symbol = stock_list[0]
+if 'recommendation_mode' not in st.session_state:
+    st.session_state.recommendation_mode = "Standard"
+
+# Stock selection
+selected_index = stock_list.index(st.session_state.symbol) if st.session_state.symbol in stock_list else 0
+symbol = st.sidebar.selectbox(
+    "Select Stock",
+    stock_list,
+    index=selected_index,
+    key="stock_select"
+)
+
+# Recommendation mode selection
+recommendation_mode = st.sidebar.radio(
+    "Recommendation Mode",
+    ["Standard", "Adaptive"],
+    index=0 if st.session_state.recommendation_mode == "Standard" else 1,
+    help="Standard: Timeframe-specific recommendations. Adaptive: Regime-based with position sizing."
+)
+st.session_state.recommendation_mode = recommendation_mode
+
+# Analyze button
+if st.sidebar.button("Analyze Selected Stock"):
+    if symbol:
+        with st.spinner("📊 Loading and analyzing stock data..."):
+            try:
+                data = fetch_stock_data_with_auth(symbol)
+                if not data.empty:
+                    analyzed_data = analyze_stock(data)
+                    recommendations = (
+                        adaptive_recommendation(analyzed_data)
+                        if recommendation_mode == "Adaptive"
+                        else generate_recommendations(analyzed_data, symbol)
+                    )
+
+                    # Update session state
+                    st.session_state.symbol = symbol
+                    st.session_state.data = analyzed_data
+                    st.session_state.recommendations = recommendations
+                    st.session_state.backtest_results_swing = None
+                    st.session_state.backtest_results_intraday = None
+
+                    display_dashboard(symbol, analyzed_data, recommendations)
+                else:
+                    st.warning("⚠️ No data available for the selected stock.")
+            except Exception as e:
+                st.error(f"❌ Error fetching or analyzing data: {str(e)}")
+elif 'data' in st.session_state and 'recommendations' in st.session_state:
+    # Display previous results if available
+    display_dashboard(
+        st.session_state.symbol,
+        st.session_state.data,
+        st.session_state.recommendations
+    )
+else:
+    st.info("👈 Select a stock and click 'Analyze Selected Stock' to begin.")
+if name == "main":
