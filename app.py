@@ -175,6 +175,13 @@ if show_debug:
         st.caption(f"Token: {symbol_info['token']}")
         st.caption(f"Exchange: {symbol_info['exchange']}")
         st.caption(f"API Interval: {TIMEFRAME_MAP.get(timeframe)}")
+        
+        # Rate limit stats
+        if st.session_state.smart_api:
+            client = st.session_state.smart_api
+            st.markdown("**🚦 Rate Limits:**")
+            st.caption(f"Candle: {len(client.candle_limiter.second_window)}/3 per sec")
+            st.caption(f"Candle: {len(client.candle_limiter.minute_window)}/180 per min")
 
 # Add data freshness indicator
 col_refresh1, col_refresh2 = st.columns([3, 1])
