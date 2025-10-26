@@ -177,6 +177,29 @@ with st.sidebar:
     st.caption("• Check same timeframe (30min)")
     st.caption("• VWAP resets daily at 9:15 AM")
     st.caption("• Data lag: 1-5 seconds normal")
+    
+    # Add search feature
+    if st.session_state.logged_in:
+        st.markdown("---")
+        st.markdown("**🔍 Search Stock**")
+        search_term = st.text_input("Search symbol", placeholder="e.g., INFY", key="search_input")
+        search_exchange = st.selectbox("Exchange", ["NSE", "BSE"], key="search_exchange")
+        
+        if st.button("🔍 Search", key="search_btn"):
+            if search_term:
+                with st.spinner(f"Searching for {search_term}..."):
+                    client = st.session_state.smart_api
+                    results = client.search_scrip(search_exchange, search_term.upper())
+                    
+                    if results:
+                        st.success(f"Found {len(results)} results:")
+                        for r in results[:5]:  # Show first 5
+                            symbol = r.get('tradingsymbol', '')
+                            token = r.get('symboltoken', '')
+                            if symbol.endswith('-EQ'):  # Only show equity
+                                st.caption(f"📊 {symbol} (Token: {token})")
+                    else:
+                        st.warning("No results found")
 
 # Main content
 if not st.session_state.logged_in:
@@ -215,6 +238,20 @@ if df.empty:
 
 # Show data info
 st.caption(f"📊 Data: {len(df)} candles | Last updated: {df.index[-1].strftime('%Y-%m-%d %H:%M:%S')} IST")
+
+# Fetch and show LTP for comparison
+if show_debug:
+    try:
+        client = st.session_state.smart_api
+        ltp_data = client.get_ltp_data(
+            symbol_info['exchange'], 
+            selected_symbol + '-EQ',
+            symbol_info['token']
+        )
+        if ltp_data:
+            st.caption(f"🔴 Live LTP: ₹{ltp_data.get('ltp', 'N/A')} | Open: ₹{ltp_data.get('open', 'N/A')} | High: ₹{ltp_data.get('high', 'N/A')} | Low: ₹{ltp_data.get('low', 'N/A')}")
+    except:
+        pass
 
 # Calculate indicators & signals
 df = calculate_indicators(df, TRADING_CONFIG)

@@ -283,6 +283,42 @@ class SmartAPIClient:
             logger.error(f"Error getting LTP: {e}")
             return None
     
+    def search_scrip(self, exchange, search_term):
+        """Search for scrip/symbol and get token"""
+        try:
+            # Search has 1 req/sec limit
+            self.login_limiter.wait_if_needed()
+            params = {
+                "exchange": exchange,
+                "searchscrip": search_term
+            }
+            response = self.smart_api.searchScrip(params)
+            return self._handle_response(response, "Search Scrip")
+        except AngelOneAPIError as e:
+            logger.error(f"Error searching scrip: {e}")
+            return None
+        except Exception as e:
+            logger.error(f"Error searching scrip: {e}")
+            return None
+    
+    def get_ltp_data(self, exchange, trading_symbol, symbol_token):
+        """Get LTP data for a symbol (alternative to get_ltp with more details)"""
+        try:
+            self.ltp_limiter.wait_if_needed()
+            params = {
+                "exchange": exchange,
+                "tradingsymbol": trading_symbol,
+                "symboltoken": symbol_token
+            }
+            response = self.smart_api.ltpData(params)
+            return self._handle_response(response, "Get LTP Data")
+        except AngelOneAPIError as e:
+            logger.error(f"Error getting LTP data: {e}")
+            return None
+        except Exception as e:
+            logger.error(f"Error getting LTP data: {e}")
+            return None
+    
     def logout(self):
         """Logout from Angel One with proper cleanup"""
         try:
