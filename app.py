@@ -168,13 +168,49 @@ with st.sidebar:
             for i, stock in enumerate(st.session_state.wishlist):
                 col1, col2 = st.columns([4, 1])
                 with col1:
-                    st.caption(f"📊 {stock['name']} (Token: {stock['token']})")
+                    st.caption(f"📊 {stock['name']}")
                 with col2:
                     if st.button("❌", key=f"remove_{i}"):
                         st.session_state.wishlist.pop(i)
                         st.rerun()
         else:
-            st.info("No stocks in wishlist. Add stocks using search below.")
+            st.info("📝 Wishlist empty - Use quick add below")
+        
+        # QUICK ADD POPULAR STOCKS
+        st.markdown("---")
+        st.markdown("**⚡ Quick Add Popular Stocks**")
+        
+        popular_stocks = {
+            "RELIANCE": {"token": "2885", "exchange": "NSE"},
+            "TCS": {"token": "11536", "exchange": "NSE"},
+            "INFY": {"token": "1594", "exchange": "NSE"},
+            "HDFC": {"token": "1333", "exchange": "NSE"},
+            "ICICIBANK": {"token": "1330", "exchange": "NSE"},
+            "SBIN": {"token": "3045", "exchange": "NSE"},
+            "TATASTEEL": {"token": "3499", "exchange": "NSE"},
+            "TATAMOTORS": {"token": "3456", "exchange": "NSE"},
+            "ITC": {"token": "1660", "exchange": "NSE"},
+            "HDFCBANK": {"token": "1333", "exchange": "NSE"},
+            "AXISBANK": {"token": "5900", "exchange": "NSE"},
+            "SUNPHARMA": {"token": "3351", "exchange": "NSE"},
+        }
+        
+        # Display as compact grid
+        cols = st.columns(2)
+        for idx, (symbol, info) in enumerate(popular_stocks.items()):
+            with cols[idx % 2]:
+                if st.button(f"➕ {symbol}", key=f"quick_add_{symbol}", use_container_width=True):
+                    # Check if already in wishlist
+                    if not any(s['token'] == info['token'] for s in st.session_state.wishlist):
+                        st.session_state.wishlist.append({
+                            'name': symbol,
+                            'token': info['token'],
+                            'exchange': info['exchange']
+                        })
+                        st.success(f"✅ Added {symbol}!")
+                        st.rerun()
+                    else:
+                        st.warning(f"⚠️ {symbol} already in wishlist")
     
     timeframe = st.selectbox("⏰ Timeframe", ['5min', '15min', '30min'], index=2)
     
@@ -196,55 +232,45 @@ with st.sidebar:
     st.caption("• VWAP resets daily at 9:15 AM")
     st.caption("• Data lag: 1-5 seconds normal")
     
-    # Add search feature
-    if st.session_state.logged_in:
+    # Add search feature (optional - for other stocks)
+    if st.session_state.logged_in and scan_mode == "Wishlist Scan":
         st.markdown("---")
-        st.markdown("**🔍 Search & Add to Wishlist**")
-        search_term = st.text_input("Search symbol", placeholder="e.g., INFY", key="search_input")
-        search_exchange = st.selectbox("Exchange", ["NSE", "BSE"], key="search_exchange")
+        st.markdown("**🔍 Search Other Stocks**")
         
-        col1, col2 = st.columns(2)
-        with col1:
-            search_clicked = st.button("🔍 Search", key="search_btn", use_container_width=True)
-        
-        if search_clicked and search_term:
-            with st.spinner(f"Searching for {search_term}..."):
-                try:
-                    client = st.session_state.smart_api
-                    # Check if method exists
-                    if hasattr(client, 'search_scrip'):
-                        results = client.search_scrip(search_exchange, search_term.upper())
-                        
-                        if results:
-                            st.success(f"Found {len(results)} results:")
-                            for r in results[:5]:  # Show first 5
-                                symbol = r.get('tradingsymbol', '')
-                                token = r.get('symboltoken', '')
-                                name = r.get('name', symbol)
-                                if symbol.endswith('-EQ'):  # Only show equity
-                                    col1, col2 = st.columns([3, 1])
-                                    with col1:
-                                        st.caption(f"📊 {symbol} (Token: {token})")
-                                    with col2:
-                                        if st.button("➕", key=f"add_{token}", help="Add to wishlist"):
-                                            # Check if already in wishlist
-                                            if not any(s['token'] == token for s in st.session_state.wishlist):
-                                                st.session_state.wishlist.append({
-                                                    'name': symbol.replace('-EQ', ''),
-                                                    'token': token,
-                                                    'exchange': search_exchange
-                                                })
-                                                st.success(f"Added {symbol} to wishlist!")
-                                                st.rerun()
-                                            else:
-                                                st.warning("Already in wishlist")
-                        else:
-                            st.warning("No results found")
-                    else:
-                        st.info("💡 Search feature available - check STOCK_TOKENS.md for popular tokens")
-                except Exception as e:
-                    st.error(f"Search error: {e}")
-                    st.info("💡 Refer to STOCK_TOKENS.md for popular stock tokens")
+        with st.expander("Advanced Search"):
+            search_term = st.text_input("Search symbol", placeholder="e.g., WIPRO", key="search_input")
+            search_exchange = st.selectbox("Exchange", ["NSE", "BSE"], key="search_exchange")
+            
+            if st.button("🔍 Search", key="search_btn", use_container_width=True):
+                if search_term:
+                    with st.spinner(f"Searching..."):
+                        try:
+                            client = st.session_state.smart_api
+                            if hasattr(client, 'search_scrip'):
+                                results = client.search_scrip(search_exchange, search_term.upper())
+                                
+                                if results:
+                                    for r in results[:5]:
+                                        symbol = r.get('tradingsymbol', '')
+                                        token = r.get('symboltoken', '')
+                                        if symbol.endswith('-EQ'):
+                                            col1, col2 = st.columns([3, 1])
+                                            with col1:
+                                                st.caption(f"📊 {symbol}")
+                                            with col2:
+                                                if st.button("➕", key=f"add_{token}"):
+                                                    if not any(s['token'] == token for s in st.session_state.wishlist):
+                                                        st.session_state.wishlist.append({
+                                                            'name': symbol.replace('-EQ', ''),
+                                                            'token': token,
+                                                            'exchange': search_exchange
+                                                        })
+                                                        st.rerun()
+                                else:
+                                    st.warning("No results found")
+                        except Exception as e:
+                            st.caption(f"⚠️ {str(e)}")
+
 
 # Main content
 if not st.session_state.logged_in:
