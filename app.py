@@ -188,18 +188,26 @@ with st.sidebar:
         if st.button("🔍 Search", key="search_btn"):
             if search_term:
                 with st.spinner(f"Searching for {search_term}..."):
-                    client = st.session_state.smart_api
-                    results = client.search_scrip(search_exchange, search_term.upper())
-                    
-                    if results:
-                        st.success(f"Found {len(results)} results:")
-                        for r in results[:5]:  # Show first 5
-                            symbol = r.get('tradingsymbol', '')
-                            token = r.get('symboltoken', '')
-                            if symbol.endswith('-EQ'):  # Only show equity
-                                st.caption(f"📊 {symbol} (Token: {token})")
-                    else:
-                        st.warning("No results found")
+                    try:
+                        client = st.session_state.smart_api
+                        # Check if method exists
+                        if hasattr(client, 'search_scrip'):
+                            results = client.search_scrip(search_exchange, search_term.upper())
+                            
+                            if results:
+                                st.success(f"Found {len(results)} results:")
+                                for r in results[:5]:  # Show first 5
+                                    symbol = r.get('tradingsymbol', '')
+                                    token = r.get('symboltoken', '')
+                                    if symbol.endswith('-EQ'):  # Only show equity
+                                        st.caption(f"📊 {symbol} (Token: {token})")
+                            else:
+                                st.warning("No results found")
+                        else:
+                            st.info("💡 Search feature available - check STOCK_TOKENS.md for popular tokens")
+                    except Exception as e:
+                        st.error(f"Search error: {e}")
+                        st.info("💡 Refer to STOCK_TOKENS.md for popular stock tokens")
 
 # Main content
 if not st.session_state.logged_in:

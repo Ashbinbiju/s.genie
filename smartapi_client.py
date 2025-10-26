@@ -324,10 +324,9 @@ class SmartAPIClient:
         try:
             self.login_limiter.wait_if_needed()
             params = {"clientcode": self.client_id}
-            response = self.smart_api.terminateSession(params)
-            self._handle_response(response, "Logout")
+            response = self.smart_api.terminateSession(self.client_id)
             
-            # Clear tokens
+            # Clear tokens regardless of response
             self.jwt_token = None
             self.refresh_token = None
             self.feed_token = None
@@ -335,5 +334,9 @@ class SmartAPIClient:
             return True
             
         except Exception as e:
-            logger.error(f"Error during logout: {e}")
-            return False
+            # Clear tokens even on error
+            self.jwt_token = None
+            self.refresh_token = None
+            self.feed_token = None
+            logger.warning(f"Logout warning (tokens cleared): {e}")
+            return True  # Return True anyway since tokens are cleared
