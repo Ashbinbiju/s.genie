@@ -1,0 +1,407 @@
+{% extends "base.html" %}
+
+{% block title %}Intraday Trading - StockGenie Pro{% endblock %}
+
+{% block extra_css %}
+<style>
+    /* Clean, modern styles for intraday trading page */
+    .page-header {
+        background: white;
+        border-radius: 16px;
+        padding: 2rem;
+        margin-bottom: 1.5rem;
+        box-shadow: 0 2px 8px rgba(0,0,0,0.05);
+    }
+    
+    .info-banner {
+        background: linear-gradient(to right, #fff8f0, #ffffff);
+        border-left: 4px solid #fd7e14;
+        border-radius: 8px;
+        padding: 1rem 1.5rem;
+        margin-bottom: 2rem;
+    }
+    
+    .stock-opportunity-card {
+        background: white;
+        border-radius: 12px;
+        box-shadow: 0 2px 12px rgba(0,0,0,0.08);
+        padding: 1.5rem;
+        margin-bottom: 1.5rem;
+        transition: all 0.3s ease;
+        border: 1px solid #e9ecef;
+    }
+    
+    .stock-opportunity-card:hover {
+        box-shadow: 0 4px 20px rgba(0,0,0,0.12);
+        transform: translateY(-2px);
+    }
+    
+    .stock-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin-bottom: 1.25rem;
+        padding-bottom: 1rem;
+        border-bottom: 2px solid #f8f9fa;
+    }
+    
+    .stock-symbol {
+        font-size: 1.5rem;
+        font-weight: 700;
+        color: #212529;
+        margin: 0;
+    }
+    
+    .stock-number {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        background: #fd7e14;
+        color: white;
+        width: 32px;
+        height: 32px;
+        border-radius: 8px;
+        font-weight: 700;
+        font-size: 0.9rem;
+        margin-right: 0.75rem;
+    }
+    
+    .score-badge {
+        background: linear-gradient(135deg, #fd7e14, #dc6502);
+        color: white;
+        padding: 0.75rem 1.25rem;
+        border-radius: 10px;
+        text-align: center;
+        min-width: 90px;
+    }
+    
+    .score-number {
+        font-size: 1.75rem;
+        font-weight: 800;
+        line-height: 1;
+        margin-bottom: 0.25rem;
+    }
+    
+    .score-label {
+        font-size: 0.75rem;
+        opacity: 0.9;
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
+    }
+    
+    .price-grid {
+        display: grid;
+        grid-template-columns: repeat(2, 1fr);
+        gap: 1rem;
+        margin-bottom: 1.25rem;
+    }
+    
+    .price-box {
+        background: #f8f9fa;
+        border-radius: 8px;
+        padding: 1rem;
+    }
+    
+    .price-box.entry { border-left: 3px solid #0d6efd; }
+    .price-box.target { border-left: 3px solid #198754; }
+    .price-box.stop-loss { border-left: 3px solid #dc3545; }
+    .price-box.risk-reward { border-left: 3px solid #6c757d; }
+    
+    .price-label {
+        font-size: 0.75rem;
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
+        color: #6c757d;
+        margin-bottom: 0.5rem;
+        font-weight: 600;
+    }
+    
+    .price-value {
+        font-size: 1.25rem;
+        font-weight: 700;
+        margin: 0;
+    }
+    
+    .price-value.entry-color { color: #0d6efd; }
+    .price-value.target-color { color: #198754; }
+    .price-value.stop-color { color: #dc3545; }
+    .price-value.rr-color { color: #495057; }
+    
+    .indicators-section {
+        margin-bottom: 1.25rem;
+    }
+    
+    .section-title {
+        font-size: 0.75rem;
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
+        color: #6c757d;
+        margin-bottom: 0.75rem;
+        font-weight: 600;
+    }
+    
+    .indicator-badge {
+        display: inline-block;
+        background: #fff3cd;
+        color: #856404;
+        padding: 0.5rem 0.875rem;
+        border-radius: 6px;
+        font-size: 0.875rem;
+        font-weight: 600;
+        margin-right: 0.5rem;
+        margin-bottom: 0.5rem;
+    }
+    
+    .market-health-badge {
+        font-size: 0.75rem;
+        padding: 0.375rem 0.75rem;
+        border-radius: 6px;
+        font-weight: 600;
+        text-transform: capitalize;
+    }
+    
+    .market-health-badge.bullish {
+        background: #d1f4e0;
+        color: #0f5132;
+    }
+    
+    .market-health-badge.bearish {
+        background: #f8d7da;
+        color: #842029;
+    }
+    
+    .market-health-badge.neutral {
+        background: #fff3cd;
+        color: #664d03;
+    }
+    
+    .view-details-btn {
+        width: 100%;
+        padding: 0.75rem;
+        font-weight: 600;
+        border-radius: 8px;
+        border: 2px solid #fd7e14;
+        background: white;
+        color: #fd7e14;
+        transition: all 0.3s ease;
+    }
+    
+    .view-details-btn:hover {
+        background: #fd7e14;
+        color: white;
+    }
+    
+    .alert-message {
+        border-radius: 10px;
+        padding: 1.25rem;
+        border: none;
+        border-left: 4px solid;
+    }
+    
+    .alert-message.success {
+        background: #d1f4e0;
+        border-left-color: #198754;
+        color: #0f5132;
+    }
+    
+    .alert-message.warning {
+        background: #fff3cd;
+        border-left-color: #ffc107;
+        color: #664d03;
+    }
+    
+    .alert-message.error {
+        background: #f8d7da;
+        border-left-color: #dc3545;
+        color: #842029;
+    }
+    
+    .loading-container {
+        text-align: center;
+        padding: 3rem;
+    }
+    
+    .spinner-border {
+        width: 3rem;
+        height: 3rem;
+        border-width: 0.3rem;
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="container-fluid px-4 py-3">
+    <!-- Page Header -->
+    <div class="page-header">
+        <div class="d-flex justify-content-between align-items-start">
+            <div>
+                <h1 class="display-6 fw-bold mb-2">
+                    <i class="bi bi-lightning text-warning me-2"></i>Intraday Trading
+                </h1>
+                <p class="text-secondary mb-0">Fast-moving opportunities for same-day trades</p>
+            </div>
+            <button class="btn btn-warning btn-lg text-white" onclick="scanIntraday()">
+                <i class="bi bi-arrow-clockwise me-2"></i>Scan Now
+            </button>
+        </div>
+    </div>
+
+    <!-- Info Banner -->
+    <div class="info-banner">
+        <div class="d-flex align-items-start">
+            <i class="bi bi-info-circle-fill text-warning me-3 fs-5"></i>
+            <div>
+                <h6 class="fw-bold mb-1">Intraday Trading Strategy</h6>
+                <p class="mb-0 small text-secondary">
+                    High-volume stocks with strong momentum. Minimum R:R of 1:1.5. Exit all positions before market close.
+                </p>
+            </div>
+        </div>
+    </div>
+
+    <!-- Loading Spinner -->
+    <div class="loading-container d-none" id="scanLoading">
+        <div class="spinner-border text-warning" role="status">
+            <span class="visually-hidden">Loading...</span>
+        </div>
+        <p class="mt-3 text-secondary fw-semibold">Scanning intraday opportunities...</p>
+    </div>
+
+    <!-- Opportunities Container -->
+    <div id="opportunitiesContainer"></div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+    function formatCurrency(value) {
+        return new Intl.NumberFormat('en-IN', {
+            style: 'currency',
+            currency: 'INR',
+            minimumFractionDigits: 2
+        }).format(value);
+    }
+
+    function showLoading(elementId) {
+        const element = document.getElementById(elementId);
+        if (element) {
+            element.classList.remove('d-none');
+        }
+    }
+
+    function hideLoading(elementId) {
+        const element = document.getElementById(elementId);
+        if (element) {
+            element.classList.add('d-none');
+        }
+    }
+
+    async function scanIntraday() {
+        showLoading('scanLoading');
+        
+        try {
+            const response = await fetch('/api/intraday-scan');
+            const result = await response.json();
+            
+            const container = document.getElementById('opportunitiesContainer');
+            
+            if (result.success && result.data.length > 0) {
+                container.innerHTML = `
+                    <div class="alert-message success mb-4">
+                        <div class="d-flex align-items-center">
+                            <i class="bi bi-check-circle-fill me-3 fs-4"></i>
+                            <strong>Found ${result.count} intraday trading opportunities</strong>
+                        </div>
+                    </div>
+                    <div class="row g-4">
+                        ${result.data.map((opp, index) => `
+                            <div class="col-lg-6">
+                                <div class="stock-opportunity-card">
+                                    <!-- Stock Header -->
+                                    <div class="stock-header">
+                                        <div class="d-flex align-items-center">
+                                            <span class="stock-number">${index + 1}</span>
+                                            <div>
+                                                <h3 class="stock-symbol">${opp.symbol}</h3>
+                                                <span class="market-health-badge ${opp.market_health || 'neutral'}">
+                                                    ${opp.market_health || 'neutral'}
+                                                </span>
+                                            </div>
+                                        </div>
+                                        <div class="score-badge">
+                                            <div class="score-number">${opp.score}</div>
+                                            <div class="score-label">Score</div>
+                                        </div>
+                                    </div>
+                                    
+                                    <!-- Price Information -->
+                                    <div class="price-grid">
+                                        <div class="price-box entry">
+                                            <div class="price-label">Entry Price</div>
+                                            <h5 class="price-value entry-color">${formatCurrency(opp.entry)}</h5>
+                                        </div>
+                                        <div class="price-box target">
+                                            <div class="price-label">Target</div>
+                                            <h5 class="price-value target-color">${formatCurrency(opp.target)}</h5>
+                                        </div>
+                                        <div class="price-box stop-loss">
+                                            <div class="price-label">Stop Loss</div>
+                                            <h5 class="price-value stop-color">${formatCurrency(opp.stop_loss)}</h5>
+                                        </div>
+                                        <div class="price-box risk-reward">
+                                            <div class="price-label">Risk:Reward</div>
+                                            <h5 class="price-value rr-color">1:${opp.risk_reward}</h5>
+                                        </div>
+                                    </div>
+                                    
+                                    <!-- Technical Indicators -->
+                                    <div class="indicators-section">
+                                        <div class="section-title">Technical Indicators</div>
+                                        <div>
+                                            ${opp.rsi ? `<span class="indicator-badge">RSI: ${opp.rsi.toFixed(1)}</span>` : ''}
+                                            ${opp.adx ? `<span class="indicator-badge">ADX: ${opp.adx.toFixed(1)}</span>` : ''}
+                                            ${opp.signals ? Object.entries(opp.signals).map(([k, v]) => 
+                                                `<span class="indicator-badge">${k}: ${v}</span>`
+                                            ).join('') : ''}
+                                        </div>
+                                    </div>
+                                    
+                                    <!-- Action Button -->
+                                    <a href="/stock-detail/${opp.symbol}" class="view-details-btn text-decoration-none">
+                                        View Detailed Analysis <i class="bi bi-arrow-right ms-1"></i>
+                                    </a>
+                                </div>
+                            </div>
+                        `).join('')}
+                    </div>
+                `;
+            } else {
+                container.innerHTML = `
+                    <div class="alert-message warning">
+                        <div class="d-flex align-items-center">
+                            <i class="bi bi-exclamation-triangle-fill me-3 fs-4"></i>
+                            <strong>No intraday trading opportunities found at this time. Try again later.</strong>
+                        </div>
+                    </div>
+                `;
+            }
+        } catch (error) {
+            console.error('Error scanning intraday trades:', error);
+            document.getElementById('opportunitiesContainer').innerHTML = `
+                <div class="alert-message error">
+                    <div class="d-flex align-items-center">
+                        <i class="bi bi-x-circle-fill me-3 fs-4"></i>
+                        <strong>Error loading opportunities. Please try again.</strong>
+                    </div>
+                </div>
+            `;
+        } finally {
+            hideLoading('scanLoading');
+        }
+    }
+    
+    document.addEventListener('DOMContentLoaded', () => {
+        scanIntraday();
+    });
+</script>
+{% endblock %}
