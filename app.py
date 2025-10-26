@@ -246,7 +246,7 @@ with col1:
         **Take Profit:** ₹{tp_price:.2f} ({((tp_price - latest['close']) / latest['close'] * 100):.2f}%)
         **Risk:Reward:** 1:{risk_reward:.2f}
         
-        **Signal Strength:** {int(latest['buy_strength'])}/2
+        **Signal Strength:** {int(latest['buy_strength'])}/4
         **Quality Score:** {int(latest['buy_quality_score'])}/4
         **ATR:** ₹{latest['atr']:.2f}
         """)
@@ -266,7 +266,7 @@ with col2:
         **Take Profit:** ₹{tp_price:.2f} ({((tp_price - latest['close']) / latest['close'] * 100):.2f}%)
         **Risk:Reward:** 1:{risk_reward:.2f}
         
-        **Signal Strength:** {int(latest['sell_strength'])}/2
+        **Signal Strength:** {int(latest['sell_strength'])}/4
         **Quality Score:** {int(latest['sell_quality_score'])}/4
         **ATR:** ₹{latest['atr']:.2f}
         """)
