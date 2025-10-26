@@ -44,7 +44,7 @@ def login_to_angel():
 
 
 def fetch_market_data(symbol, token, exchange, timeframe, days=5):
-    """Fetch historical data with proper date range"""
+    """Fetch historical data with proper date range and error handling"""
     try:
         client = st.session_state.smart_api
         to_date = datetime.now().strftime("%Y-%m-%d %H:%M")
@@ -60,7 +60,14 @@ def fetch_market_data(symbol, token, exchange, timeframe, days=5):
         
         return df
     except Exception as e:
-        st.error(f"Error: {e}")
+        # Check if session expired
+        error_msg = str(e)
+        if any(code in error_msg for code in ['AG8001', 'AG8002', 'AG8003', 'AB1010', 'AB1011']):
+            st.session_state.logged_in = False
+            st.error("❌ Session expired. Please login again.")
+            st.rerun()
+        else:
+            st.error(f"Error: {e}")
         return pd.DataFrame()
 
 
@@ -138,7 +145,16 @@ with st.sidebar:
         if st.button("🔐 Login to Angel One", type="primary"):
             login_to_angel()
     else:
-        st.success("✅ Connected")
+        col1, col2 = st.columns([2, 1])
+        with col1:
+            st.success("✅ Connected")
+        with col2:
+            if st.button("🚪", help="Logout"):
+                client = st.session_state.smart_api
+                if client and client.logout():
+                    st.session_state.logged_in = False
+                    st.session_state.smart_api = None
+                    st.rerun()
     
     st.markdown("---")
     selected_symbol = st.selectbox("📊 Select Stock", list(STOCK_SYMBOLS.keys()))
