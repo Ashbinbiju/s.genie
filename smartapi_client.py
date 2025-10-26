@@ -288,11 +288,7 @@ class SmartAPIClient:
         try:
             # Search has 1 req/sec limit
             self.login_limiter.wait_if_needed()
-            params = {
-                "exchange": exchange,
-                "searchscrip": search_term
-            }
-            response = self.smart_api.searchScrip(params)
+            response = self.smart_api.searchScrip(exchange, search_term)
             return self._handle_response(response, "Search Scrip")
         except AngelOneAPIError as e:
             logger.error(f"Error searching scrip: {e}")
