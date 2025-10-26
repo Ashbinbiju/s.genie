@@ -20,6 +20,17 @@ except:
     TRADING_API_KEY = "ruseeaBq"
     MARKET_API_KEY = "PflRFXyd"
 
+# Telegram Configuration
+try:
+    TELEGRAM_ENABLED = st.secrets["telegram"]["TELEGRAM_ENABLED"]
+    TELEGRAM_CHAT_ID = st.secrets["telegram"]["TELEGRAM_CHAT_ID"]
+    TELEGRAM_BOT_TOKEN = st.secrets["telegram"]["TELEGRAM_BOT_TOKEN"]
+except:
+    # Development/Local Telegram settings
+    TELEGRAM_ENABLED = "true"
+    TELEGRAM_CHAT_ID = "-1002411670969"
+    TELEGRAM_BOT_TOKEN = "7902319450:AAFPNcUyk9F6Sesy-h6SQnKHC_Yr6Uqk9ps"
+
 # Trading Parameters (matching your Pine Script)
 TRADING_CONFIG = {
     # EMA Settings
