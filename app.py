@@ -145,11 +145,11 @@ with st.sidebar:
         if st.button("🔐 Login to Angel One", type="primary"):
             login_to_angel()
     else:
-        col1, col2 = st.columns([3, 1])
+        col1, col2 = st.columns([4, 1])
         with col1:
             st.success("✅ Connected to Angel One")
         with col2:
-            if st.button("🚪 Logout", type="secondary", use_container_width=True):
+            if st.button("Logout", type="secondary", use_container_width=True, key="logout_btn"):
                 client = st.session_state.smart_api
                 if client and client.logout():
                     st.session_state.logged_in = False
