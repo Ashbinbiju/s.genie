@@ -173,6 +173,10 @@ class SmartAPIClient:
                 self.jwt_token = session_data.get('jwtToken')
                 self.refresh_token = session_data.get('refreshToken')
                 self.feed_token = session_data.get('feedToken')
+                
+                # CRITICAL: Set the access token for subsequent API calls
+                self.smart_api.setAccessToken(self.jwt_token)
+                
                 logger.info("✅ Successfully logged in to Angel One")
                 return True
             return False
