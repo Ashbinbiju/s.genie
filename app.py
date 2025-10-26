@@ -8,6 +8,7 @@ from datetime import datetime, timedelta
 import time
 from smartapi_client import SmartAPIClient
 from indicators import calculate_indicators, generate_signals
+from stock_database import STOCKS_BY_SECTOR
 
 # Try to import from secure config first, fall back to regular config
 try:
@@ -176,41 +177,54 @@ with st.sidebar:
         else:
             st.info("📝 Wishlist empty - Use quick add below")
         
-        # QUICK ADD POPULAR STOCKS
+        # QUICK ADD STOCKS BY SECTOR
         st.markdown("---")
-        st.markdown("**⚡ Quick Add Popular Stocks**")
+        st.markdown("**⚡ Quick Add Stocks by Sector**")
         
-        popular_stocks = {
-            "RELIANCE": {"token": "2885", "exchange": "NSE"},
-            "TCS": {"token": "11536", "exchange": "NSE"},
-            "INFY": {"token": "1594", "exchange": "NSE"},
-            "HDFC": {"token": "1333", "exchange": "NSE"},
-            "ICICIBANK": {"token": "1330", "exchange": "NSE"},
-            "SBIN": {"token": "3045", "exchange": "NSE"},
-            "TATASTEEL": {"token": "3499", "exchange": "NSE"},
-            "TATAMOTORS": {"token": "3456", "exchange": "NSE"},
-            "ITC": {"token": "1660", "exchange": "NSE"},
-            "HDFCBANK": {"token": "1333", "exchange": "NSE"},
-            "AXISBANK": {"token": "5900", "exchange": "NSE"},
-            "SUNPHARMA": {"token": "3351", "exchange": "NSE"},
-        }
+        # Sector selection
+        selected_sector = st.selectbox(
+            "Choose Sector",
+            list(STOCKS_BY_SECTOR.keys()),
+            key="sector_select"
+        )
         
-        # Display as compact grid
-        cols = st.columns(2)
-        for idx, (symbol, info) in enumerate(popular_stocks.items()):
-            with cols[idx % 2]:
-                if st.button(f"➕ {symbol}", key=f"quick_add_{symbol}", use_container_width=True):
-                    # Check if already in wishlist
-                    if not any(s['token'] == info['token'] for s in st.session_state.wishlist):
+        # Show stocks from selected sector
+        sector_stocks = STOCKS_BY_SECTOR[selected_sector]
+        
+        # Display as compact grid (3 columns for better fit)
+        st.caption(f"📊 {len(sector_stocks)} stocks in {selected_sector}")
+        
+        # Add All button for the sector
+        if st.button(f"➕ Add All {selected_sector}", use_container_width=True, key="add_all_sector"):
+            added_count = 0
+            for symbol, token in sector_stocks.items():
+                if not any(s['token'] == token for s in st.session_state.wishlist):
+                    st.session_state.wishlist.append({
+                        'name': symbol,
+                        'token': token,
+                        'exchange': 'NSE'
+                    })
+                    added_count += 1
+            if added_count > 0:
+                st.success(f"✅ Added {added_count} stocks from {selected_sector}!")
+                st.rerun()
+            else:
+                st.info("All stocks from this sector are already in wishlist")
+        
+        # Show individual stock buttons
+        cols = st.columns(3)
+        for idx, (symbol, token) in enumerate(sector_stocks.items()):
+            with cols[idx % 3]:
+                if st.button(f"➕ {symbol}", key=f"quick_add_{symbol}_{token}", use_container_width=True):
+                    if not any(s['token'] == token for s in st.session_state.wishlist):
                         st.session_state.wishlist.append({
                             'name': symbol,
-                            'token': info['token'],
-                            'exchange': info['exchange']
+                            'token': token,
+                            'exchange': 'NSE'
                         })
-                        st.success(f"✅ Added {symbol}!")
+                        st.success(f"✅ Added!")
                         st.rerun()
-                    else:
-                        st.warning(f"⚠️ {symbol} already in wishlist")
+
     
     timeframe = st.selectbox("⏰ Timeframe", ['5min', '15min', '30min'], index=2)
     
