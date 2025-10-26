@@ -31,6 +31,15 @@ except:
     TELEGRAM_CHAT_ID = "-1002411670969"
     TELEGRAM_BOT_TOKEN = "7902319450:AAFPNcUyk9F6Sesy-h6SQnKHC_Yr6Uqk9ps"
 
+# Supabase Configuration
+try:
+    SUPABASE_URL = st.secrets["supabase"]["SUPABASE_URL"]
+    SUPABASE_KEY = st.secrets["supabase"]["SUPABASE_KEY"]
+except:
+    # Development/Local Supabase settings (add your values here)
+    SUPABASE_URL = ""
+    SUPABASE_KEY = ""
+
 # Trading Parameters (matching your Pine Script)
 TRADING_CONFIG = {
     # EMA Settings

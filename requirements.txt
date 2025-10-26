@@ -8,3 +8,4 @@ ta>=0.11.0
 requests>=2.31.0
 logzero>=1.7.0
 websocket-client>=1.6.0
+supabase>=2.0.0
