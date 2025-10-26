@@ -27,6 +27,8 @@ if 'smart_api' not in st.session_state:
     st.session_state.smart_api = None
 if 'logged_in' not in st.session_state:
     st.session_state.logged_in = False
+if 'wishlist' not in st.session_state:
+    st.session_state.wishlist = []
 
 
 def login_to_angel():
@@ -157,7 +159,26 @@ with st.sidebar:
                     st.rerun()
     
     st.markdown("---")
-    selected_symbol = st.selectbox("📊 Select Stock", list(STOCK_SYMBOLS.keys()))
+    
+    # Wishlist and Scan Mode
+    scan_mode = st.radio("📊 Trading Mode", ["Single Stock", "Wishlist Scan"], horizontal=True)
+    
+    if scan_mode == "Single Stock":
+        selected_symbol = st.selectbox("📊 Select Stock", list(STOCK_SYMBOLS.keys()))
+    else:
+        st.markdown("**📋 My Wishlist**")
+        if st.session_state.wishlist:
+            for i, stock in enumerate(st.session_state.wishlist):
+                col1, col2 = st.columns([4, 1])
+                with col1:
+                    st.caption(f"📊 {stock['name']} (Token: {stock['token']})")
+                with col2:
+                    if st.button("❌", key=f"remove_{i}"):
+                        st.session_state.wishlist.pop(i)
+                        st.rerun()
+        else:
+            st.info("No stocks in wishlist. Add stocks using search below.")
+    
     timeframe = st.selectbox("⏰ Timeframe", ['5min', '15min', '30min'], index=2)
     
     st.markdown("---")
@@ -181,91 +202,233 @@ with st.sidebar:
     # Add search feature
     if st.session_state.logged_in:
         st.markdown("---")
-        st.markdown("**🔍 Search Stock**")
+        st.markdown("**🔍 Search & Add to Wishlist**")
         search_term = st.text_input("Search symbol", placeholder="e.g., INFY", key="search_input")
         search_exchange = st.selectbox("Exchange", ["NSE", "BSE"], key="search_exchange")
         
-        if st.button("🔍 Search", key="search_btn"):
-            if search_term:
-                with st.spinner(f"Searching for {search_term}..."):
-                    try:
-                        client = st.session_state.smart_api
-                        # Check if method exists
-                        if hasattr(client, 'search_scrip'):
-                            results = client.search_scrip(search_exchange, search_term.upper())
-                            
-                            if results:
-                                st.success(f"Found {len(results)} results:")
-                                for r in results[:5]:  # Show first 5
-                                    symbol = r.get('tradingsymbol', '')
-                                    token = r.get('symboltoken', '')
-                                    if symbol.endswith('-EQ'):  # Only show equity
+        col1, col2 = st.columns(2)
+        with col1:
+            search_clicked = st.button("🔍 Search", key="search_btn", use_container_width=True)
+        
+        if search_clicked and search_term:
+            with st.spinner(f"Searching for {search_term}..."):
+                try:
+                    client = st.session_state.smart_api
+                    # Check if method exists
+                    if hasattr(client, 'search_scrip'):
+                        results = client.search_scrip(search_exchange, search_term.upper())
+                        
+                        if results:
+                            st.success(f"Found {len(results)} results:")
+                            for r in results[:5]:  # Show first 5
+                                symbol = r.get('tradingsymbol', '')
+                                token = r.get('symboltoken', '')
+                                name = r.get('name', symbol)
+                                if symbol.endswith('-EQ'):  # Only show equity
+                                    col1, col2 = st.columns([3, 1])
+                                    with col1:
                                         st.caption(f"📊 {symbol} (Token: {token})")
-                            else:
-                                st.warning("No results found")
+                                    with col2:
+                                        if st.button("➕", key=f"add_{token}", help="Add to wishlist"):
+                                            # Check if already in wishlist
+                                            if not any(s['token'] == token for s in st.session_state.wishlist):
+                                                st.session_state.wishlist.append({
+                                                    'name': symbol.replace('-EQ', ''),
+                                                    'token': token,
+                                                    'exchange': search_exchange
+                                                })
+                                                st.success(f"Added {symbol} to wishlist!")
+                                                st.rerun()
+                                            else:
+                                                st.warning("Already in wishlist")
                         else:
-                            st.info("💡 Search feature available - check STOCK_TOKENS.md for popular tokens")
-                    except Exception as e:
-                        st.error(f"Search error: {e}")
-                        st.info("💡 Refer to STOCK_TOKENS.md for popular stock tokens")
+                            st.warning("No results found")
+                    else:
+                        st.info("💡 Search feature available - check STOCK_TOKENS.md for popular tokens")
+                except Exception as e:
+                    st.error(f"Search error: {e}")
+                    st.info("💡 Refer to STOCK_TOKENS.md for popular stock tokens")
 
 # Main content
 if not st.session_state.logged_in:
     st.warning("⚠️ Please login to view data")
     st.stop()
 
-symbol_info = STOCK_SYMBOLS[selected_symbol]
-
-# Show debug info if enabled
-if show_debug:
-    with st.sidebar:
-        st.caption(f"Token: {symbol_info['token']}")
-        st.caption(f"Exchange: {symbol_info['exchange']}")
-        st.caption(f"API Interval: {TIMEFRAME_MAP.get(timeframe)}")
-        
-        # Rate limit stats
-        if st.session_state.smart_api:
+# Handle Single Stock vs Wishlist Scan mode
+if scan_mode == "Single Stock":
+    # Original single stock view
+    symbol_info = STOCK_SYMBOLS[selected_symbol]
+    
+    # Show debug info if enabled
+    if show_debug:
+        with st.sidebar:
+            st.caption(f"Token: {symbol_info['token']}")
+            st.caption(f"Exchange: {symbol_info['exchange']}")
+            st.caption(f"API Interval: {TIMEFRAME_MAP.get(timeframe)}")
+            
+            # Rate limit stats
+            if st.session_state.smart_api:
+                client = st.session_state.smart_api
+                st.markdown("**🚦 Rate Limits:**")
+                st.caption(f"Candle: {len(client.candle_limiter.second_window)}/3 per sec")
+                st.caption(f"Candle: {len(client.candle_limiter.minute_window)}/180 per min")
+    
+    # Add data freshness indicator
+    col_refresh1, col_refresh2 = st.columns([3, 1])
+    with col_refresh1:
+        with st.spinner(f"📊 Fetching {selected_symbol}..."):
+            df = fetch_market_data(selected_symbol, symbol_info['token'], symbol_info['exchange'], timeframe, days=5)
+    with col_refresh2:
+        if st.button("🔄 Refresh Now"):
+            st.rerun()
+    
+    if df.empty:
+        st.error("❌ No data available. Market might be closed or data unavailable.")
+        st.info(f"💡 Try: Different timeframe, Check market hours (9:20-15:30 IST), Or select another stock")
+        st.stop()
+    
+    # Show data info
+    st.caption(f"📊 Data: {len(df)} candles | Last updated: {df.index[-1].strftime('%Y-%m-%d %H:%M:%S')} IST")
+    
+    # Fetch and show LTP for comparison
+    if show_debug:
+        try:
             client = st.session_state.smart_api
-            st.markdown("**🚦 Rate Limits:**")
-            st.caption(f"Candle: {len(client.candle_limiter.second_window)}/3 per sec")
-            st.caption(f"Candle: {len(client.candle_limiter.minute_window)}/180 per min")
+            ltp_data = client.get_ltp_data(
+                symbol_info['exchange'], 
+                selected_symbol + '-EQ',
+                symbol_info['token']
+            )
+            if ltp_data:
+                st.caption(f"🔴 Live LTP: ₹{ltp_data.get('ltp', 'N/A')} | Open: ₹{ltp_data.get('open', 'N/A')} | High: ₹{ltp_data.get('high', 'N/A')} | Low: ₹{ltp_data.get('low', 'N/A')}")
+        except:
+            pass
+    
+    # Calculate indicators & signals
+    df = calculate_indicators(df, TRADING_CONFIG)
+    df = generate_signals(df, TRADING_CONFIG)
+    
+    latest = df.iloc[-1]
+    prev = df.iloc[-2] if len(df) > 1 else latest
 
-# Add data freshness indicator
-col_refresh1, col_refresh2 = st.columns([3, 1])
-with col_refresh1:
-    with st.spinner(f"📊 Fetching {selected_symbol}..."):
-        df = fetch_market_data(selected_symbol, symbol_info['token'], symbol_info['exchange'], timeframe, days=5)
-with col_refresh2:
-    if st.button("🔄 Refresh Now"):
-        st.rerun()
+else:
+    # WISHLIST SCAN MODE
+    st.title("📋 Wishlist Scanner - Intraday Signals")
+    
+    if not st.session_state.wishlist:
+        st.warning("⚠️ Your wishlist is empty. Add stocks using the search feature in the sidebar.")
+        st.stop()
+    
+    col_scan1, col_scan2 = st.columns([3, 1])
+    with col_scan1:
+        st.info(f"🔍 Scanning {len(st.session_state.wishlist)} stocks from your wishlist...")
+    with col_scan2:
+        if st.button("🔄 Scan Now", use_container_width=True):
+            st.rerun()
+    
+    scan_results = []
+    progress_bar = st.progress(0)
+    
+    for idx, stock in enumerate(st.session_state.wishlist):
+        progress_bar.progress((idx + 1) / len(st.session_state.wishlist))
+        
+        try:
+            # Fetch data for each stock
+            df = fetch_market_data(
+                stock['name'], 
+                stock['token'], 
+                stock['exchange'], 
+                timeframe, 
+                days=5
+            )
+            
+            if not df.empty:
+                # Calculate indicators & signals
+                df = calculate_indicators(df, TRADING_CONFIG)
+                df = generate_signals(df, TRADING_CONFIG)
+                
+                latest = df.iloc[-1]
+                
+                # Check for active signals
+                if latest['buy_signal'] or latest['sell_signal']:
+                    scan_results.append({
+                        'stock': stock['name'],
+                        'token': stock['token'],
+                        'exchange': stock['exchange'],
+                        'ltp': latest['close'],
+                        'signal': 'BUY' if latest['buy_signal'] else 'SELL',
+                        'strength': latest['buy_strength'] if latest['buy_signal'] else latest['sell_strength'],
+                        'quality': latest['buy_quality'] if latest['buy_signal'] else latest['sell_quality'],
+                        'rsi': latest['rsi'],
+                        'trend': 'Bullish' if latest['bullish_trend'] else 'Bearish',
+                        'last_updated': df.index[-1]
+                    })
+            
+            time.sleep(0.35)  # Rate limiting: ~3 requests per second
+            
+        except Exception as e:
+            st.caption(f"⚠️ Error scanning {stock['name']}: {str(e)}")
+    
+    progress_bar.empty()
+    
+    # Display scan results
+    st.markdown("---")
+    st.subheader("📊 Scan Results")
+    
+    if scan_results:
+        # Separate buy and sell signals
+        buy_signals = [r for r in scan_results if r['signal'] == 'BUY']
+        sell_signals = [r for r in scan_results if r['signal'] == 'SELL']
+        
+        # Show buy signals
+        if buy_signals:
+            st.markdown("### 🟢 BUY Signals")
+            for result in sorted(buy_signals, key=lambda x: x['strength'], reverse=True):
+                with st.container():
+                    col1, col2, col3, col4, col5, col6 = st.columns([2, 1, 1, 1, 1, 1])
+                    with col1:
+                        st.markdown(f"**📊 {result['stock']}**")
+                        st.caption(f"Token: {result['token']}")
+                    with col2:
+                        st.metric("LTP", f"₹{result['ltp']:.2f}")
+                    with col3:
+                        st.metric("Strength", f"{result['strength']:.0f}/4")
+                    with col4:
+                        st.metric("Quality", f"{result['quality']:.0f}/4")
+                    with col5:
+                        st.metric("RSI", f"{result['rsi']:.1f}")
+                    with col6:
+                        st.caption(f"🎯 {result['trend']}")
+                    st.caption(f"⏰ Updated: {result['last_updated'].strftime('%H:%M:%S')}")
+                    st.markdown("---")
+        
+        # Show sell signals
+        if sell_signals:
+            st.markdown("### 🔴 SELL Signals")
+            for result in sorted(sell_signals, key=lambda x: x['strength'], reverse=True):
+                with st.container():
+                    col1, col2, col3, col4, col5, col6 = st.columns([2, 1, 1, 1, 1, 1])
+                    with col1:
+                        st.markdown(f"**📊 {result['stock']}**")
+                        st.caption(f"Token: {result['token']}")
+                    with col2:
+                        st.metric("LTP", f"₹{result['ltp']:.2f}")
+                    with col3:
+                        st.metric("Strength", f"{result['strength']:.0f}/4")
+                    with col4:
+                        st.metric("Quality", f"{result['quality']:.0f}/4")
+                    with col5:
+                        st.metric("RSI", f"{result['rsi']:.1f}")
+                    with col6:
+                        st.caption(f"🎯 {result['trend']}")
+                    st.caption(f"⏰ Updated: {result['last_updated'].strftime('%H:%M:%S')}")
+                    st.markdown("---")
+    else:
+        st.info("ℹ️ No active signals found in your wishlist stocks at the moment.")
+    
+    st.stop()  # Stop execution for scan mode
 
-if df.empty:
-    st.error("❌ No data available. Market might be closed or data unavailable.")
-    st.info(f"💡 Try: Different timeframe, Check market hours (9:20-15:30 IST), Or select another stock")
-    st.stop()
-
-# Show data info
-st.caption(f"📊 Data: {len(df)} candles | Last updated: {df.index[-1].strftime('%Y-%m-%d %H:%M:%S')} IST")
-
-# Fetch and show LTP for comparison
-if show_debug:
-    try:
-        client = st.session_state.smart_api
-        ltp_data = client.get_ltp_data(
-            symbol_info['exchange'], 
-            selected_symbol + '-EQ',
-            symbol_info['token']
-        )
-        if ltp_data:
-            st.caption(f"🔴 Live LTP: ₹{ltp_data.get('ltp', 'N/A')} | Open: ₹{ltp_data.get('open', 'N/A')} | High: ₹{ltp_data.get('high', 'N/A')} | Low: ₹{ltp_data.get('low', 'N/A')}")
-    except:
-        pass
-
-# Calculate indicators & signals
-df = calculate_indicators(df, TRADING_CONFIG)
-df = generate_signals(df, TRADING_CONFIG)
-
-latest = df.iloc[-1]
+# Continue with single stock view
 prev = df.iloc[-2] if len(df) > 1 else latest
 
 # Metrics
