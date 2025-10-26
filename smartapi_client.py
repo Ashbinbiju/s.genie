@@ -166,20 +166,31 @@ class SmartAPIClient:
                 totp=totp
             )
             
-            # Handle response with proper error checking
-            session_data = self._handle_response(data, "Login")
-            
-            if session_data:
+            # Check if login was successful
+            if data and data.get('status'):
+                session_data = data.get('data', {})
                 self.jwt_token = session_data.get('jwtToken')
                 self.refresh_token = session_data.get('refreshToken')
                 self.feed_token = session_data.get('feedToken')
                 
-                # CRITICAL: Set the access token for subsequent API calls
-                self.smart_api.setAccessToken(self.jwt_token)
-                
-                logger.info("✅ Successfully logged in to Angel One")
-                return True
-            return False
+                # Verify token is working by getting profile
+                try:
+                    profile = self.smart_api.getProfile(self.refresh_token)
+                    if profile and profile.get('status'):
+                        logger.info("✅ Successfully logged in to Angel One")
+                        return True
+                    else:
+                        logger.error("❌ Token verification failed")
+                        return False
+                except Exception as verify_error:
+                    logger.warning(f"⚠️ Profile verification skipped: {verify_error}")
+                    # Continue anyway as generateSession succeeded
+                    logger.info("✅ Successfully logged in to Angel One")
+                    return True
+            else:
+                error_msg = data.get('message', 'Unknown error') if data else 'No response'
+                logger.error(f"❌ Login failed: {error_msg}")
+                return False
             
         except AngelOneAPIError as e:
             logger.error(f"❌ Login error: {e}")
