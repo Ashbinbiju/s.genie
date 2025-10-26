@@ -1,0 +1,330 @@
+"""Streamlit Dashboard for Intraday Trading System"""
+
+import streamlit as st
+import pandas as pd
+import plotly.graph_objects as go
+from plotly.subplots import make_subplots
+from datetime import datetime, timedelta
+import time
+from smartapi_client import SmartAPIClient
+from indicators import calculate_indicators, generate_signals
+
+# Try to import from secure config first, fall back to regular config
+try:
+    from config_secure import TRADING_CONFIG, STOCK_SYMBOLS, TIMEFRAME_MAP
+except:
+    from config import TRADING_CONFIG, STOCK_SYMBOLS, TIMEFRAME_MAP
+
+# Page config
+st.set_page_config(
+    page_title="Advanced Intraday Trading System",
+    page_icon="📈",
+    layout="wide"
+)
+
+# Initialize session state
+if 'smart_api' not in st.session_state:
+    st.session_state.smart_api = None
+if 'logged_in' not in st.session_state:
+    st.session_state.logged_in = False
+
+
+def login_to_angel():
+    """Login to Angel One SmartAPI"""
+    with st.spinner("🔐 Logging in to Angel One..."):
+        client = SmartAPIClient()
+        if client.login():
+            st.session_state.smart_api = client
+            st.session_state.logged_in = True
+            st.success("✅ Successfully logged in!")
+            return True
+        else:
+            st.error("❌ Login failed")
+            return False
+
+
+def fetch_market_data(symbol, token, exchange, timeframe, days=5):
+    """Fetch historical data with proper date range"""
+    try:
+        client = st.session_state.smart_api
+        to_date = datetime.now().strftime("%Y-%m-%d %H:%M")
+        from_date = (datetime.now() - timedelta(days=days)).strftime("%Y-%m-%d %H:%M")
+        interval = TIMEFRAME_MAP.get(timeframe, 'THIRTY_MINUTE')
+        
+        df = client.get_historical_data(token, exchange, interval, from_date, to_date)
+        
+        if not df.empty:
+            # Keep only today's data for intraday
+            today = datetime.now().date()
+            df = df[df.index.date == today] if not df.empty else df
+        
+        return df
+    except Exception as e:
+        st.error(f"Error: {e}")
+        return pd.DataFrame()
+
+
+def create_chart(df, symbol):
+    """Create candlestick chart"""
+    fig = make_subplots(
+        rows=3, cols=1,
+        shared_xaxes=True,
+        vertical_spacing=0.03,
+        row_heights=[0.6, 0.2, 0.2],
+        subplot_titles=(f'{symbol} - Price', 'RSI', 'MACD')
+    )
+    
+    # Candlestick
+    fig.add_trace(go.Candlestick(
+        x=df.index,
+        open=df['open'],
+        high=df['high'],
+        low=df['low'],
+        close=df['close'],
+        name='Price'
+    ), row=1, col=1)
+    
+    # EMAs
+    fig.add_trace(go.Scatter(x=df.index, y=df['ema_fast'], name='EMA 9', line=dict(color='green', width=1)), row=1, col=1)
+    fig.add_trace(go.Scatter(x=df.index, y=df['ema_medium'], name='EMA 21', line=dict(color='orange', width=1)), row=1, col=1)
+    fig.add_trace(go.Scatter(x=df.index, y=df['ema_slow'], name='EMA 50', line=dict(color='red', width=1)), row=1, col=1)
+    fig.add_trace(go.Scatter(x=df.index, y=df['vwap'], name='VWAP', line=dict(color='blue', width=2, dash='dot')), row=1, col=1)
+    
+    # Buy/Sell signals
+    buy_signals = df[df['buy_signal']]
+    sell_signals = df[df['sell_signal']]
+    
+    if not buy_signals.empty:
+        fig.add_trace(go.Scatter(
+            x=buy_signals.index,
+            y=buy_signals['low'] * 0.995,
+            mode='markers',
+            marker=dict(symbol='triangle-up', size=15, color='green'),
+            name='Buy'
+        ), row=1, col=1)
+    
+    if not sell_signals.empty:
+        fig.add_trace(go.Scatter(
+            x=sell_signals.index,
+            y=sell_signals['high'] * 1.005,
+            mode='markers',
+            marker=dict(symbol='triangle-down', size=15, color='red'),
+            name='Sell'
+        ), row=1, col=1)
+    
+    # RSI
+    fig.add_trace(go.Scatter(x=df.index, y=df['rsi'], name='RSI', line=dict(color='purple')), row=2, col=1)
+    fig.add_hline(y=70, line_dash="dash", line_color="red", row=2, col=1)
+    fig.add_hline(y=30, line_dash="dash", line_color="green", row=2, col=1)
+    
+    # MACD
+    fig.add_trace(go.Scatter(x=df.index, y=df['macd_line'], name='MACD', line=dict(color='blue')), row=3, col=1)
+    fig.add_trace(go.Scatter(x=df.index, y=df['macd_signal'], name='Signal', line=dict(color='orange')), row=3, col=1)
+    fig.add_trace(go.Bar(x=df.index, y=df['macd_hist'], name='Hist', marker_color='gray'), row=3, col=1)
+    
+    fig.update_layout(height=900, showlegend=True, xaxis_rangeslider_visible=False)
+    return fig
+
+
+# Main UI
+st.title("📈 Advanced Intraday Trading System")
+st.markdown("---")
+
+# Sidebar
+with st.sidebar:
+    st.header("⚙️ Controls")
+    
+    if not st.session_state.logged_in:
+        if st.button("🔐 Login to Angel One", type="primary"):
+            login_to_angel()
+    else:
+        st.success("✅ Connected")
+    
+    st.markdown("---")
+    selected_symbol = st.selectbox("📊 Select Stock", list(STOCK_SYMBOLS.keys()))
+    timeframe = st.selectbox("⏰ Timeframe", ['5min', '15min', '30min'], index=2)
+    
+    st.markdown("---")
+    st.markdown("**🔄 Auto Refresh**")
+    auto_refresh = st.checkbox("Enable Auto Refresh")
+    
+    if auto_refresh:
+        refresh_interval = st.slider("Interval (seconds)", 30, 300, 60)
+    
+    st.markdown("---")
+    st.markdown("**⚙️ Debug**")
+    show_debug = st.checkbox("Show Debug Info")
+    
+    st.markdown("---")
+    st.markdown("**💡 Tips**")
+    st.caption("• Refresh both dashboards to sync")
+    st.caption("• Check same timeframe (30min)")
+    st.caption("• VWAP resets daily at 9:15 AM")
+    st.caption("• Data lag: 1-5 seconds normal")
+
+# Main content
+if not st.session_state.logged_in:
+    st.warning("⚠️ Please login to view data")
+    st.stop()
+
+symbol_info = STOCK_SYMBOLS[selected_symbol]
+
+# Show debug info if enabled
+if show_debug:
+    with st.sidebar:
+        st.caption(f"Token: {symbol_info['token']}")
+        st.caption(f"Exchange: {symbol_info['exchange']}")
+        st.caption(f"API Interval: {TIMEFRAME_MAP.get(timeframe)}")
+
+# Add data freshness indicator
+col_refresh1, col_refresh2 = st.columns([3, 1])
+with col_refresh1:
+    with st.spinner(f"📊 Fetching {selected_symbol}..."):
+        df = fetch_market_data(selected_symbol, symbol_info['token'], symbol_info['exchange'], timeframe, days=5)
+with col_refresh2:
+    if st.button("🔄 Refresh Now"):
+        st.rerun()
+
+if df.empty:
+    st.error("❌ No data available. Market might be closed or data unavailable.")
+    st.info(f"💡 Try: Different timeframe, Check market hours (9:20-15:30 IST), Or select another stock")
+    st.stop()
+
+# Show data info
+st.caption(f"📊 Data: {len(df)} candles | Last updated: {df.index[-1].strftime('%Y-%m-%d %H:%M:%S')} IST")
+
+# Calculate indicators & signals
+df = calculate_indicators(df, TRADING_CONFIG)
+df = generate_signals(df, TRADING_CONFIG)
+
+latest = df.iloc[-1]
+prev = df.iloc[-2] if len(df) > 1 else latest
+
+# Metrics
+col1, col2, col3, col4, col5, col6 = st.columns(6)
+
+with col1:
+    change = latest['close'] - prev['close']
+    pct = (change / prev['close']) * 100
+    st.metric("💰 LTP", f"₹{latest['close']:.2f}", f"{change:+.2f} ({pct:+.2f}%)")
+
+with col2:
+    trend = "🟢 Bull" if latest['bullish_trend'] else "🔴 Bear"
+    st.metric("📈 Trend", trend)
+
+with col3:
+    rsi_color = "🔴" if latest['rsi'] > 70 else "🟢" if latest['rsi'] < 30 else "🟡"
+    st.metric(f"{rsi_color} RSI", f"{latest['rsi']:.1f}")
+
+with col4:
+    adx_color = "🟢" if latest['adx'] > 20 else "🔴"
+    st.metric(f"{adx_color} ADX", f"{latest['adx']:.1f}")
+
+with col5:
+    vwap_pos = "Above" if latest['close'] > latest['vwap'] else "Below"
+    st.metric("🔵 VWAP", vwap_pos)
+
+with col6:
+    vol = "🔊 High" if latest['volume_spike'] else "🔉 Normal"
+    st.metric("📊 Volume", vol)
+
+st.markdown("---")
+
+# Signal panel with enhanced details
+col1, col2 = st.columns(2)
+
+with col1:
+    if latest['buy_signal']:
+        sl_price = latest['close'] - latest['atr'] * TRADING_CONFIG['atr_multiplier_sl']
+        tp_price = latest['close'] + latest['atr'] * TRADING_CONFIG['atr_multiplier_tp']
+        risk_reward = (tp_price - latest['close']) / (latest['close'] - sl_price)
+        st.success(f"""
+        🟢 **BUY SIGNAL DETECTED!**
+        
+        **Entry:** ₹{latest['close']:.2f}
+        **Stop Loss:** ₹{sl_price:.2f} ({((sl_price - latest['close']) / latest['close'] * 100):.2f}%)
+        **Take Profit:** ₹{tp_price:.2f} ({((tp_price - latest['close']) / latest['close'] * 100):.2f}%)
+        **Risk:Reward:** 1:{risk_reward:.2f}
+        
+        **Signal Strength:** {int(latest['buy_strength'])}/2
+        **Quality Score:** {int(latest['buy_quality_score'])}/4
+        **ATR:** ₹{latest['atr']:.2f}
+        """)
+    else:
+        st.info("ℹ️ No BUY signal at current candle")
+
+with col2:
+    if latest['sell_signal']:
+        sl_price = latest['close'] + latest['atr'] * TRADING_CONFIG['atr_multiplier_sl']
+        tp_price = latest['close'] - latest['atr'] * TRADING_CONFIG['atr_multiplier_tp']
+        risk_reward = (latest['close'] - tp_price) / (sl_price - latest['close'])
+        st.error(f"""
+        🔴 **SELL SIGNAL DETECTED!**
+        
+        **Entry:** ₹{latest['close']:.2f}
+        **Stop Loss:** ₹{sl_price:.2f} ({((sl_price - latest['close']) / latest['close'] * 100):.2f}%)
+        **Take Profit:** ₹{tp_price:.2f} ({((tp_price - latest['close']) / latest['close'] * 100):.2f}%)
+        **Risk:Reward:** 1:{risk_reward:.2f}
+        
+        **Signal Strength:** {int(latest['sell_strength'])}/2
+        **Quality Score:** {int(latest['sell_quality_score'])}/4
+        **ATR:** ₹{latest['atr']:.2f}
+        """)
+    else:
+        st.info("ℹ️ No SELL signal at current candle")
+
+st.markdown("---")
+
+# Chart
+st.subheader("📊 Price Chart")
+chart = create_chart(df, selected_symbol)
+st.plotly_chart(chart, use_container_width=True)
+
+# Technical details
+with st.expander("📋 Technical Details & TradingView Comparison"):
+    col1, col2, col3, col4 = st.columns(4)
+    
+    with col1:
+        st.markdown("**EMAs**")
+        st.write(f"Fast (9): ₹{latest['ema_fast']:.2f}")
+        st.write(f"Medium (21): ₹{latest['ema_medium']:.2f}")
+        st.write(f"Slow (50): ₹{latest['ema_slow']:.2f}")
+    
+    with col2:
+        st.markdown("**Momentum**")
+        st.write(f"RSI: {latest['rsi']:.2f}")
+        st.write(f"MACD: {latest['macd_line']:.4f}")
+        st.write(f"Signal: {latest['macd_signal']:.4f}")
+    
+    with col3:
+        st.markdown("**Volatility**")
+        st.write(f"ATR: ₹{latest['atr']:.2f}")
+        st.write(f"ADX: {latest['adx']:.2f}")
+        st.write(f"VWAP: ₹{latest['vwap']:.2f}")
+    
+    with col4:
+        st.markdown("**Trend**")
+        st.write(f"Bullish: {'✅' if latest['bullish_trend'] else '❌'}")
+        st.write(f"Bearish: {'✅' if latest['bearish_trend'] else '❌'}")
+        st.write(f"Volume: {latest['volume']:,.0f}")
+    
+    st.markdown("---")
+    st.markdown("**📊 Compare with TradingView:**")
+    st.info(f"""
+    ✅ **Quick Check:**
+    - Current Price: ₹{latest['close']:.2f}
+    - RSI: {latest['rsi']:.2f} (Compare with TV RSI indicator)
+    - Trend: {'Bullish' if latest['bullish_trend'] else 'Bearish' if latest['bearish_trend'] else 'Neutral'}
+    - VWAP Position: {'Above' if latest['close'] > latest['vwap'] else 'Below'}
+    
+    💡 **If values differ slightly:**
+    - Data lag of 1-5 seconds is normal
+    - Different exchanges may have small price variations
+    - VWAP resets daily (check if TradingView is also showing daily VWAP)
+    - Refresh both to sync to same candle
+    """)
+
+# Auto refresh
+if auto_refresh:
+    time.sleep(refresh_interval)
+    st.rerun()
