@@ -24,5 +24,6 @@ ENV/
 Thumbs.db
 
 # Credentials (DO NOT COMMIT)
+config.py
 config_local.py
 credentials.json

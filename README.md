@@ -110,14 +110,15 @@ webtest/
 └── requirements.txt        # Python dependencies
 ```
 
-## 🔐 Your Credentials (Already Configured)
+## 🔐 Credentials Setup
 
-```python
-CLIENT_ID = "AAAG399109"
-PASSWORD = "1503"
-TOTP_SECRET = "OLRQ3CYBLPN2XWQPHLKMB7WEKI"
-TRADING_API_KEY = "ruseeaBq"
-```
+Credentials are securely managed and **NOT** stored in the repository.
+
+### For Local Development:
+Edit `config.py` with your credentials (file is gitignored)
+
+### For Streamlit Cloud:
+Configure secrets in Streamlit Cloud dashboard (see `secrets.toml.template`)
 
 ## ⚠️ Important Notes
 
