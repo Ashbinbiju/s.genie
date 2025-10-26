@@ -76,7 +76,8 @@ STOCKS_BY_SECTOR = {
         "BIOCON": "11373",
         "TORNTPHARM": "3518",
         "ALKEM": "11703",
-        "LAURUSLABS": "17818"
+        "LAURUSLABS": "17818",
+        "THYROCARE": "20489"
     },
     "Energy & Power": {
         "RELIANCE": "2885",
