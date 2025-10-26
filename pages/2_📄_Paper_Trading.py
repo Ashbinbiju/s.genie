@@ -3,6 +3,8 @@
 import streamlit as st
 import pandas as pd
 from datetime import datetime
+import json
+import os
 from supabase_db import PaperTradeDB
 from paper_trading import PaperTradingEngine
 
@@ -13,6 +15,40 @@ st.set_page_config(
 )
 
 st.title("📄 Paper Trading Dashboard")
+
+# Settings file path
+SETTINGS_FILE = "paper_trade_settings.json"
+
+# Load settings from file
+def load_settings():
+    """Load paper trading settings from file"""
+    if os.path.exists(SETTINGS_FILE):
+        try:
+            with open(SETTINGS_FILE, 'r') as f:
+                return json.load(f)
+        except:
+            pass
+    return {
+        'enabled': False,
+        'min_strength': 3,
+        'min_quality': 2,
+        'risk_per_trade': 2.0
+    }
+
+# Save settings to file
+def save_settings(settings):
+    """Save paper trading settings to file"""
+    try:
+        with open(SETTINGS_FILE, 'w') as f:
+            json.dump(settings, f)
+        return True
+    except Exception as e:
+        st.error(f"Failed to save settings: {e}")
+        return False
+
+# Initialize session state with saved settings
+if 'auto_trade_settings' not in st.session_state:
+    st.session_state.auto_trade_settings = load_settings()
 
 # Initialize
 db = PaperTradeDB()
@@ -175,14 +211,37 @@ with tab4:
     
     st.markdown("**Automation Settings**")
     
-    auto_trade = st.checkbox("Enable Automated Trading", value=False, key="auto_trade")
+    # Get current settings
+    current_settings = st.session_state.auto_trade_settings
+    
+    auto_trade = st.checkbox(
+        "Enable Automated Trading", 
+        value=current_settings.get('enabled', False),
+        key="auto_trade_checkbox"
+    )
     
     if auto_trade:
         st.warning("⚠️ Automated trading is enabled. Signals will be executed automatically based on criteria below.")
         
-        min_strength = st.slider("Minimum Signal Strength", 0, 4, 3)
-        min_quality = st.slider("Minimum Signal Quality", 0, 4, 2)
-        risk_per_trade = st.slider("Risk Per Trade (%)", 0.5, 5.0, 2.0, 0.5)
+        min_strength = st.slider(
+            "Minimum Signal Strength", 
+            0, 4, 
+            current_settings.get('min_strength', 3),
+            key="strength_slider"
+        )
+        min_quality = st.slider(
+            "Minimum Signal Quality", 
+            0, 4, 
+            current_settings.get('min_quality', 2),
+            key="quality_slider"
+        )
+        risk_per_trade = st.slider(
+            "Risk Per Trade (%)", 
+            0.5, 5.0, 
+            current_settings.get('risk_per_trade', 2.0), 
+            0.5,
+            key="risk_slider"
+        )
         
         st.info(f"""
         **Current Settings:**
@@ -191,16 +250,32 @@ with tab4:
         - Risk Per Trade: {risk_per_trade}%
         """)
         
-        # Save settings to session state
-        st.session_state.auto_trade_settings = {
+        # Update settings
+        new_settings = {
             'enabled': True,
             'min_strength': min_strength,
             'min_quality': min_quality,
             'risk_per_trade': risk_per_trade
         }
+        
+        # Check if settings changed
+        if new_settings != st.session_state.auto_trade_settings:
+            st.session_state.auto_trade_settings = new_settings
+            if save_settings(new_settings):
+                st.success("✅ Settings saved!")
     else:
         st.info("Automated trading is disabled. Signals will only be displayed.")
-        st.session_state.auto_trade_settings = {'enabled': False}
+        new_settings = {
+            'enabled': False,
+            'min_strength': current_settings.get('min_strength', 3),
+            'min_quality': current_settings.get('min_quality', 2),
+            'risk_per_trade': current_settings.get('risk_per_trade', 2.0)
+        }
+        
+        # Save disabled state
+        if new_settings != st.session_state.auto_trade_settings:
+            st.session_state.auto_trade_settings = new_settings
+            save_settings(new_settings)
     
     st.markdown("---")
     st.markdown("**Telegram Notifications**")
