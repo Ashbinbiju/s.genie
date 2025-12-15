@@ -143,6 +143,34 @@ if st.sidebar.button("Run Analysis"):
                                     st.success(f"IN: {t_in['web_name']}")
                                     st.caption(f"XP: {t_in['predicted_points']:.1f} | £{t_in['price']}")
                                 
+                                # --- AI Confidence Indicator ---
+                                import time
+                                import os
+                                try:
+                                    # 1. Data Freshness
+                                    file_path = "data/raw/bootstrap_static.json"
+                                    if os.path.exists(file_path):
+                                        mtime = os.path.getmtime(file_path)
+                                        hours_old = (time.time() - mtime) / 3600
+                                        freshness = max(0.5, 1.0 - (hours_old / 48)) # Decay over 48h, min 0.5
+                                    else:
+                                        freshness = 0.5
+                                    
+                                    # 2. Model Agreement (Proxy: Minutes Certainty)
+                                    agreement = t_in['minutes_prob']
+                                    
+                                    confidence = freshness * agreement
+                                    
+                                    # Badge Color
+                                    if confidence > 0.8: conf_color = "green"
+                                    elif confidence > 0.6: conf_color = "orange"
+                                    else: conf_color = "red"
+                                    
+                                    st.caption(f"🤖 AI Confidence: :{conf_color}[**{confidence:.2f}**]")
+                                except:
+                                    pass
+                                # -------------------------------
+                                
                                 def generate_reasoning(player_in, player_out, gain):
                                     # 1. Fixture & FDR
                                     fdr_in = player_in['fixture_difficulty']
