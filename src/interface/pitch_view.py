@@ -106,8 +106,8 @@ def get_pitch_style():
     """
 
 # Known missing photos or special overrides
-# 714: Woltemade (Photo ID: 4470313)
-MANUAL_MISSING = {'714', '541065', '4470313', 'default'}
+# 714/4470313: Woltemade, 541065: Manual check, 219847/4444565: Alderete
+MANUAL_MISSING = {'714', '541065', '4470313', 'default', '219847', '4444565'}
 
 def check_image_exists(photo_id):
     """
@@ -116,27 +116,25 @@ def check_image_exists(photo_id):
     """
     # 1. Manual Override Checks FIRST (bypasses cache)
     if photo_id in MANUAL_MISSING:
-        # Update cache to ensure consistency but return False immediately
-        if 'image_validity_cache' in st.session_state:
-            st.session_state.image_validity_cache[photo_id] = False
         return False
         
-    # Initialize cache in session state if needed
-    if 'image_validity_cache' not in st.session_state:
-        st.session_state.image_validity_cache = {}
+    # Initialize cache in session state if needed (New key to force refresh)
+    CACHE_KEY = 'img_valid_cache_v2'
+    if CACHE_KEY not in st.session_state:
+        st.session_state[CACHE_KEY] = {}
         
-    if photo_id in st.session_state.image_validity_cache:
-        return st.session_state.image_validity_cache[photo_id]
+    if photo_id in st.session_state[CACHE_KEY]:
+        return st.session_state[CACHE_KEY][photo_id]
     
     url = f"https://resources.premierleague.com/premierleague/photos/players/110x140/p{photo_id}.png"
     try:
         response = requests.head(url, timeout=1.0)
-        # Check status and ensure content isn't empty
-        is_valid = response.status_code == 200 and int(response.headers.get('content-length', 0)) > 1000
+        # Check status and ensure content isn't empty (placeholder images are often small)
+        is_valid = response.status_code == 200 and int(response.headers.get('content-length', 0)) > 2000
     except:
         is_valid = False
         
-    st.session_state.image_validity_cache[photo_id] = is_valid
+    st.session_state[CACHE_KEY][photo_id] = is_valid
     return is_valid
 
 def get_player_card_html(player, is_new=False):
