@@ -1,5 +1,10 @@
 import streamlit as st
 import pandas as pd
+import requests
+
+# Cache for image validation checks to avoid repeated network calls
+# Key: photo_id, Value: bool (True if valid, False if 404)
+IMAGE_CACHE = {}
 
 def get_pitch_style():
     return """
@@ -98,32 +103,51 @@ def get_pitch_style():
     </style>
     """
 
+def check_image_exists(photo_id):
+    """
+    Checks if a player photo exists on the Premier League server.
+    Uses caching to minimize latency.
+    """
+    if photo_id in IMAGE_CACHE:
+        return IMAGE_CACHE[photo_id]
+    
+    url = f"https://resources.premierleague.com/premierleague/photos/players/110x140/p{photo_id}.png"
+    try:
+        response = requests.head(url, timeout=1.0)
+        is_valid = response.status_code == 200
+    except:
+        is_valid = False
+        
+    IMAGE_CACHE[photo_id] = is_valid
+    return is_valid
+
 def get_player_card_html(player, is_new=False):
     p_type = player['element_type']
-    # Normalize Photo ID: remove ext, remove 'p' prefix, ensure numeric
+    
+    # 1. Normalize ID
     photo_raw = str(player.get('photo', 'default')).replace('.jpg', '').replace('.png', '').replace('p', '')
     
+    # 2. Determine Image URL via Server-Side Check
+    # Default to shirt
+    img_url = "https://fantasy.premierleague.com/img/shirts/standard/shirt_0.png"
+    
     if photo_raw.isdigit():
-        # Standard format is p{id}.png
-        img_url = f"https://resources.premierleague.com/premierleague/photos/players/110x140/p{photo_raw}.png"
-    else:
-        img_url = "https://fantasy.premierleague.com/img/shirts/standard/shirt_0.png"
+        # Only use the real photo if we confirm it exists (Status 200)
+        if check_image_exists(photo_raw):
+            img_url = f"https://resources.premierleague.com/premierleague/photos/players/110x140/p{photo_raw}.png"
     
     badge_html = ""
     if is_new:
         badge_html = '<div style="position: absolute; top: -5px; right: -5px; background: #28a745; color: white; border-radius: 50%; width: 20px; height: 20px; font-size: 10px; display: flex; align-items: center; justify-content: center; border: 1px solid white; z-index: 5;">IN</div>'
     
-    # next_opponent might be missing if key issue persisted, so safe get
     next_opp = player.get('next_opponent', '-')
     if next_opp != '-':
         next_opp = f"vs {next_opp}"
 
-    # Fallback/Style
+    # 3. Clean HTML (No onerror needed since we validated the URL)
     return f"""<div class="player-card" style="position: relative;">{badge_html}
 <div style="display: flex; justify-content: center; margin-bottom: 4px; height: 60px; align-items: flex-end;">
-<object data="{img_url}" type="image/png" style="width: auto; height: 60px; object-fit: contain; pointer-events: none;">
-    <img src="https://fantasy.premierleague.com/img/shirts/standard/shirt_0.png" style="width: auto; height: 60px; object-fit: contain;">
-</object>
+<img src="{img_url}" style="width: auto; height: 60px; object-fit: contain;">
 </div>
 <div class="player-name" style="white-space: normal; line-height: 1.2; height: 32px; display: flex; align-items: center; justify-content: center;">{player['web_name']}</div>
 <div class="player-info">
