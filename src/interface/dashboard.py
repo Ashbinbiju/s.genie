@@ -372,7 +372,13 @@ if st.session_state.get('has_run', False):
                                             st.markdown(format_player(p))
                                             
                                     if analysis['danger_player'] is not None:
-                                        st.warning(f"⚠️ **Major Threat**: {analysis['danger_player']['web_name']} is their biggest differential ({analysis['danger_player']['predicted_points']:.1f} XP).")
+                                        dp = analysis['danger_player']
+                                        dp_xp = dp['predicted_points']
+                                        
+                                        if dp_xp >= 6.0:
+                                            st.warning(f"⚠️ **Major Threat**: {dp['web_name']} is their biggest differential ({dp_xp:.1f} XP).")
+                                        else:
+                                            st.info(f"ℹ️ **Top Scout Target**: {dp['web_name']} is their highest unique ({dp_xp:.1f} XP).")
                                     
                                 else:
                                     st.error("Could not fetch rival team.")
