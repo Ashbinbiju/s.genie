@@ -28,7 +28,7 @@ def get_pitch_style():
         display: flex;
         flex-direction: column;
         justify-content: space-around;
-        height: 600px;
+        min-height: 850px; /* Allow expansion for taller cards */
         align-items: center; /* Center rows horizontally */
     }
     /* Rest of CSS remains similar but minified/cleaned */
@@ -112,16 +112,19 @@ def check_image_exists(photo_id):
     Checks if a player photo exists on the Premier League server.
     Uses caching to minimize latency.
     """
+    # 1. Manual Override Checks FIRST (bypasses cache)
+    if photo_id in MANUAL_MISSING:
+        # Update cache to ensure consistency but return False immediately
+        if 'image_validity_cache' in st.session_state:
+            st.session_state.image_validity_cache[photo_id] = False
+        return False
+        
     # Initialize cache in session state if needed
     if 'image_validity_cache' not in st.session_state:
         st.session_state.image_validity_cache = {}
         
     if photo_id in st.session_state.image_validity_cache:
         return st.session_state.image_validity_cache[photo_id]
-        
-    if photo_id in MANUAL_MISSING:
-        st.session_state.image_validity_cache[photo_id] = False
-        return False
     
     url = f"https://resources.premierleague.com/premierleague/photos/players/110x140/p{photo_id}.png"
     try:
