@@ -1,0 +1,9 @@
+pandas
+numpy
+requests
+lightgbm
+scikit-learn
+pulp
+streamlit
+tqdm
+fpl

@@ -1,0 +1,10 @@
+__pycache__/
+*.pyc
+.DS_Store
+.vscode/
+.env
+venv/
+reports/
+data/raw/
+data/processed/
+*.parquet
