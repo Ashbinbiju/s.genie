@@ -52,8 +52,12 @@ if st.sidebar.button("Run Analysis"):
             st.metric("Current Team Value", f"£{current_value:.1f}m")
             
             # 5. Optimize
+            # Calculate Free Transfers automatically
+            fts = fpl.calculate_free_transfers(team_id, gw)
+            st.sidebar.info(f"ℹ️ Detected **{fts}** Free Transfer(s)")
+            
             optimizer = TransferOptimizer(budget=max(budget, current_value))
-            best_team = optimizer.recommend_transfers(df, current_ids, free_transfers=1)
+            best_team = optimizer.recommend_transfers(df, current_ids, free_transfers=fts)
             
             if best_team is not None:
                 # Layout

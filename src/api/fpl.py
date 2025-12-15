@@ -53,6 +53,47 @@ class FPLClient:
         # to avoid file clutter, but we could if needed.
         return data
 
+    def get_transfers(self, team_id):
+        """Fetches transfer history."""
+        return self._get(f"entry/{team_id}/transfers/")
+
+    def calculate_free_transfers(self, team_id, current_gw):
+        """
+        Calculates available free transfers for the upcoming current_gw.
+        Based on 2024/25 Rules:
+        - Start with 1 FT.
+        - Accumulate up to 5 FTs.
+        - Deduct transfers made. If < 0, reset to 0 (hits taken), then add 1 for next week.
+        """
+        transfers = self.get_transfers(team_id)
+        if transfers is None:
+            return 1 # Default fallback
+            
+        # Count transfers per gameweek
+        tx_counts = {}
+        for t in transfers:
+            ev = t['event']
+            tx_counts[ev] = tx_counts.get(ev, 0) + 1
+            
+        # Replay history
+        available_ft = 1 # Start of season (GW1)
+        
+        # Iterate from GW1 up to the GW BEFORE the current one
+        # Because we want to know what we have FOR current_gw
+        for g in range(1, current_gw):
+            used = tx_counts.get(g, 0)
+            available_ft -= used
+            
+            # If we went negative (hits), we start next week with 1 (0 carried + 1 new)
+            # If we stayed positive, we carry over + 1 new
+            if available_ft < 0:
+                available_ft = 0
+                
+            available_ft += 1
+            available_ft = min(5, available_ft) # Cap at 5
+            
+        return available_ft
+
     def get_team_picks(self, team_id, gw):
         """Fetches a specific team's picks for a gameweek. Tries gw-1, then gw-2..."""
         # Try to find the latest available picks starting from gw-1
