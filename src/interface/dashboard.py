@@ -14,6 +14,7 @@ from src.model.predictor import PointsPredictor
 from src.optimization.solver import TransferOptimizer
 from src.optimization.team_selection import select_starting_xi
 from src.optimization.chips import ChipStrategy
+from src.analysis.rivals import RivalSpy
 from src.interface.pitch_view import render_pitch_view
 
 
@@ -68,9 +69,13 @@ if st.sidebar.button("Run Analysis"):
             
             if best_team is not None:
                 # Layout
-                tab1, tab2, tab3 = st.tabs(["🚀 Optimized Squad", "🔄 Transfer Analysis", "📰 News & Risks"])
+                # Layout
+                tab1, tab2, tab3, tab4 = st.tabs(["🚀 Optimized Squad", "🔄 Transfer Analysis", "📰 News & Risks", "🏆 Rival Spy"])
                 
-                # OPTIMIZED SQUAD TAB
+                # ... (Tabs 1, 2, 3 content remains same, we skip to end of indentation block) ...
+
+                # ... (Existing code for Tab 3 ends roughly around line 273 in original file, we append new tab)
+
                 # OPTIMIZED SQUAD TAB
                 with tab1:
                     # Calculate transfers for highlighting
@@ -271,6 +276,71 @@ if st.sidebar.button("Run Analysis"):
                         hide_index=True,
                         width="stretch"
                     )
+
+                # RIVAL SPY TAB
+                with tab4:
+                    st.subheader("🕵️‍♂️ Rival Scout")
+                    league_id = st.text_input("League ID", value="1311994")
+                    
+                    if st.button("Fetch Standings"):
+                        with st.spinner("Spying on league..."):
+                            standings = fpl.get_league_standings(league_id)
+                            if standings:
+                                # Save to session state to persist dropdown
+                                st.session_state['standings'] = standings
+                            else:
+                                st.error("Could not fetch standings.")
+                    
+                    if 'standings' in st.session_state:
+                        standings = st.session_state['standings']
+                        # Create options dict: "Name - Team" -> ID
+                        results = standings['standings']['results']
+                        rival_map = {f"{r['player_name']} - {r['entry_name']}": r['entry'] for r in results if r['entry'] != team_id}
+                        
+                        target_name = st.selectbox("Select Target", list(rival_map.keys()))
+                        target_id = rival_map[target_name]
+                        
+                        if st.button("Analyze Head-to-Head"):
+                            with st.spinner(f"Comparing vs {target_name}..."):
+                                # Fetch Rival Picks
+                                rival_picks = fpl.get_team_picks(target_id, gw)
+                                if rival_picks:
+                                    r_ids = [p['element'] for p in rival_picks['picks']]
+                                    rival_df = df[df['id'].isin(r_ids)]
+                                    
+                                    # Run Spy
+                                    spy = RivalSpy(current_team_df, rival_df)
+                                    analysis = spy.compare()
+                                    
+                                    # Display
+                                    st.divider()
+                                    metric_col1, metric_col2, metric_col3 = st.columns(3)
+                                    metric_col1.metric("Common Players", f"{analysis['common_count']}")
+                                    metric_col2.metric("Differentials", f"{analysis['differential_count']}")
+                                    
+                                    swing = analysis['net_swing']
+                                    swing_color = "normal"
+                                    if swing > 5: swing_color = "normal" # Streamlit metric delta handles color usually
+                                    metric_col3.metric("Projected Swing", f"{swing:+.1f} XP", delta=f"{swing:.1f}")
+                                    
+                                    st.subheader("⚡ Differential Battle")
+                                    c1, c2 = st.columns(2)
+                                    
+                                    with c1:
+                                        st.caption("🛡️ You Have (Unique)")
+                                        for _, p in analysis['my_diffs'].iterrows():
+                                            st.write(f"**{p['web_name']}** ({p['predicted_points']:.1f} XP)")
+                                            
+                                    with c2:
+                                        st.caption("⚔️ They Have (Unique)")
+                                        for _, p in analysis['rival_diffs'].iterrows():
+                                            st.write(f"**{p['web_name']}** ({p['predicted_points']:.1f} XP)")
+                                            
+                                    if analysis['danger_player'] is not None:
+                                        st.warning(f"⚠️ **Major Threat**: {analysis['danger_player']['web_name']} is their biggest differential ({analysis['danger_player']['predicted_points']:.1f} XP).")
+                                    
+                                else:
+                                    st.error("Could not fetch rival team.")
 
             else:
                 st.error("Optimization failed to find a valid team.")

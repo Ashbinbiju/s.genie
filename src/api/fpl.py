@@ -61,6 +61,11 @@ class FPLClient:
         """Fetches history including past performance and chips used."""
         return self._get(f"entry/{team_id}/history/")
 
+    def get_league_standings(self, league_id):
+        """Fetches listings for a classic league."""
+        # Using ?page_new_entries=1&page_standings=1 is standard for this endpoint
+        return self._get(f"leagues-classic/{league_id}/standings/?page_new_entries=1&page_standings=1&phase=1")
+
     def calculate_free_transfers(self, team_id, current_gw):
         """
         Calculates available free transfers for the upcoming current_gw.
