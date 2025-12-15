@@ -322,22 +322,40 @@ if st.session_state.get('has_run', False):
                                     metric_col2.metric("Differentials", f"{analysis['differential_count']}")
                                     
                                     swing = analysis['net_swing']
-                                    swing_color = "normal"
-                                    if swing > 5: swing_color = "normal" # Streamlit metric delta handles color usually
                                     metric_col3.metric("Projected Swing", f"{swing:+.1f} XP", delta=f"{swing:.1f}")
+                                    st.caption(f"Horizon: GW{gw} only | No captaincy applied")
+                                    
+                                    # Insights
+                                    if swing < -5:
+                                        st.info(f"""
+                                        **Why you're behind:**
+                                        • They own **{analysis['rival_heavy_hitters']}** high-XP players (>5.5 XP).
+                                        • You have **{analysis['my_zeros']}** players with ~0.0 XP (Bench/Injured).
+                                        • Main gap is in **{analysis['main_gap_pos']}**.
+                                        """)
                                     
                                     st.subheader("⚡ Differential Battle")
                                     c1, c2 = st.columns(2)
                                     
+                                    def format_player(p):
+                                        xp = p['predicted_points']
+                                        name = p['web_name']
+                                        if xp >= 6.0: return f":red[**{name}**] ({xp:.1f} XP)"
+                                        if xp >= 5.0: return f":orange[**{name}**] ({xp:.1f} XP)"
+                                        if xp < 0.5: return f"{name} (⚠️ {xp:.1f} XP)"
+                                        return f"**{name}** ({xp:.1f} XP)"
+                                    
                                     with c1:
                                         st.caption("🛡️ You Have (Unique)")
                                         for _, p in analysis['my_diffs'].iterrows():
-                                            st.write(f"**{p['web_name']}** ({p['predicted_points']:.1f} XP)")
+                                            st.markdown(format_player(p))
                                             
                                     with c2:
                                         st.caption("⚔️ They Have (Unique)")
                                         for _, p in analysis['rival_diffs'].iterrows():
-                                            st.write(f"**{p['web_name']}** ({p['predicted_points']:.1f} XP)")
+                                            st.markdown(format_player(p))
+                                            
+                                    if analysis['danger_player'] is not None:
                                             
                                     if analysis['danger_player'] is not None:
                                         st.warning(f"⚠️ **Major Threat**: {analysis['danger_player']['web_name']} is their biggest differential ({analysis['danger_player']['predicted_points']:.1f} XP).")

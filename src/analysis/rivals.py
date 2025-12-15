@@ -36,6 +36,19 @@ class RivalSpy:
             danger_idx = rival_diffs['predicted_points'].idxmax()
             danger_player = rival_diffs.loc[danger_idx]
             
+        # Summary & Insights
+        rival_heavy_hitters = len(rival_diffs[rival_diffs['predicted_points'] >= 5.5])
+        my_zeros = len(my_diffs[my_diffs['predicted_points'] < 0.5])
+        
+        # Position Analysis
+        pos_diff_xg = {
+            'GK': my_diffs[my_diffs['element_type']==1]['predicted_points'].sum() - rival_diffs[rival_diffs['element_type']==1]['predicted_points'].sum(),
+            'DEF': my_diffs[my_diffs['element_type']==2]['predicted_points'].sum() - rival_diffs[rival_diffs['element_type']==2]['predicted_points'].sum(),
+            'MID': my_diffs[my_diffs['element_type']==3]['predicted_points'].sum() - rival_diffs[rival_diffs['element_type']==3]['predicted_points'].sum(),
+            'FWD': my_diffs[my_diffs['element_type']==4]['predicted_points'].sum() - rival_diffs[rival_diffs['element_type']==4]['predicted_points'].sum(),
+        }
+        main_gap_pos = min(pos_diff_xg, key=pos_diff_xg.get) # Position where we are losing most XP
+            
         return {
             'common_count': len(common_ids),
             'differential_count': len(my_diff_ids),
@@ -44,5 +57,8 @@ class RivalSpy:
             'my_unique_xp': my_unique_xp,
             'rival_unique_xp': rival_unique_xp,
             'net_swing': net_swing,
-            'danger_player': danger_player
+            'danger_player': danger_player,
+            'rival_heavy_hitters': rival_heavy_hitters,
+            'my_zeros': my_zeros,
+            'main_gap_pos': main_gap_pos
         }
