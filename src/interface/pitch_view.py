@@ -41,7 +41,7 @@ def get_pitch_style():
         flex-direction: column;
         align-items: center;
         gap: 2px;
-        height: 145px; /* Fixed height for alignment */
+        height: 160px; /* Increased height for name wrapping */
         justify-content: space-between;
     }
     
@@ -123,7 +123,7 @@ def get_player_card_html(player, is_new=False):
 <div style="display: flex; justify-content: center; margin-bottom: 4px; height: 60px; align-items: flex-end;">
 <img src="{img_url}" style="width: auto; height: 60px; object-fit: contain;" onerror="this.onerror=null;this.src='https://fantasy.premierleague.com/img/shirts/standard/shirt_0.png';">
 </div>
-<div class="player-name">{player['web_name']}</div>
+<div class="player-name" style="white-space: normal; line-height: 1.2; height: 32px; display: flex; align-items: center; justify-content: center;">{player['web_name']}</div>
 <div class="player-info">
 {next_opp} <br/>
 £{player['price']:.1f}
