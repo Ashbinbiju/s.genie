@@ -160,9 +160,9 @@ if st.session_state.get('has_run', False):
                                 col_out_img, col_out, col_arrow, col_in_img, col_in = st.columns([1, 4, 1, 1, 4])
                                 
                                 with col_out_img:
-                                    pid = str(t_out.get('photo', 'default')).replace('.jpg', '').replace('.png', '')
+                                    pid = str(t_out.get('photo', 'default')).replace('.jpg', '').replace('.png', '').replace('p', '')
                                     if pid.isdigit():
-                                        img_src = f"https://resources.premierleague.com/premierleague/photos/players/110x140/{pid}.jpg"
+                                        img_src = f"https://resources.premierleague.com/premierleague/photos/players/110x140/p{pid}.png"
                                     else:
                                         img_src = "https://fantasy.premierleague.com/img/shirts/standard/shirt_0.png"
                                     st.image(img_src, width=50)
@@ -172,9 +172,9 @@ if st.session_state.get('has_run', False):
                                 with col_arrow:
                                     st.markdown("### ➡️")
                                 with col_in_img:
-                                    pid = str(t_in.get('photo', 'default')).replace('.jpg', '').replace('.png', '')
+                                    pid = str(t_in.get('photo', 'default')).replace('.jpg', '').replace('.png', '').replace('p', '')
                                     if pid.isdigit():
-                                        img_src = f"https://resources.premierleague.com/premierleague/photos/players/110x140/{pid}.jpg"
+                                        img_src = f"https://resources.premierleague.com/premierleague/photos/players/110x140/p{pid}.png"
                                     else:
                                         img_src = "https://fantasy.premierleague.com/img/shirts/standard/shirt_0.png"
                                     st.image(img_src, width=50)
@@ -381,9 +381,9 @@ if st.session_state.get('has_run', False):
                                         for _, p in analysis['my_diffs'].iterrows():
                                             ic, nc = st.columns([1, 4])
                                             with ic:
-                                                pid = str(p.get('photo', 'default')).replace('.jpg', '').replace('.png', '')
+                                                pid = str(p.get('photo', 'default')).replace('.jpg', '').replace('.png', '').replace('p', '')
                                                 if pid.isdigit():
-                                                    img_src = f"https://resources.premierleague.com/premierleague/photos/players/110x140/{pid}.jpg"
+                                                    img_src = f"https://resources.premierleague.com/premierleague/photos/players/110x140/p{pid}.png"
                                                 else:
                                                     img_src = "https://fantasy.premierleague.com/img/shirts/standard/shirt_0.png"
                                                 st.image(img_src, width=40)
@@ -395,9 +395,9 @@ if st.session_state.get('has_run', False):
                                         for _, p in analysis['rival_diffs'].iterrows():
                                             ic, nc = st.columns([1, 4])
                                             with ic:
-                                                pid = str(p.get('photo', 'default')).replace('.jpg', '').replace('.png', '')
+                                                pid = str(p.get('photo', 'default')).replace('.jpg', '').replace('.png', '').replace('p', '')
                                                 if pid.isdigit():
-                                                    img_src = f"https://resources.premierleague.com/premierleague/photos/players/110x140/{pid}.jpg"
+                                                    img_src = f"https://resources.premierleague.com/premierleague/photos/players/110x140/p{pid}.png"
                                                 else:
                                                     img_src = "https://fantasy.premierleague.com/img/shirts/standard/shirt_0.png"
                                                 st.image(img_src, width=40)

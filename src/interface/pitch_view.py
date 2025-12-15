@@ -97,13 +97,14 @@ def get_pitch_style():
     """
 
 def get_player_card_html(player, is_new=False):
-    p_type = player['element_type'] # Kept for consistency, though not directly used in new HTML structure
-    photo_raw = str(player.get('photo', 'default')).replace('.jpg', '').replace('.png', '')
+    p_type = player['element_type']
+    # Normalize Photo ID: remove ext, remove 'p' prefix, ensure numeric
+    photo_raw = str(player.get('photo', 'default')).replace('.jpg', '').replace('.png', '').replace('p', '')
     
     if photo_raw.isdigit():
-        img_url = f"https://resources.premierleague.com/premierleague/photos/players/110x140/{photo_raw}.jpg"
+        # Standard format is p{id}.png
+        img_url = f"https://resources.premierleague.com/premierleague/photos/players/110x140/p{photo_raw}.png"
     else:
-        # Fallback to generic shirt based on position if needed, or default shirt
         img_url = "https://fantasy.premierleague.com/img/shirts/standard/shirt_0.png"
     
     badge_html = ""
@@ -117,8 +118,8 @@ def get_player_card_html(player, is_new=False):
 
     # Fallback/Style
     return f"""<div class="player-card" style="position: relative;">{badge_html}
-<div style="display: flex; justify-content: center;">
-<img src="{img_url}" style="width: 60px; height: 75px; object-fit: cover; border-radius: 4px; margin-bottom: 4px;">
+<div style="display: flex; justify-content: center; margin-bottom: 4px;">
+<img src="{img_url}" style="width: auto; height: 60px; object-fit: contain;" onerror="this.src='https://fantasy.premierleague.com/img/shirts/standard/shirt_0.png';">
 </div>
 <div class="player-name">{player['web_name']}</div>
 <div class="player-info">
