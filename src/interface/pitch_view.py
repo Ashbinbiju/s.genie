@@ -104,7 +104,8 @@ def get_pitch_style():
     """
 
 # Known missing photos or special overrides
-MANUAL_MISSING = {'541065', 'default'}
+# 714: Woltemade (Confirmed missing/broken)
+MANUAL_MISSING = {'714', '541065', 'default'}
 
 def check_image_exists(photo_id):
     """
