@@ -11,8 +11,8 @@ def get_pitch_style():
     <style>
     .pitch-row {
         display: flex;
-        justify-content: center;
-        gap: 20px;
+        justify-content: space-evenly;
+        gap: 10px;
         z-index: 1; /* Above lines */
         flex: 1;
         align-items: center;
@@ -103,22 +103,34 @@ def get_pitch_style():
     </style>
     """
 
+# Known missing photos or special overrides
+MANUAL_MISSING = {'541065', 'default'}
+
 def check_image_exists(photo_id):
     """
     Checks if a player photo exists on the Premier League server.
     Uses caching to minimize latency.
     """
-    if photo_id in IMAGE_CACHE:
-        return IMAGE_CACHE[photo_id]
+    # Initialize cache in session state if needed
+    if 'image_validity_cache' not in st.session_state:
+        st.session_state.image_validity_cache = {}
+        
+    if photo_id in st.session_state.image_validity_cache:
+        return st.session_state.image_validity_cache[photo_id]
+        
+    if photo_id in MANUAL_MISSING:
+        st.session_state.image_validity_cache[photo_id] = False
+        return False
     
     url = f"https://resources.premierleague.com/premierleague/photos/players/110x140/p{photo_id}.png"
     try:
         response = requests.head(url, timeout=1.0)
-        is_valid = response.status_code == 200
+        # Check status and ensure content isn't empty
+        is_valid = response.status_code == 200 and int(response.headers.get('content-length', 0)) > 1000
     except:
         is_valid = False
         
-    IMAGE_CACHE[photo_id] = is_valid
+    st.session_state.image_validity_cache[photo_id] = is_valid
     return is_valid
 
 def get_player_card_html(player, is_new=False):
