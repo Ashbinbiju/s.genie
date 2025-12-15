@@ -60,9 +60,35 @@ if st.sidebar.button("Run Analysis"):
                 tab1, tab2, tab3 = st.tabs(["🚀 Optimized Squad", "🔄 Transfer Analysis", "📰 News & Risks"])
                 
                 # OPTIMIZED SQUAD TAB
+                # OPTIMIZED SQUAD TAB
                 with tab1:
+                    # Calculate transfers for highlighting
+                    new_ids = best_team['id'].tolist()
+                    transfers_in_ids = best_team[~best_team['id'].isin(current_ids)]['id'].tolist()
+                    
                     starters, bench = select_starting_xi(best_team)
-                    render_pitch_view(starters, bench)
+                    
+                    # Split into Pitch and Summary
+                    col_pitch, col_summary = st.columns([3, 1])
+                    
+                    with col_pitch:
+                        render_pitch_view(starters, bench, new_transfers=transfers_in_ids)
+                        
+                    with col_summary:
+                        st.subheader("🔁 Changes")
+                        transfers_out = current_team_df[~current_team_df['id'].isin(new_ids)]
+                        transfers_in = best_team[~best_team['id'].isin(current_ids)]
+                        
+                        if not transfers_out.empty:
+                            for i in range(len(transfers_out)):
+                                t_out = transfers_out.iloc[i]
+                                st.error(f"❌ OUT: {t_out['web_name']}")
+                                if i < len(transfers_in):
+                                    t_in = transfers_in.iloc[i]
+                                    st.success(f"✅ IN: {t_in['web_name']}")
+                                st.divider()
+                        else:
+                            st.info("No transfers recommended.")
                         
                 # TRANSFER ANALYSIS TAB
                 with tab2:

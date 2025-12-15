@@ -96,7 +96,7 @@ def get_pitch_style():
     </style>
     """
 
-def get_player_card_html(player):
+def get_player_card_html(player, is_new=False):
     # Determine Shirt Icon based on position
     pos_map = {1: '🧤', 2: '🛡️', 3: '⚙️', 4: '⚡'}
     icon = pos_map.get(player['element_type'], '👕')
@@ -108,8 +108,13 @@ def get_player_card_html(player):
     next_opp = player.get('next_opponent', '-')
     if next_opp != '-':
         next_opp = f"vs {next_opp}"
+        
+    badge_html = ""
+    if is_new:
+        badge_html = '<div style="position: absolute; top: -5px; right: -5px; background: #28a745; color: white; border-radius: 50%; width: 20px; height: 20px; font-size: 10px; display: flex; align-items: center; justify-content: center; border: 1px solid white; z-index: 5;">IN</div>'
     
     return f"""<div class="player-card">
+    {badge_html}
     <div class="player-shirt">{icon}</div>
     <div class="player-name">{player['web_name']}</div>
     <div class="player-info">{next_opp}</div>
@@ -117,7 +122,9 @@ def get_player_card_html(player):
     <div class="player-points">{xp}</div>
 </div>"""
 
-def render_pitch_view(starters, bench):
+def render_pitch_view(starters, bench, new_transfers=None):
+    if new_transfers is None: new_transfers = []
+    
     # CSS
     st.markdown(get_pitch_style(), unsafe_allow_html=True)
     
@@ -127,34 +134,25 @@ def render_pitch_view(starters, bench):
     mids = starters[starters['element_type'] == 3]
     fwds = starters[starters['element_type'] == 4]
     
+    # Helper to clean up loop
+    def add_row(players):
+        html_row = '<div class="pitch-row">'
+        for _, p in players.iterrows():
+            is_new = p['id'] in new_transfers
+            html_row += get_player_card_html(p, is_new)
+        html_row += '</div>'
+        return html_row
+
     # Build Pitch HTML
     html = '<div class="pitch-container">'
     html += '<div class="pitch-line"></div>'
     html += '<div class="pitch-circle"></div>'
     
-    # GK Row
-    html += '<div class="pitch-row">'
-    for _, p in gks.iterrows():
-        html += get_player_card_html(p)
-    html += '</div>'
-    
-    # DEF Row
-    html += '<div class="pitch-row">'
-    for _, p in defs.iterrows():
-        html += get_player_card_html(p)
-    html += '</div>'
-    
-    # MID Row
-    html += '<div class="pitch-row">'
-    for _, p in mids.iterrows():
-        html += get_player_card_html(p)
-    html += '</div>'
-    
-    # FWD Row
-    html += '<div class="pitch-row">'
-    for _, p in fwds.iterrows():
-        html += get_player_card_html(p)
-    html += '</div>'
+    # Rows
+    html += add_row(gks)
+    html += add_row(defs)
+    html += add_row(mids)
+    html += add_row(fwds)
     
     html += '</div>' # End pitch container
     
@@ -165,7 +163,8 @@ def render_pitch_view(starters, bench):
     
     bench_html = '<div class="bench-container">'
     for _, p in bench.iterrows():
-        bench_html += get_player_card_html(p)
+        is_new = p['id'] in new_transfers
+        bench_html += get_player_card_html(p, is_new)
     bench_html += '</div>'
     
     st.markdown(bench_html, unsafe_allow_html=True)
