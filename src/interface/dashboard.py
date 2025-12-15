@@ -89,7 +89,45 @@ if st.sidebar.button("Run Analysis"):
                                     st.success(f"IN: {t_in['web_name']}")
                                     st.caption(f"XP: {t_in['predicted_points']:.1f} | £{t_in['price']}")
                                 
-                                st.info(f"💡 **Reason**: {t_in['web_name']} provides a **{gain:+.1f}** point play-off gain over {t_out['web_name']} next GW.")
+                                def generate_reasoning(player_in, player_out, gain):
+                                    # 1. Fixture Analysis
+                                    fdr_in = player_in['fixture_difficulty']
+                                    fdr_out = player_out['fixture_difficulty']
+                                    opp_in = player_in.get('next_opponent', '?')
+                                    opp_out = player_out.get('next_opponent', '?')
+                                    
+                                    fixture_note = f"Fixture: {opp_in} (FDR {fdr_in:.1f}) vs {opp_out} (FDR {fdr_out:.1f})"
+                                    
+                                    # 2. Minutes/Risk Analysis
+                                    mins_in = player_in['minutes_prob']
+                                    mins_out = player_out['minutes_prob']
+                                    risk_note = ""
+                                    if mins_in < 0.9:
+                                        risk_note = f"⚠️ **Risk**: {player_in['web_name']} has {int(mins_in*100)}% playing chance."
+                                    elif mins_out < 0.9 and mins_in > 0.9:
+                                        risk_note = f"✅ **Security**: {player_in['web_name']} is safer than {player_out['web_name']} ({int(mins_out*100)}% chance)."
+                                    else:
+                                        risk_note = f"⚠️ **Risk**: Standard rotation risk applies."
+                                    
+                                    # 3. Form/Value Analysis
+                                    price_diff = player_out['price'] - player_in['price']
+                                    val_note = ""
+                                    if price_diff > 0:
+                                        val_note = f"• **Budget**: Frees up £{price_diff:.1f}m"
+                                    else:
+                                        val_note = f"• **Investment**: Uses £{abs(price_diff):.1f}m budget"
+                                        
+                                    return f"""
+                                    💡 **AI Rationale**:
+                                    **{player_in['web_name']}** projects **+{gain:+.1f} XP** gain over {player_out['web_name']}, driven by:
+                                    • {fixture_note}
+                                    • **Minutes**: {int(mins_in*100)}% probability
+                                    {val_note}
+                                    
+                                    {risk_note}
+                                    """
+
+                                st.markdown(generate_reasoning(t_in, t_out, gain))
                                 st.divider()
                     else:
                         st.info("No transfers recommended. Holding current squad is the optimal move.")
