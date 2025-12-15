@@ -356,8 +356,6 @@ if st.session_state.get('has_run', False):
                                             st.markdown(format_player(p))
                                             
                                     if analysis['danger_player'] is not None:
-                                            
-                                    if analysis['danger_player'] is not None:
                                         st.warning(f"⚠️ **Major Threat**: {analysis['danger_player']['web_name']} is their biggest differential ({analysis['danger_player']['predicted_points']:.1f} XP).")
                                     
                                 else:
