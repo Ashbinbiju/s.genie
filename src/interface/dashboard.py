@@ -116,6 +116,16 @@ if st.session_state.get('has_run', False):
                         transfers_in = best_team[~best_team['id'].isin(current_ids)]
                         
                         if not transfers_out.empty:
+                            # Cost Analysis
+                            tx_count = len(transfers_in)
+                            hits = max(0, tx_count - fts)
+                            cost = hits * 4
+                            
+                            if hits > 0:
+                                st.warning(f"⚠️ **Hit Required**: -{cost} pts")
+                            else:
+                                st.success("✅ Free Transfer")
+                                
                             for i in range(len(transfers_out)):
                                 t_out = transfers_out.iloc[i]
                                 st.error(f"❌ OUT: {t_out['web_name']}")
@@ -123,6 +133,12 @@ if st.session_state.get('has_run', False):
                                     t_in = transfers_in.iloc[i]
                                     st.success(f"✅ IN: {t_in['web_name']}")
                                 st.divider()
+                                
+                            total_gain = best_team['predicted_points'].sum() - current_team_df['predicted_points'].sum()
+                            net_gain = total_gain - cost
+                            st.caption(f"📈 Projected Gain: +{total_gain:.1f} XP")
+                            if hits > 0:
+                                st.caption(f"📉 Net Benefit: +{net_gain:.1f} XP (after hit)")
                         else:
                             st.info("No transfers recommended.")
                         
