@@ -41,6 +41,8 @@ def get_pitch_style():
         flex-direction: column;
         align-items: center;
         gap: 2px;
+        height: 145px; /* Fixed height for alignment */
+        justify-content: space-between;
     }
     
     .player-card:hover {
@@ -118,8 +120,8 @@ def get_player_card_html(player, is_new=False):
 
     # Fallback/Style
     return f"""<div class="player-card" style="position: relative;">{badge_html}
-<div style="display: flex; justify-content: center; margin-bottom: 4px;">
-<img src="{img_url}" style="width: auto; height: 60px; object-fit: contain;" onerror="this.src='https://fantasy.premierleague.com/img/shirts/standard/shirt_0.png';">
+<div style="display: flex; justify-content: center; margin-bottom: 4px; height: 60px; align-items: flex-end;">
+<img src="{img_url}" style="width: auto; height: 60px; object-fit: contain;" onerror="this.onerror=null;this.src='https://fantasy.premierleague.com/img/shirts/standard/shirt_0.png';">
 </div>
 <div class="player-name">{player['web_name']}</div>
 <div class="player-info">
