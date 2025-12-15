@@ -13,6 +13,8 @@ from src.features.processor import FeatureProcessor
 from src.model.predictor import PointsPredictor
 from src.optimization.solver import TransferOptimizer
 from src.optimization.team_selection import select_starting_xi
+from src.interface.pitch_view import render_pitch_view
+
 
 st.set_page_config(page_title="FPL AI Engine", layout="wide")
 
@@ -60,42 +62,7 @@ if st.sidebar.button("Run Analysis"):
                 # OPTIMIZED SQUAD TAB
                 with tab1:
                     starters, bench = select_starting_xi(best_team)
-                    
-                    def format_display_df(d):
-                        d = d.copy()
-                        pos_map = {1: 'GK', 2: 'DEF', 3: 'MID', 4: 'FWD'}
-                        d['Pos'] = d['element_type'].map(pos_map)
-                        d['Player'] = d['web_name']
-                        d['Price'] = d['price']
-                        d['XP'] = d['predicted_points']
-                        return d[['Pos', 'Player', 'Price', 'XP']]
-
-                    col1, col2 = st.columns(2)
-                    with col1:
-                        st.subheader("Starting XI")
-                        st.dataframe(
-                            format_display_df(starters), 
-                            hide_index=True,
-                            width="stretch",
-                            column_config={
-                                "Price": st.column_config.NumberColumn(format="£%.1f"),
-                                "XP": st.column_config.NumberColumn(format="%.1f")
-                            }
-                        )
-                        st.write(f"**Starters XP:** {starters['predicted_points'].sum():.1f}")
-                        
-                    with col2:
-                        st.subheader("Bench")
-                        st.dataframe(
-                            format_display_df(bench), 
-                            hide_index=True,
-                            width="stretch",
-                            column_config={
-                                "Price": st.column_config.NumberColumn(format="£%.1f"),
-                                "XP": st.column_config.NumberColumn(format="%.1f")
-                            }
-                        )
-                        st.write(f"**Bench XP:** {bench['predicted_points'].sum():.1f}")
+                    render_pitch_view(starters, bench)
                         
                 # TRANSFER ANALYSIS TAB
                 with tab2:
