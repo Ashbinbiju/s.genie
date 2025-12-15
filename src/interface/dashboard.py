@@ -29,6 +29,9 @@ gw = st.sidebar.number_input("Gameweek", value=17, step=1)
 budget = st.sidebar.number_input("Budget (£m)", value=100.0, step=0.1)
 
 if st.sidebar.button("Run Analysis"):
+    st.session_state['has_run'] = True
+
+if st.session_state.get('has_run', False):
     with st.spinner("Fetching Data & Optimizing..."):
         # 1. Fetch & Switch to caching eventually
         fpl = FPLClient()
