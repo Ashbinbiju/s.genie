@@ -29,14 +29,18 @@ def get_pitch_style():
     /* Rest of CSS remains similar but minified/cleaned */
     .player-card {
         background-color: rgba(255, 255, 255, 0.95);
-        border-radius: 6px;
-        width: 90px; /* Slightly smaller to fit 5 defenders */
-        padding: 4px;
+        border-radius: 8px;
+        width: 110px; /* Wider to fit details */
+        padding: 6px;
         text-align: center;
         box-shadow: 0 4px 6px rgba(0,0,0,0.1);
         border: 1px solid #ddd;
         transition: transform 0.2s;
         cursor: pointer;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: 2px;
     }
     
     .player-card:hover {
@@ -46,8 +50,9 @@ def get_pitch_style():
     }
 
     .player-shirt {
-        font-size: 24px;
-        margin-bottom: 4px;
+        font-size: 28px;
+        margin-bottom: 2px;
+        line-height: 1;
     }
     
     .player-name {
@@ -57,6 +62,13 @@ def get_pitch_style():
         white-space: nowrap;
         overflow: hidden;
         text-overflow: ellipsis;
+        width: 100%;
+    }
+
+    .player-info {
+        font-size: 11px;
+        color: #555;
+        white-space: nowrap;
     }
     
     .player-points {
@@ -65,9 +77,10 @@ def get_pitch_style():
         font-size: 12px;
         font-weight: bold;
         border-radius: 4px;
-        padding: 2px 6px;
+        padding: 2px 8px;
         margin-top: 4px;
         display: inline-block;
+        width: 100%;
     }
     
     .bench-container {
@@ -78,21 +91,27 @@ def get_pitch_style():
         display: flex;
         justify-content: center;
         gap: 15px;
+        flex-wrap: wrap; /* Allow wrapping if bench is full */
     }
     </style>
     """
 
 def get_player_card_html(player):
-    # Determine Shirt Icon based on position? Or just generic
-    # 1=GK, 2=DEF, 3=MID, 4=FWD
+    # Determine Shirt Icon based on position
     pos_map = {1: '🧤', 2: '🛡️', 3: '⚙️', 4: '⚡'}
     icon = pos_map.get(player['element_type'], '👕')
     
     xp = f"XP: {player['predicted_points']:.1f}"
+    price = f"£{player['price']:.1f}"
+    
+    # next_opponent might be missing if key issue persisted, so safe get
+    next_opp = player.get('next_opponent', '-')
     
     return f"""<div class="player-card">
     <div class="player-shirt">{icon}</div>
     <div class="player-name">{player['web_name']}</div>
+    <div class="player-info">{next_opp}</div>
+    <div class="player-info">{price}</div>
     <div class="player-points">{xp}</div>
 </div>"""
 
