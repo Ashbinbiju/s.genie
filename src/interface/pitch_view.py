@@ -116,21 +116,19 @@ def get_player_card_html(player, is_new=False):
         next_opp = f"vs {next_opp}"
 
     # Fallback/Style
-    return f"""
-    <div class="player-card" style="position: relative;">{badge_html}
-        <div style="display: flex; justify-content: center;">
-            <img src="{img_url}" style="width: 60px; height: 75px; object-fit: cover; border-radius: 4px; margin-bottom: 4px;">
-        </div>
-        <div class="player-name">{player['web_name']}</div>
-        <div class="player-info">
-            {next_opp} <br/>
-            £{player['price']:.1f}
-        </div>
-        <div class="player-points" style="background-color: {'#e02424' if player['minutes_prob'] < 0.6 else '#38003c'}">
-            {player['predicted_points']:.1f} XP
-        </div>
-    </div>
-    """
+    return f"""<div class="player-card" style="position: relative;">{badge_html}
+<div style="display: flex; justify-content: center;">
+<img src="{img_url}" style="width: 60px; height: 75px; object-fit: cover; border-radius: 4px; margin-bottom: 4px;">
+</div>
+<div class="player-name">{player['web_name']}</div>
+<div class="player-info">
+{next_opp} <br/>
+£{player['price']:.1f}
+</div>
+<div class="player-points" style="background-color: {'#e02424' if player['minutes_prob'] < 0.6 else '#38003c'}">
+{player['predicted_points']:.1f} XP
+</div>
+</div>"""
 
 def render_pitch_view(starters, bench, new_transfers=None):
     if new_transfers is None: new_transfers = []
