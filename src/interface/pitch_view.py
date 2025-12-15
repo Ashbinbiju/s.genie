@@ -121,7 +121,9 @@ def get_player_card_html(player, is_new=False):
     # Fallback/Style
     return f"""<div class="player-card" style="position: relative;">{badge_html}
 <div style="display: flex; justify-content: center; margin-bottom: 4px; height: 60px; align-items: flex-end;">
-<img src="{img_url}" style="width: auto; height: 60px; object-fit: contain;" onerror="this.onerror=null;this.src='https://fantasy.premierleague.com/img/shirts/standard/shirt_0.png';">
+<object data="{img_url}" type="image/png" style="width: auto; height: 60px; object-fit: contain; pointer-events: none;">
+    <img src="https://fantasy.premierleague.com/img/shirts/standard/shirt_0.png" style="width: auto; height: 60px; object-fit: contain;">
+</object>
 </div>
 <div class="player-name" style="white-space: normal; line-height: 1.2; height: 32px; display: flex; align-items: center; justify-content: center;">{player['web_name']}</div>
 <div class="player-info">
