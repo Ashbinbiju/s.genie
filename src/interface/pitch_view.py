@@ -98,7 +98,8 @@ def get_pitch_style():
 
 def get_player_card_html(player, is_new=False):
     p_type = player['element_type'] # Kept for consistency, though not directly used in new HTML structure
-    photo_id = str(player.get('photo', 'default.png')).replace('.jpg', '')
+    photo_raw = str(player.get('photo', 'default.png'))
+    photo_id = photo_raw.replace('.jpg', '').replace('.png', '')
     img_url = f"https://resources.premierleague.com/premierleague/photos/players/110x140/{photo_id}.jpg"
     
     badge_html = ""

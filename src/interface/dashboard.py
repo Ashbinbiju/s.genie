@@ -160,7 +160,7 @@ if st.session_state.get('has_run', False):
                                 col_out_img, col_out, col_arrow, col_in_img, col_in = st.columns([1, 4, 1, 1, 4])
                                 
                                 with col_out_img:
-                                    pid = str(t_out.get('photo', 'default').replace('.jpg', ''))
+                                    pid = str(t_out.get('photo', 'default')).replace('.jpg', '').replace('.png', '')
                                     st.image(f"https://resources.premierleague.com/premierleague/photos/players/110x140/{pid}.jpg", width=50)
                                 with col_out:
                                     st.error(f"OUT: {t_out['web_name']}")
@@ -168,7 +168,7 @@ if st.session_state.get('has_run', False):
                                 with col_arrow:
                                     st.markdown("### ➡️")
                                 with col_in_img:
-                                    pid = str(t_in.get('photo', 'default').replace('.jpg', ''))
+                                    pid = str(t_in.get('photo', 'default')).replace('.jpg', '').replace('.png', '')
                                     st.image(f"https://resources.premierleague.com/premierleague/photos/players/110x140/{pid}.jpg", width=50)
                                 with col_in:
                                     st.success(f"IN: {t_in['web_name']}")
@@ -373,7 +373,7 @@ if st.session_state.get('has_run', False):
                                         for _, p in analysis['my_diffs'].iterrows():
                                             ic, nc = st.columns([1, 4])
                                             with ic:
-                                                pid = str(p.get('photo', 'default').replace('.jpg', ''))
+                                                pid = str(p.get('photo', 'default')).replace('.jpg', '').replace('.png', '')
                                                 st.image(f"https://resources.premierleague.com/premierleague/photos/players/110x140/{pid}.jpg", width=40)
                                             with nc:
                                                 st.markdown(format_player(p))
@@ -383,7 +383,7 @@ if st.session_state.get('has_run', False):
                                         for _, p in analysis['rival_diffs'].iterrows():
                                             ic, nc = st.columns([1, 4])
                                             with ic:
-                                                pid = str(p.get('photo', 'default').replace('.jpg', ''))
+                                                pid = str(p.get('photo', 'default')).replace('.jpg', '').replace('.png', '')
                                                 st.image(f"https://resources.premierleague.com/premierleague/photos/players/110x140/{pid}.jpg", width=40)
                                             with nc:
                                                 st.markdown(format_player(p))

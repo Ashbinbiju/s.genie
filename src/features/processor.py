@@ -45,7 +45,7 @@ class FeatureProcessor:
         if not force_refresh and os.path.exists(output_path):
             df = pd.read_parquet(output_path)
             # Validate significant columns exist
-            required = ['next_opponent', 'news', 'fixture_difficulty']
+            required = ['next_opponent', 'news', 'fixture_difficulty', 'photo']
             if all(col in df.columns for col in required):
                 return df
             print("Cached data missing new columns (e.g. next_opponent). Regenerating...")
