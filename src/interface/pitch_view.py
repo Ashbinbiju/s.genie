@@ -4,6 +4,15 @@ import pandas as pd
 def get_pitch_style():
     return """
     <style>
+    .pitch-row {
+        display: flex;
+        justify-content: center;
+        gap: 20px;
+        z-index: 1; /* Above lines */
+        flex: 1;
+        align-items: center;
+        width: 100%; /* Ensure it spans full width */
+    }
     .pitch-container {
         position: relative;
         background: linear-gradient(180deg, #1e7e34 0%, #28a745 50%, #1e7e34 100%);
@@ -14,47 +23,20 @@ def get_pitch_style():
         display: flex;
         flex-direction: column;
         justify-content: space-around;
-        height: 600px; /* Fixed height for pitch aspect */
+        height: 600px;
+        align-items: center; /* Center rows horizontally */
     }
-    
-    .pitch-line {
-        position: absolute;
-        top: 50%;
-        left: 0;
-        right: 0;
-        height: 2px;
-        background: rgba(255,255,255,0.4);
-    }
-    
-    .pitch-circle {
-        position: absolute;
-        top: 50%;
-        left: 50%;
-        transform: translate(-50%, -50%);
-        width: 100px;
-        height: 100px;
-        border: 2px solid rgba(255,255,255,0.4);
-        border-radius: 50%;
-    }
-
-    .pitch-row {
-        display: flex;
-        justify-content: center;
-        gap: 20px;
-        z-index: 1; /* Above lines */
-        flex: 1;
-        align-items: center;
-    }
-
+    /* Rest of CSS remains similar but minified/cleaned */
     .player-card {
-        background-color: rgba(255, 255, 255, 0.9);
+        background-color: rgba(255, 255, 255, 0.95);
         border-radius: 6px;
-        width: 100px;
-        padding: 5px;
+        width: 90px; /* Slightly smaller to fit 5 defenders */
+        padding: 4px;
         text-align: center;
         box-shadow: 0 4px 6px rgba(0,0,0,0.1);
         border: 1px solid #ddd;
         transition: transform 0.2s;
+        cursor: pointer;
     }
     
     .player-card:hover {
@@ -108,13 +90,11 @@ def get_player_card_html(player):
     
     xp = f"{player['predicted_points']:.1f}"
     
-    return f"""
-    <div class="player-card">
-        <div class="player-shirt">{icon}</div>
-        <div class="player-name">{player['web_name']}</div>
-        <div class="player-points">{xp}</div>
-    </div>
-    """
+    return f"""<div class="player-card">
+    <div class="player-shirt">{icon}</div>
+    <div class="player-name">{player['web_name']}</div>
+    <div class="player-points">{xp}</div>
+</div>"""
 
 def render_pitch_view(starters, bench):
     # CSS
