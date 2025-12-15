@@ -106,6 +106,8 @@ def get_player_card_html(player):
     
     # next_opponent might be missing if key issue persisted, so safe get
     next_opp = player.get('next_opponent', '-')
+    if next_opp != '-':
+        next_opp = f"vs {next_opp}"
     
     return f"""<div class="player-card">
     <div class="player-shirt">{icon}</div>
