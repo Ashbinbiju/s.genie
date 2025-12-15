@@ -98,9 +98,13 @@ def get_pitch_style():
 
 def get_player_card_html(player, is_new=False):
     p_type = player['element_type'] # Kept for consistency, though not directly used in new HTML structure
-    photo_raw = str(player.get('photo', 'default.png'))
-    photo_id = photo_raw.replace('.jpg', '').replace('.png', '')
-    img_url = f"https://resources.premierleague.com/premierleague/photos/players/110x140/{photo_id}.jpg"
+    photo_raw = str(player.get('photo', 'default')).replace('.jpg', '').replace('.png', '')
+    
+    if photo_raw.isdigit():
+        img_url = f"https://resources.premierleague.com/premierleague/photos/players/110x140/{photo_raw}.jpg"
+    else:
+        # Fallback to generic shirt based on position if needed, or default shirt
+        img_url = "https://fantasy.premierleague.com/img/shirts/standard/shirt_0.png"
     
     badge_html = ""
     if is_new:

@@ -161,7 +161,11 @@ if st.session_state.get('has_run', False):
                                 
                                 with col_out_img:
                                     pid = str(t_out.get('photo', 'default')).replace('.jpg', '').replace('.png', '')
-                                    st.image(f"https://resources.premierleague.com/premierleague/photos/players/110x140/{pid}.jpg", width=50)
+                                    if pid.isdigit():
+                                        img_src = f"https://resources.premierleague.com/premierleague/photos/players/110x140/{pid}.jpg"
+                                    else:
+                                        img_src = "https://fantasy.premierleague.com/img/shirts/standard/shirt_0.png"
+                                    st.image(img_src, width=50)
                                 with col_out:
                                     st.error(f"OUT: {t_out['web_name']}")
                                     st.caption(f"XP: {t_out['predicted_points']:.1f} | £{t_out['price']}")
@@ -169,7 +173,11 @@ if st.session_state.get('has_run', False):
                                     st.markdown("### ➡️")
                                 with col_in_img:
                                     pid = str(t_in.get('photo', 'default')).replace('.jpg', '').replace('.png', '')
-                                    st.image(f"https://resources.premierleague.com/premierleague/photos/players/110x140/{pid}.jpg", width=50)
+                                    if pid.isdigit():
+                                        img_src = f"https://resources.premierleague.com/premierleague/photos/players/110x140/{pid}.jpg"
+                                    else:
+                                        img_src = "https://fantasy.premierleague.com/img/shirts/standard/shirt_0.png"
+                                    st.image(img_src, width=50)
                                 with col_in:
                                     st.success(f"IN: {t_in['web_name']}")
                                     st.caption(f"XP: {t_in['predicted_points']:.1f} | £{t_in['price']}")
@@ -374,7 +382,11 @@ if st.session_state.get('has_run', False):
                                             ic, nc = st.columns([1, 4])
                                             with ic:
                                                 pid = str(p.get('photo', 'default')).replace('.jpg', '').replace('.png', '')
-                                                st.image(f"https://resources.premierleague.com/premierleague/photos/players/110x140/{pid}.jpg", width=40)
+                                                if pid.isdigit():
+                                                    img_src = f"https://resources.premierleague.com/premierleague/photos/players/110x140/{pid}.jpg"
+                                                else:
+                                                    img_src = "https://fantasy.premierleague.com/img/shirts/standard/shirt_0.png"
+                                                st.image(img_src, width=40)
                                             with nc:
                                                 st.markdown(format_player(p))
                                             
@@ -384,7 +396,11 @@ if st.session_state.get('has_run', False):
                                             ic, nc = st.columns([1, 4])
                                             with ic:
                                                 pid = str(p.get('photo', 'default')).replace('.jpg', '').replace('.png', '')
-                                                st.image(f"https://resources.premierleague.com/premierleague/photos/players/110x140/{pid}.jpg", width=40)
+                                                if pid.isdigit():
+                                                    img_src = f"https://resources.premierleague.com/premierleague/photos/players/110x140/{pid}.jpg"
+                                                else:
+                                                    img_src = "https://fantasy.premierleague.com/img/shirts/standard/shirt_0.png"
+                                                st.image(img_src, width=40)
                                             with nc:
                                                 st.markdown(format_player(p))
                                             
