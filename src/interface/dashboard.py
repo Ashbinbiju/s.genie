@@ -90,41 +90,63 @@ if st.sidebar.button("Run Analysis"):
                                     st.caption(f"XP: {t_in['predicted_points']:.1f} | £{t_in['price']}")
                                 
                                 def generate_reasoning(player_in, player_out, gain):
-                                    # 1. Fixture Analysis
+                                    # 1. Fixture & FDR
                                     fdr_in = player_in['fixture_difficulty']
                                     fdr_out = player_out['fixture_difficulty']
                                     opp_in = player_in.get('next_opponent', '?')
                                     opp_out = player_out.get('next_opponent', '?')
                                     
-                                    fixture_note = f"Fixture: {opp_in} (FDR {fdr_in:.1f}) vs {opp_out} (FDR {fdr_out:.1f})"
-                                    
-                                    # 2. Minutes/Risk Analysis
-                                    mins_in = player_in['minutes_prob']
-                                    mins_out = player_out['minutes_prob']
-                                    risk_note = ""
-                                    if mins_in < 0.9:
-                                        risk_note = f"⚠️ **Risk**: {player_in['web_name']} has {int(mins_in*100)}% playing chance."
-                                    elif mins_out < 0.9 and mins_in > 0.9:
-                                        risk_note = f"✅ **Security**: {player_in['web_name']} is safer than {player_out['web_name']} ({int(mins_out*100)}% chance)."
+                                    # 2. Minutes Buckets (Avoid 100% claims)
+                                    mins_in_val = player_in['minutes_prob']
+                                    if mins_in_val >= 0.95:
+                                        mins_str = "Likely 90-95% starter"
+                                        security_level = "High"
+                                    elif mins_in_val >= 0.8:
+                                        mins_str = "Standard starter"
+                                        security_level = "Medium" 
                                     else:
-                                        risk_note = f"⚠️ **Risk**: Standard rotation risk applies."
-                                    
-                                    # 3. Form/Value Analysis
+                                        mins_str = "Rotation risk present"
+                                        security_level = "Low"
+
+                                    # 3. Position Specific Rationale
+                                    # 1=GK, 2=DEF, 3=MID, 4=FWD
+                                    pos_rationale = ""
+                                    if player_in['element_type'] <= 2:
+                                        # Defender/GK logic
+                                        if fdr_in < fdr_out:
+                                            pos_rationale = f"• **Defensive Upside**: Higher clean-sheet probability (Better FDR {fdr_in:.1f} vs {fdr_out:.1f})"
+                                        else:
+                                            pos_rationale = "• **Defensive Upside**: Solid clean-sheet potential"
+                                    else:
+                                        # Attacker logic
+                                        pos_rationale = "• **Attacking Threat**: Higher expected goal involvement"
+
+                                    # 4. Price Efficiency
                                     price_diff = player_out['price'] - player_in['price']
-                                    val_note = ""
                                     if price_diff > 0:
-                                        val_note = f"• **Budget**: Frees up £{price_diff:.1f}m"
+                                        val_note = f"• **Price Efficiency**: Saves £{price_diff:.1f}m for future upgrades"
                                     else:
-                                        val_note = f"• **Investment**: Uses £{abs(price_diff):.1f}m budget"
-                                        
+                                        val_note = f"• **Investment**: Uses £{abs(price_diff):.1f}m to upgrade quality"
+
+                                    # 5. Security/Risk Comparison
+                                    sec_note = ""
+                                    mins_out_val = player_out['minutes_prob']
+                                    if mins_in_val > mins_out_val + 0.1:
+                                        sec_note = f"✅ **Security**: High — {player_in['web_name']} has stronger minutes reliability than {player_out['web_name']}."
+                                    elif mins_in_val < 0.7:
+                                        sec_note = f"⚠️ **Risk**: Note that {player_in['web_name']} carries some rotation risk."
+                                    
+                                    # Construct Output
                                     return f"""
                                     💡 **AI Rationale**:
-                                    **{player_in['web_name']}** projects **+{gain:+.1f} XP** gain over {player_out['web_name']}, driven by:
-                                    • {fixture_note}
-                                    • **Minutes**: {int(mins_in*100)}% probability
+                                    **{player_in['web_name']}** projects **+{gain:+.1f} XP** over {player_out['web_name']}, driven by:
+                                    • **Minutes Security**: {mins_str}
+                                    {pos_rationale}
                                     {val_note}
                                     
-                                    {risk_note}
+                                    ⚠️ **Risk**: Returns dependent on { 'clean sheets' if player_in['element_type'] <= 2 else 'attacking returns' }.
+                                    
+                                    {sec_note}
                                     """
 
                                 st.markdown(generate_reasoning(t_in, t_out, gain))
