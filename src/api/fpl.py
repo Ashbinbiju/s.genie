@@ -65,6 +65,8 @@ class FPLClient:
         """Fetches listings for a classic league."""
         # Using ?page_new_entries=1&page_standings=1 is standard for this endpoint
         return self._get(f"leagues-classic/{league_id}/standings/?page_new_entries=1&page_standings=1&phase=1")
+    
+    # Method to calculate free transfers
 
     def calculate_free_transfers(self, team_id, current_gw):
         """
