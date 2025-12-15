@@ -58,6 +58,7 @@ class RivalSpy:
             'rival_unique_xp': rival_unique_xp,
             'net_swing': net_swing,
             'danger_player': danger_player,
+            # Insights for dashboard
             'rival_heavy_hitters': rival_heavy_hitters,
             'my_zeros': my_zeros,
             'main_gap_pos': main_gap_pos
