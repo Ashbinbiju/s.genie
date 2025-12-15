@@ -88,7 +88,7 @@ def get_player_card_html(player):
     pos_map = {1: '🧤', 2: '🛡️', 3: '⚙️', 4: '⚡'}
     icon = pos_map.get(player['element_type'], '👕')
     
-    xp = f"{player['predicted_points']:.1f}"
+    xp = f"XP: {player['predicted_points']:.1f}"
     
     return f"""<div class="player-card">
     <div class="player-shirt">{icon}</div>
