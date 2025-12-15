@@ -36,7 +36,19 @@ class FeatureProcessor:
         print("Understat data not found. Run UnderstatClient first.")
         return None
 
-    def process(self):
+    def process(self, force_refresh=False):
+        # Output path
+        output_path = os.path.join(self.processed_dir, "player_features.parquet")
+        
+        # Check cache
+        if not force_refresh and os.path.exists(output_path):
+            df = pd.read_parquet(output_path)
+            # Validate significant columns exist
+            required = ['next_opponent', 'news', 'fixture_difficulty']
+            if all(col in df.columns for col in required):
+                return df
+            print("Cached data missing new columns (e.g. next_opponent). Regenerating...")
+        
         print("Processing features...")
         fpl_players, fpl_teams, _ = self.load_fpl_data()
         understat_players = self.load_understat_data()
