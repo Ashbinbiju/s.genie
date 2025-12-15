@@ -141,7 +141,7 @@ if st.sidebar.button("Run Analysis"):
                     st.subheader("Fixture Analysis")
                     
                     # Create a nice display dataframe
-                    fixture_df = best_team[['web_name', 'fixture_difficulty']].copy()
+                    fixture_df = best_team[['web_name', 'next_opponent', 'fixture_difficulty']].copy()
                     fixture_df = fixture_df.sort_values('fixture_difficulty')
                     
                     # Visual mapping
@@ -151,9 +151,10 @@ if st.sidebar.button("Run Analysis"):
                         return "🟨 Avg"
                         
                     fixture_df['Rating'] = fixture_df['fixture_difficulty'].apply(get_diff_icon)
+                    fixture_df = fixture_df.rename(columns={'web_name': 'Player', 'next_opponent': 'Next Match'})
                     
                     st.dataframe(
-                        fixture_df[['web_name', 'Rating', 'fixture_difficulty']], 
+                        fixture_df[['Player', 'Next Match', 'Rating', 'fixture_difficulty']], 
                         column_config={
                             "fixture_difficulty": st.column_config.NumberColumn("Diff (1-5)", format="%.1f"),
                         },

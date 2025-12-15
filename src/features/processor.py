@@ -79,14 +79,16 @@ class FeatureProcessor:
         # 5. Value (Points per million)
         merged['ppm'] = merged['total_points'] / merged['price']
 
-        # 6. Fixture Difficulty
+        # 6. Fixture Difficulty & Next Opponent
         fixtures = self.load_fixtures()
         if fixtures is not None:
-             difficulty_map = self.calculate_fixture_difficulty(fixtures)
+             match_data = self.calculate_fixture_difficulty(fixtures, fpl_teams)
              # Map difficulty to player's team
-             merged['fixture_difficulty'] = merged['team'].map(difficulty_map).fillna(3) # Default average
+             merged['fixture_difficulty'] = merged['team'].map(lambda x: match_data.get(x, {}).get('fixture_difficulty', 3))
+             merged['next_opponent'] = merged['team'].map(lambda x: match_data.get(x, {}).get('next_opponent', "-"))
         else:
              merged['fixture_difficulty'] = 3
+             merged['next_opponent'] = "-"
 
         # Select columns for model
         features = [
@@ -94,7 +96,7 @@ class FeatureProcessor:
             'form', 'points_per_game', 'ict_index', 'ep_next',
             'xG', 'xA', 'xG_per_90', 'xA_per_90', 'minutes_prob', 
             'total_points', 'fixture_difficulty',
-            'news', 'chance_of_playing_next_round'
+            'news', 'chance_of_playing_next_round', 'next_opponent'
         ]
         
         # Rename element_type_fpl check, usually in FPL it's 'element_type'
@@ -119,6 +121,7 @@ class FeatureProcessor:
 
         # Ensure strings
         final_df['news'] = final_df['news'].fillna("")
+        final_df['next_opponent'] = final_df['next_opponent'].fillna("-")
 
         output_path = os.path.join(self.processed_dir, "player_features.parquet")
         final_df.to_parquet(output_path)
@@ -131,31 +134,43 @@ class FeatureProcessor:
             return pd.read_json(path)
         return None
 
-    def calculate_fixture_difficulty(self, fixtures_df, next_n=5):
+    def calculate_fixture_difficulty(self, fixtures_df, teams_df, next_n=5):
+        # Create team map: id -> short_name
+        team_map = teams_df.set_index('id')['short_name'].to_dict()
+        
         # Filter for unfinished games
         future = fixtures_df[fixtures_df['finished'] == False].sort_values('kickoff_time')
         
-        team_difficulty = {}
+        team_data = {} # {team_id: {'difficulty': float, 'next_match': str}}
+        
         # There are 20 teams, IDs 1-20
         for team_id in range(1, 21):
             # Find next n games for this team
-            # Matches where team is home (team_h) or away (team_a)
             matches = future[
                 (future['team_h'] == team_id) | (future['team_a'] == team_id)
             ].head(next_n)
             
             diff_sum = 0
             count = 0
-            for _, match in matches.iterrows():
-                if match['team_h'] == team_id:
-                    diff_sum += match['team_h_difficulty']
-                else:
-                    diff_sum += match['team_a_difficulty']
+            next_opp_str = "-"
+            
+            for i, (_, match) in enumerate(matches.iterrows()):
+                is_home = (match['team_h'] == team_id)
+                opp_id = match['team_a'] if is_home else match['team_h']
+                opp_name = team_map.get(opp_id, "?")
+                difficulty = match['team_h_difficulty'] if is_home else match['team_a_difficulty']
+                
+                if i == 0:
+                    venue = "(H)" if is_home else "(A)"
+                    next_opp_str = f"{opp_name} {venue}"
+
+                diff_sum += difficulty
                 count += 1
             
-            team_difficulty[team_id] = diff_sum / count if count > 0 else 3
+            avg_diff = diff_sum / count if count > 0 else 3
+            team_data[team_id] = {'fixture_difficulty': avg_diff, 'next_opponent': next_opp_str}
             
-        return team_difficulty
+        return team_data
 
 if __name__ == "__main__":
     processor = FeatureProcessor()
