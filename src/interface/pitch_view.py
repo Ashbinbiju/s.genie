@@ -113,14 +113,7 @@ def get_player_card_html(player, is_new=False):
     if is_new:
         badge_html = '<div style="position: absolute; top: -5px; right: -5px; background: #28a745; color: white; border-radius: 50%; width: 20px; height: 20px; font-size: 10px; display: flex; align-items: center; justify-content: center; border: 1px solid white; z-index: 5;">IN</div>'
     
-    return f"""<div class="player-card">
-    {badge_html}
-    <div class="player-shirt">{icon}</div>
-    <div class="player-name">{player['web_name']}</div>
-    <div class="player-info">{next_opp}</div>
-    <div class="player-info">{price}</div>
-    <div class="player-points">{xp}</div>
-</div>"""
+    return f"""<div class="player-card">{badge_html}<div class="player-shirt">{icon}</div><div class="player-name">{player['web_name']}</div><div class="player-info">{next_opp}</div><div class="player-info">{price}</div><div class="player-points">{xp}</div></div>"""
 
 def render_pitch_view(starters, bench, new_transfers=None):
     if new_transfers is None: new_transfers = []
