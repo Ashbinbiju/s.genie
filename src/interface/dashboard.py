@@ -13,6 +13,7 @@ from src.features.processor import FeatureProcessor
 from src.model.predictor import PointsPredictor
 from src.optimization.solver import TransferOptimizer
 from src.optimization.team_selection import select_starting_xi
+from src.optimization.chips import ChipStrategy
 from src.interface.pitch_view import render_pitch_view
 
 
@@ -32,6 +33,12 @@ if st.sidebar.button("Run Analysis"):
         fpl = FPLClient()
         fpl.get_bootstrap_static()
         fpl.get_fixtures()
+        
+        # Fetch history for chips
+        try:
+            history = fpl.get_history(team_id)
+        except:
+            history = {}
         
         # 2. Features
         processor = FeatureProcessor()
@@ -71,6 +78,23 @@ if st.sidebar.button("Run Analysis"):
                     transfers_in_ids = best_team[~best_team['id'].isin(current_ids)]['id'].tolist()
                     
                     starters, bench = select_starting_xi(best_team)
+                    
+                    # Chip Analysis
+                    chip_strat = ChipStrategy(team_id, history)
+                    chip_recs = chip_strat.analyze(starters, bench, gw)
+                    
+                    with st.expander("💡 AI Chip Strategy Advisor", expanded=True):
+                        c1, c2, c3 = st.columns(3)
+                        cols = [c1, c2, c3]
+                        for i, rec in enumerate(chip_recs):
+                            with cols[i]:
+                                st.write(f"**{rec['icon']} {rec['chip']}**")
+                                if rec['recommendation'] == 'Recommended':
+                                    st.success(rec['reason'])
+                                elif rec['recommendation'] == 'Used':
+                                    st.caption(rec['reason'])
+                                else:
+                                    st.info(rec['reason'])
                     
                     # Split into Pitch and Summary
                     col_pitch, col_summary = st.columns([3, 1])

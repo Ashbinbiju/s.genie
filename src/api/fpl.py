@@ -56,6 +56,10 @@ class FPLClient:
     def get_transfers(self, team_id):
         """Fetches transfer history."""
         return self._get(f"entry/{team_id}/transfers/")
+        
+    def get_history(self, team_id):
+        """Fetches history including past performance and chips used."""
+        return self._get(f"entry/{team_id}/history/")
 
     def calculate_free_transfers(self, team_id, current_gw):
         """
