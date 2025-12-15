@@ -28,8 +28,10 @@ def get_pitch_style():
         display: flex;
         flex-direction: column;
         justify-content: space-around;
-        min-height: 850px; /* Allow expansion for taller cards */
+        height: auto; /* Allow dynamic expansion */
+        min-height: 850px;
         align-items: center; /* Center rows horizontally */
+        padding-bottom: 40px; /* Extra space at bottom */
     }
     /* Rest of CSS remains similar but minified/cleaned */
     .player-card {
@@ -104,8 +106,8 @@ def get_pitch_style():
     """
 
 # Known missing photos or special overrides
-# 714: Woltemade (Confirmed missing/broken)
-MANUAL_MISSING = {'714', '541065', 'default'}
+# 714: Woltemade (Photo ID: 4470313)
+MANUAL_MISSING = {'714', '541065', '4470313', 'default'}
 
 def check_image_exists(photo_id):
     """
