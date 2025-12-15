@@ -118,7 +118,9 @@ def get_player_card_html(player, is_new=False):
     # Fallback/Style
     return f"""
     <div class="player-card" style="position: relative;">{badge_html}
-        <img src="{img_url}" style="width: 60px; height: auto; border-radius: 4px; margin-bottom: 4px;" onerror="this.src='https://fantasy.premierleague.com/img/shirts/standard/shirt_0.png';">
+        <div style="display: flex; justify-content: center;">
+            <img src="{img_url}" style="width: 60px; height: 75px; object-fit: cover; border-radius: 4px; margin-bottom: 4px;">
+        </div>
         <div class="player-name">{player['web_name']}</div>
         <div class="player-info">
             {next_opp} <br/>
