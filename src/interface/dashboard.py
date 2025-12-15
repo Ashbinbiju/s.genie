@@ -133,7 +133,7 @@ if st.sidebar.button("Run Analysis"):
                             "fixture_difficulty": st.column_config.NumberColumn("Diff (1-5)", format="%.1f"),
                         },
                         hide_index=True,
-                        use_container_width=True
+                        width="stretch"
                     )
 
             else:
