@@ -109,7 +109,8 @@ class FeatureProcessor:
             'form', 'points_per_game', 'ict_index', 'ep_next',
             'xG', 'xA', 'xG_per_90', 'xA_per_90', 'minutes_prob', 
             'total_points', 'fixture_difficulty',
-            'news', 'chance_of_playing_next_round', 'next_opponent'
+            'news', 'chance_of_playing_next_round', 'next_opponent',
+            'photo'
         ]
         
         # Rename element_type_fpl check, usually in FPL it's 'element_type'

@@ -97,23 +97,33 @@ def get_pitch_style():
     """
 
 def get_player_card_html(player, is_new=False):
-    # Determine Shirt Icon based on position
-    pos_map = {1: '🧤', 2: '🛡️', 3: '⚙️', 4: '⚡'}
-    icon = pos_map.get(player['element_type'], '👕')
+    p_type = player['element_type'] # Kept for consistency, though not directly used in new HTML structure
+    photo_id = str(player.get('photo', 'default.png')).replace('.jpg', '')
+    img_url = f"https://resources.premierleague.com/premierleague/photos/players/110x140/{photo_id}.jpg"
     
-    xp = f"XP: {player['predicted_points']:.1f}"
-    price = f"£{player['price']:.1f}"
+    badge_html = ""
+    if is_new:
+        badge_html = '<div style="position: absolute; top: -5px; right: -5px; background: #28a745; color: white; border-radius: 50%; width: 20px; height: 20px; font-size: 10px; display: flex; align-items: center; justify-content: center; border: 1px solid white; z-index: 5;">IN</div>'
     
     # next_opponent might be missing if key issue persisted, so safe get
     next_opp = player.get('next_opponent', '-')
     if next_opp != '-':
         next_opp = f"vs {next_opp}"
-        
-    badge_html = ""
-    if is_new:
-        badge_html = '<div style="position: absolute; top: -5px; right: -5px; background: #28a745; color: white; border-radius: 50%; width: 20px; height: 20px; font-size: 10px; display: flex; align-items: center; justify-content: center; border: 1px solid white; z-index: 5;">IN</div>'
-    
-    return f"""<div class="player-card">{badge_html}<div class="player-shirt">{icon}</div><div class="player-name">{player['web_name']}</div><div class="player-info">{next_opp}</div><div class="player-info">{price}</div><div class="player-points">{xp}</div></div>"""
+
+    # Fallback/Style
+    return f"""
+    <div class="player-card" style="position: relative;">{badge_html}
+        <img src="{img_url}" style="width: 60px; height: auto; border-radius: 4px; margin-bottom: 4px;" onerror="this.src='https://fantasy.premierleague.com/img/shirts/standard/shirt_0.png';">
+        <div class="player-name">{player['web_name']}</div>
+        <div class="player-info">
+            {next_opp} <br/>
+            £{player['price']:.1f}
+        </div>
+        <div class="player-points" style="background-color: {'#e02424' if player['minutes_prob'] < 0.6 else '#38003c'}">
+            {player['predicted_points']:.1f} XP
+        </div>
+    </div>
+    """
 
 def render_pitch_view(starters, bench, new_transfers=None):
     if new_transfers is None: new_transfers = []
