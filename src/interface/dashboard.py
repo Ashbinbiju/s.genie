@@ -33,7 +33,8 @@ if st.sidebar.button("Run Analysis"):
         
         # 2. Features
         processor = FeatureProcessor()
-        df = processor.process()
+        # Force refresh to ensure new columns (next_opponent) are generated
+        df = processor.process(force_refresh=True)
         
         # 3. Predict
         predictor = PointsPredictor()
