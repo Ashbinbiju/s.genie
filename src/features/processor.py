@@ -37,6 +37,7 @@ class FeatureProcessor:
         return None
 
     def process(self, force_refresh=False):
+        # Force update for Streamlit cloud sync
         # Output path
         output_path = os.path.join(self.processed_dir, "player_features.parquet")
         
