@@ -88,9 +88,10 @@ if st.session_state.get('has_run', False):
                     starters, bench = select_starting_xi(best_team)
                     
                     # Identify Captain & Vice
-                    # Note: select_starting_xi already sorts by predicted_points descending
-                    captain = starters.iloc[0]
-                    vice = starters.iloc[1]
+                    # CRITICAL: Sort by points to pick best players (ignoring position order)
+                    sorted_starters = starters.sort_values('predicted_points', ascending=False)
+                    captain = sorted_starters.iloc[0]
+                    vice = sorted_starters.iloc[1]
                     
                     # Chip Analysis
                     chip_strat = ChipStrategy(team_id, history)
