@@ -24,7 +24,40 @@ st.title("⚽ FPL AI Engine")
 
 # Sidebar
 st.sidebar.header("Configuration")
-team_id = st.sidebar.number_input("Team ID", value=5989967, step=1)
+
+# Fetch League Members for Dropdown
+@st.cache_data(ttl=3600)
+def get_league_members(league_id):
+    try:
+        fpl = FPLClient()
+        standings = fpl.get_league_standings(league_id)
+        if standings and 'standings' in standings:
+            results = standings['standings']['results']
+            # Create map: "Player Name - Team Name" -> ID
+            return {f"{r['player_name']} ({r['entry_name']})": r['entry'] for r in results}
+    except:
+        pass
+    return {}
+
+LEAGUE_ID = 1311994
+members_map = get_league_members(LEAGUE_ID)
+
+if members_map:
+    # Default to specific ID if in list, else first
+    default_id = 5989967
+    default_index = 0
+    
+    # Find index of default_id
+    id_list = list(members_map.values())
+    if default_id in id_list:
+        default_index = id_list.index(default_id)
+        
+    selected_name = st.sidebar.selectbox("Select Manager", list(members_map.keys()), index=default_index)
+    team_id = members_map[selected_name]
+else:
+    # Fallback if fetch fails
+    team_id = st.sidebar.number_input("Team ID", value=5989967, step=1)
+
 gw = st.sidebar.number_input("Gameweek", value=17, step=1)
 budget = st.sidebar.number_input("Budget (£m)", value=100.0, step=0.1)
 
