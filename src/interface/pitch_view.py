@@ -135,7 +135,7 @@ def check_image_exists(photo_id):
     st.session_state[CACHE_KEY][photo_id] = is_valid
     return is_valid
 
-def get_player_card_html(player, is_new=False):
+def get_player_card_html(player, is_new=False, is_captain=False, is_vice=False):
     p_type = player['element_type']
     
     photo_raw = str(player.get('photo', 'default')).replace('.jpg', '').replace('.png', '').replace('p', '')
@@ -152,16 +152,22 @@ def get_player_card_html(player, is_new=False):
         if check_image_exists(photo_raw):
             img_url = f"https://resources.premierleague.com/premierleague/photos/players/110x140/p{photo_raw}.png"
     
-    badge_html = ""
+    # Badges
+    badges_html = ""
     if is_new:
-        badge_html = '<div style="position: absolute; top: -5px; right: -5px; background: #28a745; color: white; border-radius: 50%; width: 20px; height: 20px; font-size: 10px; display: flex; align-items: center; justify-content: center; border: 1px solid white; z-index: 5;">IN</div>'
+        badges_html += '<div style="position: absolute; top: -5px; right: -5px; background: #28a745; color: white; border-radius: 50%; width: 20px; height: 20px; font-size: 10px; display: flex; align-items: center; justify-content: center; border: 1px solid white; z-index: 5;">IN</div>'
+    
+    if is_captain:
+        badges_html += '<div style="position: absolute; top: -5px; left: -5px; background: #000; color: white; border-radius: 50%; width: 22px; height: 22px; font-size: 12px; font-weight: bold; display: flex; align-items: center; justify-content: center; border: 1px solid white; z-index: 5;">C</div>'
+    elif is_vice:
+        badges_html += '<div style="position: absolute; top: -5px; left: -5px; background: #6c757d; color: white; border-radius: 50%; width: 22px; height: 22px; font-size: 12px; font-weight: bold; display: flex; align-items: center; justify-content: center; border: 1px solid white; z-index: 5;">V</div>'
     
     next_opp = player.get('next_opponent', '-')
     if next_opp != '-':
         next_opp = f"vs {next_opp}"
 
     # 3. Clean HTML (No onerror needed since we validated the URL)
-    return f"""<div class="player-card" style="position: relative;">{badge_html}
+    return f"""<div class="player-card" style="position: relative;">{badges_html}
 <div style="display: flex; justify-content: center; margin-bottom: 4px; height: 60px; align-items: flex-end;">
 <img src="{img_url}" style="width: auto; height: 60px; object-fit: contain;">
 </div>
@@ -175,7 +181,7 @@ def get_player_card_html(player, is_new=False):
 </div>
 </div>"""
 
-def render_pitch_view(starters, bench, new_transfers=None):
+def render_pitch_view(starters, bench, new_transfers=None, captain_id=None, vice_id=None):
     if new_transfers is None: new_transfers = []
     
     # CSS
@@ -192,7 +198,9 @@ def render_pitch_view(starters, bench, new_transfers=None):
         html_row = '<div class="pitch-row">'
         for _, p in players.iterrows():
             is_new = p['id'] in new_transfers
-            html_row += get_player_card_html(p, is_new)
+            is_cap = (p['id'] == captain_id)
+            is_vc = (p['id'] == vice_id)
+            html_row += get_player_card_html(p, is_new, is_captain=is_cap, is_vice=is_vc)
         html_row += '</div>'
         return html_row
 

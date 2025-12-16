@@ -87,6 +87,11 @@ if st.session_state.get('has_run', False):
                     
                     starters, bench = select_starting_xi(best_team)
                     
+                    # Identify Captain & Vice
+                    # Note: select_starting_xi already sorts by predicted_points descending
+                    captain = starters.iloc[0]
+                    vice = starters.iloc[1]
+                    
                     # Chip Analysis
                     chip_strat = ChipStrategy(team_id, history)
                     chip_recs = chip_strat.analyze(starters, bench, gw)
@@ -103,12 +108,20 @@ if st.session_state.get('has_run', False):
                                     st.caption(rec['reason'])
                                 else:
                                     st.info(rec['reason'])
-                    
+
+                    # Captaincy Analysis Header
+                    st.divider()
+                    cap_col1, cap_col2 = st.columns([1, 3])
+                    with cap_col1:
+                        st.markdown("### 🧢 Captaincy")
+                    with cap_col2:
+                         st.info(f"**Recommendation**: **{captain['web_name']}** ({captain['predicted_points']:.1f} XP) over {vice['web_name']} ({vice['predicted_points']:.1f} XP)")
+
                     # Split into Pitch and Summary
                     col_pitch, col_summary = st.columns([3, 1])
                     
                     with col_pitch:
-                        render_pitch_view(starters, bench, new_transfers=transfers_in_ids)
+                        render_pitch_view(starters, bench, new_transfers=transfers_in_ids, captain_id=captain['id'], vice_id=vice['id'])
                         
                     with col_summary:
                         st.subheader("🔁 Changes")
