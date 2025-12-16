@@ -114,12 +114,10 @@ def check_image_exists(photo_id):
     Checks if a player photo exists on the Premier League server.
     Uses caching to minimize latency.
     """
-    # 1. Manual Override Checks FIRST (bypasses cache)
-    if photo_id in MANUAL_MISSING:
+    if photo_id == 'default' or not photo_id or photo_id in MANUAL_MISSING:
         return False
         
-    # Initialize cache in session state if needed (New key to force refresh)
-    CACHE_KEY = 'img_valid_cache_v2'
+    CACHE_KEY = 'img_valid_cache_v3'
     if CACHE_KEY not in st.session_state:
         st.session_state[CACHE_KEY] = {}
         
@@ -128,7 +126,7 @@ def check_image_exists(photo_id):
     
     url = f"https://resources.premierleague.com/premierleague/photos/players/110x140/p{photo_id}.png"
     try:
-        response = requests.head(url, timeout=1.0)
+        response = requests.head(url, timeout=2.0)
         # Check status and ensure content isn't empty (placeholder images are often small)
         is_valid = response.status_code == 200 and int(response.headers.get('content-length', 0)) > 2000
     except:
@@ -140,15 +138,17 @@ def check_image_exists(photo_id):
 def get_player_card_html(player, is_new=False):
     p_type = player['element_type']
     
-    # 1. Normalize ID
     photo_raw = str(player.get('photo', 'default')).replace('.jpg', '').replace('.png', '').replace('p', '')
     
-    # 2. Determine Image URL via Server-Side Check
-    # Default to shirt
-    img_url = "https://fantasy.premierleague.com/img/shirts/standard/shirt_0.png"
+    # Use Team Shirt as fallback (requires team_code in data)
+    team_code = player.get('team_code', 0)
+    # Note: FPL team codes for shirts: https://fantasy.premierleague.com/dist/img/shirts/standard/shirt_{team_code}-110.webp
+    # Fallback to shirt_0 (generic) if team_code is missing/invalid logic
+    team_shirt_url = f"https://fantasy.premierleague.com/dist/img/shirts/standard/shirt_{int(team_code)}-110.webp" if team_code else "https://fantasy.premierleague.com/img/shirts/standard/shirt_0.png"
+    
+    img_url = team_shirt_url
     
     if photo_raw.isdigit():
-        # Only use the real photo if we confirm it exists (Status 200)
         if check_image_exists(photo_raw):
             img_url = f"https://resources.premierleague.com/premierleague/photos/players/110x140/p{photo_raw}.png"
     

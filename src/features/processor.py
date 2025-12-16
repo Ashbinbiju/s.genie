@@ -103,9 +103,13 @@ class FeatureProcessor:
              merged['fixture_difficulty'] = 3
              merged['next_opponent'] = "-"
 
+        # Add team_code for shirt images
+        team_code_map = fpl_teams.set_index('id')['code'].to_dict()
+        merged['team_code'] = merged['team'].map(team_code_map)
+
         # Select columns for model
         features = [
-            'id', 'web_name', 'team', 'element_type', 'price', 
+            'id', 'web_name', 'team', 'team_code', 'element_type', 'price', 
             'form', 'points_per_game', 'ict_index', 'ep_next',
             'xG', 'xA', 'xG_per_90', 'xA_per_90', 'minutes_prob', 
             'total_points', 'fixture_difficulty',
