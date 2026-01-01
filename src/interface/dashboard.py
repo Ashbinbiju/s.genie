@@ -158,18 +158,20 @@ if st.session_state.get('has_run', False):
                     chip_strat = ChipStrategy(team_id, history)
                     chip_recs = chip_strat.analyze(starters, bench, gw)
                     
+                    
                     with st.expander(f"💡 AI Chip Strategy Advisor (GW {gw})", expanded=True):
-                        c1, c2, c3 = st.columns(3)
-                        cols = [c1, c2, c3]
+                        cols = st.columns(len(chip_recs))
                         for i, rec in enumerate(chip_recs):
                             with cols[i]:
                                 st.write(f"**{rec['icon']} {rec['chip']}**")
                                 if rec['recommendation'] == 'Recommended':
                                     st.success(rec['reason'])
-                                elif rec['recommendation'] == 'Used':
-                                    st.caption(rec['reason'])
-                                else:
+                                elif rec['recommendation'] == 'Consider':
+                                    st.warning(rec['reason'])
+                                elif rec['recommendation'] == 'Available':
                                     st.info(rec['reason'])
+                                else:
+                                    st.error(rec['reason'])
 
                     # Captaincy Analysis Header
                     st.divider()
