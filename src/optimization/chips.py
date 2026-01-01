@@ -148,17 +148,34 @@ class ChipStrategy:
             }
 
     def _check_freehit(self, current_gw):
-        if 'freehit' in self.used_chips:
+        fh_event = self.used_chips.get('freehit')
+        is_fh_available = True
+        status_reason = "Available for blank gameweeks."
+
+        if fh_event:
+             # User requested restoration post GW20
+             if current_gw >= 20:
+                 if fh_event < 20:
+                     is_fh_available = True
+                     status_reason = "Available (Free Hit 2 active from GW20)"
+                 else:
+                     is_fh_available = False
+                     status_reason = f"Used in GW{fh_event}"
+             else:
+                 is_fh_available = False
+                 status_reason = f"Used in GW{fh_event}"
+        
+        if is_fh_available:
+            return {
+                'chip': 'Free Hit',
+                'recommendation': 'Available',
+                'icon': '🆓',
+                'reason': status_reason
+            }
+        else:
             return {
                 'chip': 'Free Hit',
                 'recommendation': 'Used',
                 'icon': '❌',
-                'reason': f"Used in GW{self.used_chips['freehit']}"
+                'reason': status_reason
             }
-            
-        return {
-            'chip': 'Free Hit',
-            'recommendation': 'Available',
-            'icon': '🆓',
-            'reason': "Available for blank gameweeks."
-        }
