@@ -29,8 +29,13 @@ class ChipStrategy:
         # Condition: Optimization gain > 20 points (This requires comparing current vs optimal, 
         # which acts as a proxy here if we assume 'optimized_team' is the target)
         # For now, we just check availability as specific squad diff is complex to pass here
-        wc_status = self._check_wildcard()
+        wc_status = self._check_wildcard(current_gw)
         recommendations.append(wc_status)
+        
+        # 4. Free Hit (User request: Restored post GW20? Standard rules say NO, but user insists)
+        # Let's add a check for Free Hit too
+        fh_status = self._check_freehit(current_gw)
+        recommendations.append(fh_status)
         
         return recommendations
 
@@ -101,24 +106,59 @@ class ChipStrategy:
                 'reason': f"No explosive captain option (<8 pts)."
             }
 
-    def _check_wildcard(self):
-        # FPL has two wildcards. We check 'wildcard' entry.
-        # Usually API distinguishes via separate names or just 'wildcard'
-        # Simplified: If used, it returns 'wildcard'. 
-        # Real logic often needs to check GW to see if it's WC1 or WC2 window.
-        # For now, simplistic check.
+    def _check_wildcard(self, current_gw):
+        # FPL allows 2 Wildcards:
+        # WC1: Start of season to GW19 deadline
+        # WC2: GW20 deadline to end of season
         
-        if 'wildcard' in self.used_chips:
+        wc_event = self.used_chips.get('wildcard')
+        
+        is_wc_available = True
+        status_reason = "Available"
+        
+        if wc_event:
+            # If we are in the second half (GW20+)
+            if current_gw >= 20:
+                # If the WC usage was from the first half (< 20), we have a NEW one.
+                if wc_event < 20:
+                    is_wc_available = True
+                    status_reason = "Available (Wildcard 2 active from GW20)"
+                else:
+                    # Usage was recent (>= 20), so WC2 is gone
+                    is_wc_available = False
+                    status_reason = f"Used in GW{wc_event}"
+            else:
+                # First half (< 20)
+                is_wc_available = False # Already used WC1
+                status_reason = f"Used in GW{wc_event}"
+        
+        if is_wc_available:
+            return {
+                'chip': 'Wildcard',
+                'recommendation': 'Available',
+                'icon': '🃏',
+                'reason': status_reason
+            }
+        else:
              return {
                 'chip': 'Wildcard',
                 'recommendation': 'Used',
                 'icon': '❌',
-                'reason': f"Used in GW{self.used_chips['wildcard']}"
+                'reason': status_reason
             }
-        
+
+    def _check_freehit(self, current_gw):
+        if 'freehit' in self.used_chips:
+            return {
+                'chip': 'Free Hit',
+                'recommendation': 'Used',
+                'icon': '❌',
+                'reason': f"Used in GW{self.used_chips['freehit']}"
+            }
+            
         return {
-            'chip': 'Wildcard',
+            'chip': 'Free Hit',
             'recommendation': 'Available',
-            'icon': '🃏',
-            'reason': "Available if your team needs a total rebuild."
+            'icon': '🆓',
+            'reason': "Available for blank gameweeks."
         }
