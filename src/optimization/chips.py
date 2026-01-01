@@ -198,7 +198,7 @@ class ChipStrategy:
                     'chip': 'Free Hit',
                     'recommendation': 'Save',
                     'icon': '💾',
-                    'reason': f"Save for Blank GWs (Currently {active_players} active)."
+                    'reason': f"No need. You have a full squad ({active_players} players)."
                 }
         else:
             return {
