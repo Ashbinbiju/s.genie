@@ -8,7 +8,7 @@ class ChipStrategy:
                 # chip['name'] is like 'wildcard', 'bboost', '3xc', 'freehit'
                 self.used_chips[chip['name']] = chip['event']
                 
-    def analyze(self, optimized_team, bench, current_gw, full_squad_value=0):
+    def analyze(self, optimized_team, bench, current_gw, full_squad_value=0, wildcard_diff=0, freehit_diff=0, active_players=15):
         """
         Analyzes the squad to recommend chips.
         Returns a list of dictionaries: {'chip': 'Name', 'status': 'Recommend/Avoid', 'reason': '...'}
@@ -26,15 +26,13 @@ class ChipStrategy:
         recommendations.append(tc_status)
         
         # 3. Wildcard
-        # Condition: Optimization gain > 20 points (This requires comparing current vs optimal, 
-        # which acts as a proxy here if we assume 'optimized_team' is the target)
-        # For now, we just check availability as specific squad diff is complex to pass here
-        wc_status = self._check_wildcard(current_gw)
+        # Condition: Optimization gain > 20 points
+        wc_status = self._check_wildcard(current_gw, wildcard_diff)
         recommendations.append(wc_status)
         
-        # 4. Free Hit (User request: Restored post GW20? Standard rules say NO, but user insists)
-        # Let's add a check for Free Hit too
-        fh_status = self._check_freehit(current_gw)
+        # 4. Free Hit 
+        # Condition: Massive gain (>25) OR Severe Blank (< 9 players)
+        fh_status = self._check_freehit(current_gw, freehit_diff, active_players)
         recommendations.append(fh_status)
         
         return recommendations
@@ -106,7 +104,7 @@ class ChipStrategy:
                 'reason': f"No explosive captain option (<8 pts)."
             }
 
-    def _check_wildcard(self, current_gw):
+    def _check_wildcard(self, current_gw, diff):
         # FPL allows 2 Wildcards:
         # WC1: Start of season to GW19 deadline
         # WC2: GW20 deadline to end of season
@@ -133,12 +131,27 @@ class ChipStrategy:
                 status_reason = f"Used in GW{wc_event}"
         
         if is_wc_available:
-            return {
-                'chip': 'Wildcard',
-                'recommendation': 'Available',
-                'icon': '🃏',
-                'reason': status_reason
-            }
+            if diff > 20:
+                return {
+                    'chip': 'Wildcard',
+                    'recommendation': 'Recommended',
+                    'icon': '🔥',
+                    'reason': f"Huge potential gain! (+{diff:.1f} pts vs current team)"
+                }
+            elif diff > 12:
+                return {
+                    'chip': 'Wildcard',
+                    'recommendation': 'Consider',
+                    'icon': '🤔',
+                    'reason': f"Good potential gain (+{diff:.1f} pts)."
+                }
+            else:
+                return {
+                    'chip': 'Wildcard',
+                    'recommendation': 'Save',
+                    'icon': '💾',
+                    'reason': f"Current team is strong (Only +{diff:.1f} gain)."
+                }
         else:
              return {
                 'chip': 'Wildcard',
@@ -147,7 +160,7 @@ class ChipStrategy:
                 'reason': status_reason
             }
 
-    def _check_freehit(self, current_gw):
+    def _check_freehit(self, current_gw, diff, active_players):
         fh_event = self.used_chips.get('freehit')
         is_fh_available = True
         status_reason = "Available for blank gameweeks."
@@ -166,12 +179,27 @@ class ChipStrategy:
                  status_reason = f"Used in GW{fh_event}"
         
         if is_fh_available:
-            return {
-                'chip': 'Free Hit',
-                'recommendation': 'Available',
-                'icon': '🆓',
-                'reason': status_reason
-            }
+            if active_players < 9:
+                return {
+                    'chip': 'Free Hit',
+                    'recommendation': 'Recommended',
+                    'icon': '🚨',
+                    'reason': f"Crisis! Only {active_players} players active."
+                }
+            elif diff > 25:
+                 return {
+                    'chip': 'Free Hit',
+                    'recommendation': 'Recommended',
+                    'icon': '🔥',
+                    'reason': f"One-week punt opportunity! (+{diff:.1f} pts)"
+                }
+            else:
+                return {
+                    'chip': 'Free Hit',
+                    'recommendation': 'Save',
+                    'icon': '💾',
+                    'reason': f"Save for Blank GWs (Currently {active_players} active)."
+                }
         else:
             return {
                 'chip': 'Free Hit',

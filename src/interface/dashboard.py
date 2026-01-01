@@ -147,7 +147,27 @@ if st.session_state.get('has_run', False):
                     vice = sorted_starters.iloc[1]
                     
                     
-                    # Chip Analysis
+                    # Chip Analysis - Smart Logic
+                    # 1. Calculate Current Squad Expected Points (15 players)
+                    current_xp = current_team_df['predicted_points'].sum()
+                    
+                    # 2. Calculate Active Players (Prevent Blank GW disasters)
+                    # Count players with non-zero predicted points
+                    active_count = len(current_team_df[current_team_df['predicted_points'] > 0.5])
+                    
+                    # 3. Simulate Wildcard (Optimal Team from scratch)
+                    # We reuse the optimizer but call solve_team (unlimited transfers)
+                    wc_optimizer = TransferOptimizer(budget=max(budget, current_value))
+                    wc_squad = wc_optimizer.solve_team(df)
+                    
+                    wc_diff = 0
+                    if wc_squad is not None:
+                        wc_xp = wc_squad['predicted_points'].sum()
+                        wc_diff = wc_xp - current_xp
+                        
+                    # Free Hit potential is roughly same as Wildcard potential for a single week
+                    fh_diff = wc_diff 
+                    
                     # Force reload to ensure Free Hit logic update is picked up
                     import src.optimization.chips
                     import importlib
@@ -155,7 +175,11 @@ if st.session_state.get('has_run', False):
                     from src.optimization.chips import ChipStrategy
                     
                     chip_strat = ChipStrategy(team_id, history)
-                    chip_recs = chip_strat.analyze(starters, bench, gw)
+                    # Pass the smart metrics to the strategy
+                    chip_recs = chip_strat.analyze(starters, bench, gw, 
+                                                 wildcard_diff=wc_diff, 
+                                                 freehit_diff=fh_diff, 
+                                                 active_players=active_count)
                     
                     
                     with st.expander(f"💡 AI Chip Strategy Advisor (GW {gw})", expanded=True):
