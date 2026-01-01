@@ -147,7 +147,7 @@ if st.session_state.get('has_run', False):
                     chip_strat = ChipStrategy(team_id, history)
                     chip_recs = chip_strat.analyze(starters, bench, gw)
                     
-                    with st.expander("💡 AI Chip Strategy Advisor", expanded=True):
+                    with st.expander(f"💡 AI Chip Strategy Advisor (GW {gw})", expanded=True):
                         c1, c2, c3 = st.columns(3)
                         cols = [c1, c2, c3]
                         for i, rec in enumerate(chip_recs):
