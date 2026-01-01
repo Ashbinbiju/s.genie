@@ -201,11 +201,12 @@ if st.session_state.get('has_run', False):
                         if wc_squad is not None:
                             with st.expander("👀 View AI's Ideal Wildcard/Free Hit Squad"):
                                 st.caption(f"Projected Points: {wc_xp:.1f} (vs Current: {current_xp:.1f})")
-                                st.dataframe(
-                                    wc_squad[['web_name', 'team', 'element_type', 'price', 'predicted_points']]
-                                    .sort_values('predicted_points', ascending=False)
-                                    .style.format({'price': '£{:.1f}', 'predicted_points': '{:.1f}'})
-                                )
+                                
+                                # Split into Starters/Bench for visualization
+                                wc_starters, wc_bench = select_starting_xi(wc_squad)
+                                
+                                # Render the visual pitch
+                                render_pitch_view(wc_starters, wc_bench)
 
                     # Captaincy Analysis Header
                     st.divider()
