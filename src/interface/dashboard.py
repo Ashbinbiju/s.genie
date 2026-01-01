@@ -23,7 +23,7 @@ from src.interface.pitch_view import render_pitch_view, check_image_exists
 
 st.set_page_config(page_title="FPL AI Engine", layout="wide")
 
-st.title("⚽ FPL AI Engine")
+st.title("⚽ FPL AI Engine v2.0")
 
 # Sidebar
 st.sidebar.header("Configuration")
@@ -197,6 +197,15 @@ if st.session_state.get('has_run', False):
                                     st.info(rec['reason'])
                                 else:
                                     st.error(rec['reason'])
+                        
+                        if wc_squad is not None:
+                            with st.expander("👀 View AI's Ideal Wildcard/Free Hit Squad"):
+                                st.caption(f"Projected Points: {wc_xp:.1f} (vs Current: {current_xp:.1f})")
+                                st.dataframe(
+                                    wc_squad[['web_name', 'team', 'element_type', 'price', 'predicted_points']]
+                                    .sort_values('predicted_points', ascending=False)
+                                    .style.format({'price': '£{:.1f}', 'predicted_points': '{:.1f}'})
+                                )
 
                     # Captaincy Analysis Header
                     st.divider()
