@@ -14,11 +14,8 @@ from src.model.predictor import PointsPredictor
 from src.optimization.solver import TransferOptimizer
 from src.optimization.team_selection import select_starting_xi
 from src.optimization.chips import ChipStrategy
-import importlib
-import src.optimization.chips
-# Force reload to pick up logic changes without restarting server
-importlib.reload(src.optimization.chips)
-from src.optimization.chips import ChipStrategy
+
+from src.analysis.rivals import RivalSpy
 
 from src.analysis.rivals import RivalSpy
 from src.interface.pitch_view import render_pitch_view, check_image_exists
@@ -150,11 +147,6 @@ if st.session_state.get('has_run', False):
                     vice = sorted_starters.iloc[1]
                     
                     # Chip Analysis
-                    # Force reload strategy class to ensure fresh logic
-                    import src.optimization.chips
-                    importlib.reload(src.optimization.chips)
-                    from src.optimization.chips import ChipStrategy
-                    
                     chip_strat = ChipStrategy(team_id, history)
                     chip_recs = chip_strat.analyze(starters, bench, gw)
                     
