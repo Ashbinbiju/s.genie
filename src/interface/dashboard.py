@@ -146,7 +146,14 @@ if st.session_state.get('has_run', False):
                     captain = sorted_starters.iloc[0]
                     vice = sorted_starters.iloc[1]
                     
+                    
                     # Chip Analysis
+                    # Force reload to ensure Free Hit logic update is picked up
+                    import src.optimization.chips
+                    import importlib
+                    importlib.reload(src.optimization.chips)
+                    from src.optimization.chips import ChipStrategy
+                    
                     chip_strat = ChipStrategy(team_id, history)
                     chip_recs = chip_strat.analyze(starters, bench, gw)
                     
