@@ -58,7 +58,24 @@ else:
     # Fallback if fetch fails
     team_id = st.sidebar.number_input("Team ID", value=5989967, step=1)
 
-gw = st.sidebar.number_input("Gameweek", value=17, step=1)
+# Fetch Current Gameweek
+@st.cache_data(ttl=3600)
+def get_current_gameweek():
+    try:
+        fpl = FPLClient()
+        data = fpl.get_bootstrap_static()
+        if data and 'events' in data:
+            for event in data['events']:
+                if event.get('is_next', False):
+                    return event['id']
+                # If season finished or no next, maybe return current?
+                # Usually is_current=True exists.
+    except:
+        pass
+    return 17 # Default fallback
+
+next_gw = get_current_gameweek()
+gw = st.sidebar.number_input("Gameweek", value=next_gw, step=1)
 budget = st.sidebar.number_input("Budget (£m)", value=100.0, step=0.1)
 
 if st.sidebar.button("Run Analysis"):
