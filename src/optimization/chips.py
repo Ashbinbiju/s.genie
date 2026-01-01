@@ -144,7 +144,7 @@ class ChipStrategy:
                 'chip': 'Wildcard',
                 'recommendation': 'Used',
                 'icon': '❌',
-                'reason': status_reason
+                'reason': f"{status_reason} (Debug: CurGW={current_gw} UsedGW={wc_event})"
             }
 
     def _check_freehit(self, current_gw):
