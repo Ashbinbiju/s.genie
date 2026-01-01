@@ -193,6 +193,8 @@ if st.session_state.get('has_run', False):
                                     st.warning(rec['reason'])
                                 elif rec['recommendation'] == 'Available':
                                     st.info(rec['reason'])
+                                elif rec['recommendation'] == 'Save':
+                                    st.info(rec['reason'])
                                 else:
                                     st.error(rec['reason'])
 
