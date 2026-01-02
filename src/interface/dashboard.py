@@ -23,7 +23,7 @@ from src.interface.pitch_view import render_pitch_view, check_image_exists
 
 st.set_page_config(page_title="FPL AI Engine", layout="wide")
 
-st.title("⚽ FPL AI Engine v2.1")
+st.title("⚽ FPL AI Engine v2.2")
 
 # Sidebar
 st.sidebar.header("Configuration")
