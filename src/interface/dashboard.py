@@ -205,8 +205,13 @@ if st.session_state.get('has_run', False):
                                 # Split into Starters/Bench for visualization
                                 wc_starters, wc_bench = select_starting_xi(wc_squad)
                                 
-                                # Render the visual pitch
-                                render_pitch_view(wc_starters, wc_bench)
+                                # Determine Captain (Highest XP) & Vice (2nd Highest)
+                                wc_sorted = wc_starters.sort_values('predicted_points', ascending=False)
+                                wc_cap = wc_sorted.iloc[0]
+                                wc_vice = wc_sorted.iloc[1]
+
+                                # Render the visual pitch with Captaincy
+                                render_pitch_view(wc_starters, wc_bench, captain_id=wc_cap['id'], vice_id=wc_vice['id'])
 
                     # Captaincy Analysis Header
                     st.divider()
