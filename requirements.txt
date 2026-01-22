@@ -7,3 +7,4 @@ pulp
 streamlit
 tqdm
 fpl
+altair==4.2.2
