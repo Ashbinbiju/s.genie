@@ -7,4 +7,5 @@ pulp
 streamlit
 tqdm
 fpl
-altair==4.2.2
+streamlit
+altair<5
