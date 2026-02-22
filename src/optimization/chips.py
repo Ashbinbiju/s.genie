@@ -17,12 +17,12 @@ class ChipStrategy:
         
         # 1. Bench Boost
         # Condition: Bench XP > 15 AND All bench players have games
-        bb_status = self._check_bench_boost(bench)
+        bb_status = self._check_bench_boost(bench, current_gw)
         recommendations.append(bb_status)
         
         # 2. Triple Captain
         # Condition: Top player XP > 10.0 (Adjustable)
-        tc_status = self._check_triple_captain(optimized_team)
+        tc_status = self._check_triple_captain(optimized_team, current_gw)
         recommendations.append(tc_status)
         
         # 3. Wildcard
@@ -35,15 +35,42 @@ class ChipStrategy:
         fh_status = self._check_freehit(current_gw, freehit_diff, active_players)
         recommendations.append(fh_status)
         
+        # Add visual indicator for restored chips
+        chip_keys = {'Bench Boost': 'bboost', 'Triple Captain': '3xc', 'Wildcard': 'wildcard', 'Free Hit': 'freehit'}
+        if current_gw >= 20:
+            for rec in recommendations:
+                if rec['recommendation'] != 'Used':
+                    key = chip_keys.get(rec['chip'])
+                    event_used = self.used_chips.get(key)
+                    if event_used and event_used < 20:
+                        rec['reason'] = f"[RESTORED 2nd CHIP] {rec['reason']}"
+
         return recommendations
 
-    def _check_bench_boost(self, bench):
-        if 'bboost' in self.used_chips:
+    def _check_bench_boost(self, bench, current_gw):
+        bb_event = self.used_chips.get('bboost')
+        is_bb_available = True
+        status_reason = "Available"
+
+        if bb_event:
+            # User requested restoration post GW20
+            if current_gw >= 20:
+                if bb_event < 20:
+                    is_bb_available = True
+                    status_reason = "Available (Bench Boost 2 active from GW20)"
+                else:
+                    is_bb_available = False
+                    status_reason = f"Used in GW{bb_event}"
+            else:
+                is_bb_available = False
+                status_reason = f"Used in GW{bb_event}"
+
+        if not is_bb_available:
             return {
                 'chip': 'Bench Boost',
                 'recommendation': 'Used',
                 'icon': '❌',
-                'reason': f"Used in GW{self.used_chips['bboost']}"
+                'reason': status_reason
             }
             
         bench_xp = bench['predicted_points'].sum()
@@ -70,13 +97,30 @@ class ChipStrategy:
                 'reason': f"Bench too weak ({bench_xp:.1f} pts)."
             }
 
-    def _check_triple_captain(self, team):
-        if '3xc' in self.used_chips:
+    def _check_triple_captain(self, team, current_gw):
+        tc_event = self.used_chips.get('3xc')
+        is_tc_available = True
+        status_reason = "Available"
+
+        if tc_event:
+            # User requested restoration post GW20
+            if current_gw >= 20:
+                if tc_event < 20:
+                    is_tc_available = True
+                    status_reason = "Available (Triple Captain 2 active from GW20)"
+                else:
+                    is_tc_available = False
+                    status_reason = f"Used in GW{tc_event}"
+            else:
+                is_tc_available = False
+                status_reason = f"Used in GW{tc_event}"
+
+        if not is_tc_available:
             return {
                 'chip': 'Triple Captain',
                 'recommendation': 'Used',
                 'icon': '❌',
-                'reason': f"Used in GW{self.used_chips['3xc']}"
+                'reason': status_reason
             }
             
         top_player = team.loc[team['predicted_points'].idxmax()]
