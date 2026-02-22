@@ -48,24 +48,37 @@ class PointsPredictor:
         # Weights (0.2-2.5) scale these to similar magnitudes, favoring underlying threat.
         # Fixture difficulty is bounded [1-5], so (5 - difficulty) yields a 0-4 boost.
         
-        # Calculate Expected Goal Involvement per 90
-        xGI_per_90 = df_features['xG_per_90'].fillna(0) + df_features['xA_per_90'].fillna(0)
+        # Calculate Expected Goal Involvement per 90 (if columns exist)
+        if 'xG_per_90' in df_features.columns and 'xA_per_90' in df_features.columns:
+            xGI_per_90 = df_features['xG_per_90'].fillna(0) + df_features['xA_per_90'].fillna(0)
+        else:
+            xGI_per_90 = 0
+            
+        # Ensure base columns exist
+        form = df_features['form'].fillna(0) if 'form' in df_features.columns else 0
+        ppg = df_features['points_per_game'].fillna(0) if 'points_per_game' in df_features.columns else 0
+        diff = df_features['fixture_difficulty'].fillna(3) if 'fixture_difficulty' in df_features.columns else 3
         
         preds = (
-            df_features['form'].fillna(0) * 0.3 + 
-            df_features['points_per_game'].fillna(0) * 0.2 + 
+            form * 0.3 + 
+            ppg * 0.2 + 
             xGI_per_90 * 2.5 + # Heavy weight on underlying threat
-            (5 - df_features['fixture_difficulty'].fillna(3)) * 0.6
+            (5 - diff) * 0.6
         )
         
         # Premium player bump (talented players have higher ceilings uncaptured by linear stats)
-        premium_boost = (df_features['price'].fillna(0) >= self.PREMIUM_PRICE_THRESHOLD).astype(float) * self.PREMIUM_BOOST_VALUE
+        price_col = df_features['price'].fillna(0) if 'price' in df_features.columns else 0
+        premium_boost = (price_col >= self.PREMIUM_PRICE_THRESHOLD).astype(float) * self.PREMIUM_BOOST_VALUE
         preds = preds + premium_boost
         
         # Adjust for Minutes Risk
-        # If chance_of_playing_next_round is completely missing, default to 100% (1.0).
+        # If minutes_prob is completely missing, default to 100% (1.0).
         # We also enforce a clip to prevent strange values.
-        minutes_prob = df_features['minutes_prob'].fillna(1.0).clip(lower=0, upper=1)
+        if 'minutes_prob' in df_features.columns:
+            minutes_prob = df_features['minutes_prob'].fillna(1.0).clip(lower=0, upper=1)
+        else:
+            minutes_prob = 1.0
+            
         preds = preds * minutes_prob
         
         # If we had a real model:
