@@ -39,14 +39,22 @@ class PointsPredictor:
         # Ensure we have the same columns as training
         # For this skeleton, we'll assume we use a heuristic if no model found
         
-        # Heuristic: Form * 0.4 + PPG * 0.4 + (5 - FixtureDiff) * 0.2
-        # This is a 'cold start' fallback
+        # Heuristic: More aggressive weighting towards Understat data (xG/xA), Form, and Fixtures
+        # This replaces the conservative 'cold start' fallback
+        
+        # Calculate Expected Goal Involvement per 90
+        xGI_per_90 = df_features['xG_per_90'] + df_features['xA_per_90']
         
         preds = (
-            df_features['form'] * 0.4 + 
-            df_features['points_per_game'] * 0.4 + 
-            (5 - df_features['fixture_difficulty']) * 0.5
+            df_features['form'] * 0.3 + 
+            df_features['points_per_game'] * 0.2 + 
+            xGI_per_90 * 2.5 + # Heavy weight on underlying threat
+            (5 - df_features['fixture_difficulty']) * 0.6
         )
+        
+        # Premium player bump (talented players have higher ceilings uncaptured by linear stats)
+        premium_boost = (df_features['price'] >= 8.0).astype(float) * 0.5
+        preds = preds + premium_boost
         
         # Adjust for Minutes Risk
         preds = preds * df_features['minutes_prob']
