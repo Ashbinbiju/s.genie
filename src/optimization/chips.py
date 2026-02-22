@@ -47,23 +47,31 @@ class ChipStrategy:
 
         return recommendations
 
-    def _check_bench_boost(self, bench, current_gw):
-        bb_event = self.used_chips.get('bboost')
-        is_bb_available = True
-        status_reason = "Available"
+    def _is_chip_available(self, chip_key, current_gw):
+        """
+        Returns (is_available: bool, status_reason: str) for the given chip.
+        Handles restoration logic for chips used before GW20.
+        """
+        GW_RESTORATION_THRESHOLD = 20
+        event_used = self.used_chips.get(chip_key)
+        
+        if not event_used:
+            return True, "Available"
+        
+        if current_gw >= GW_RESTORATION_THRESHOLD and event_used < GW_RESTORATION_THRESHOLD:
+            # Get a "friendly" name for the chip
+            chip_display = {
+                'bboost': 'Bench Boost 2',
+                '3xc': 'Triple Captain 2',
+                'wildcard': 'Wildcard 2',
+                'freehit': 'Free Hit 2'
+            }.get(chip_key, chip_key)
+            return True, f"Available ({chip_display} active from GW{GW_RESTORATION_THRESHOLD})"
+        
+        return False, f"Used in GW{event_used}"
 
-        if bb_event:
-            # User requested restoration post GW20
-            if current_gw >= 20:
-                if bb_event < 20:
-                    is_bb_available = True
-                    status_reason = "Available (Bench Boost 2 active from GW20)"
-                else:
-                    is_bb_available = False
-                    status_reason = f"Used in GW{bb_event}"
-            else:
-                is_bb_available = False
-                status_reason = f"Used in GW{bb_event}"
+    def _check_bench_boost(self, bench, current_gw):
+        is_bb_available, status_reason = self._is_chip_available('bboost', current_gw)
 
         if not is_bb_available:
             return {
@@ -98,22 +106,7 @@ class ChipStrategy:
             }
 
     def _check_triple_captain(self, team, current_gw):
-        tc_event = self.used_chips.get('3xc')
-        is_tc_available = True
-        status_reason = "Available"
-
-        if tc_event:
-            # User requested restoration post GW20
-            if current_gw >= 20:
-                if tc_event < 20:
-                    is_tc_available = True
-                    status_reason = "Available (Triple Captain 2 active from GW20)"
-                else:
-                    is_tc_available = False
-                    status_reason = f"Used in GW{tc_event}"
-            else:
-                is_tc_available = False
-                status_reason = f"Used in GW{tc_event}"
+        is_tc_available, status_reason = self._is_chip_available('3xc', current_gw)
 
         if not is_tc_available:
             return {
@@ -152,27 +145,7 @@ class ChipStrategy:
         # FPL allows 2 Wildcards:
         # WC1: Start of season to GW19 deadline
         # WC2: GW20 deadline to end of season
-        
-        wc_event = self.used_chips.get('wildcard')
-        
-        is_wc_available = True
-        status_reason = "Available"
-        
-        if wc_event:
-            # If we are in the second half (GW20+)
-            if current_gw >= 20:
-                # If the WC usage was from the first half (< 20), we have a NEW one.
-                if wc_event < 20:
-                    is_wc_available = True
-                    status_reason = "Available (Wildcard 2 active from GW20)"
-                else:
-                    # Usage was recent (>= 20), so WC2 is gone
-                    is_wc_available = False
-                    status_reason = f"Used in GW{wc_event}"
-            else:
-                # First half (< 20)
-                is_wc_available = False # Already used WC1
-                status_reason = f"Used in GW{wc_event}"
+        is_wc_available, status_reason = self._is_chip_available('wildcard', current_gw)
         
         if is_wc_available:
             if diff > 20:
@@ -205,22 +178,7 @@ class ChipStrategy:
             }
 
     def _check_freehit(self, current_gw, diff, active_players):
-        fh_event = self.used_chips.get('freehit')
-        is_fh_available = True
-        status_reason = "Available for blank gameweeks."
-
-        if fh_event:
-             # User requested restoration post GW20
-             if current_gw >= 20:
-                 if fh_event < 20:
-                     is_fh_available = True
-                     status_reason = "Available (Free Hit 2 active from GW20)"
-                 else:
-                     is_fh_available = False
-                     status_reason = f"Used in GW{fh_event}"
-             else:
-                 is_fh_available = False
-                 status_reason = f"Used in GW{fh_event}"
+        is_fh_available, status_reason = self._is_chip_available('freehit', current_gw)
         
         if is_fh_available:
             if active_players < 9:
