@@ -63,7 +63,9 @@ class PointsPredictor:
         preds = preds + premium_boost
         
         # Adjust for Minutes Risk
-        minutes_prob = df_features['minutes_prob'].fillna(0).clip(lower=0, upper=1)
+        # If chance_of_playing_next_round is completely missing, default to 100% (1.0).
+        # We also enforce a clip to prevent strange values.
+        minutes_prob = df_features['minutes_prob'].fillna(1.0).clip(lower=0, upper=1)
         preds = preds * minutes_prob
         
         # If we had a real model:
