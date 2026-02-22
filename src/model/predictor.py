@@ -5,6 +5,9 @@ import os
 import joblib
 
 class PointsPredictor:
+    PREMIUM_PRICE_THRESHOLD = 8.0
+    PREMIUM_BOOST_VALUE = 0.5
+
     def __init__(self, model_dir="data/models"):
         self.model_dir = model_dir
         os.makedirs(self.model_dir, exist_ok=True)
@@ -40,24 +43,28 @@ class PointsPredictor:
         # For this skeleton, we'll assume we use a heuristic if no model found
         
         # Heuristic: More aggressive weighting towards Understat data (xG/xA), Form, and Fixtures
-        # This replaces the conservative 'cold start' fallback
+        # This replaces the conservative 'cold start' fallback.
+        # Feature typical ranges: form (0-9), pts_per_game (~1-10), xGI_per_90 (0.3-1.5).
+        # Weights (0.2-2.5) scale these to similar magnitudes, favoring underlying threat.
+        # Fixture difficulty is bounded [1-5], so (5 - difficulty) yields a 0-4 boost.
         
         # Calculate Expected Goal Involvement per 90
-        xGI_per_90 = df_features['xG_per_90'] + df_features['xA_per_90']
+        xGI_per_90 = df_features['xG_per_90'].fillna(0) + df_features['xA_per_90'].fillna(0)
         
         preds = (
-            df_features['form'] * 0.3 + 
-            df_features['points_per_game'] * 0.2 + 
+            df_features['form'].fillna(0) * 0.3 + 
+            df_features['points_per_game'].fillna(0) * 0.2 + 
             xGI_per_90 * 2.5 + # Heavy weight on underlying threat
-            (5 - df_features['fixture_difficulty']) * 0.6
+            (5 - df_features['fixture_difficulty'].fillna(3)) * 0.6
         )
         
         # Premium player bump (talented players have higher ceilings uncaptured by linear stats)
-        premium_boost = (df_features['price'] >= 8.0).astype(float) * 0.5
+        premium_boost = (df_features['price'].fillna(0) >= self.PREMIUM_PRICE_THRESHOLD).astype(float) * self.PREMIUM_BOOST_VALUE
         preds = preds + premium_boost
         
         # Adjust for Minutes Risk
-        preds = preds * df_features['minutes_prob']
+        minutes_prob = df_features['minutes_prob'].fillna(0).clip(lower=0, upper=1)
+        preds = preds * minutes_prob
         
         # If we had a real model:
         # if self.load_model():
