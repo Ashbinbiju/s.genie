@@ -116,6 +116,8 @@ if st.session_state.get('has_run', False):
         
         # 4. Get Current Team
         # Pass freehit_gws so we don't accidentally load the temporary FH squad as the permanent team.
+        if freehit_gws:
+            st.sidebar.info(f"🔁 Free Hit detected in GW(s): {sorted(freehit_gws)} — permanent squad loaded from a different GW.")
         picks = fpl.get_team_picks(team_id, gw, freehit_gws=freehit_gws)
         if picks:
             current_ids = [p['element'] for p in picks['picks']]
