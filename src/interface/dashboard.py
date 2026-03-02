@@ -97,6 +97,15 @@ if st.session_state.get('has_run', False):
         except:
             history = {}
         
+        # Detect if and when Free Hit was used (FH squad only lasts 1 GW;
+        # we must skip that GW when fetching the permanent team picks).
+        freehit_gw = None
+        if history and 'chips' in history:
+            for chip in history.get('chips', []):
+                if chip['name'] == 'freehit':
+                    freehit_gw = chip['event']
+                    break
+        
         # 2. Features
         processor = FeatureProcessor()
         # Force refresh to ensure new columns (next_opponent) are generated
@@ -107,7 +116,8 @@ if st.session_state.get('has_run', False):
         df = predictor.predict(df)
         
         # 4. Get Current Team
-        picks = fpl.get_team_picks(team_id, gw)
+        # Pass freehit_gw so we don't accidentally load the temporary FH squad as the permanent team.
+        picks = fpl.get_team_picks(team_id, gw, freehit_gw=freehit_gw)
         if picks:
             current_ids = [p['element'] for p in picks['picks']]
             current_team_df = df[df['id'].isin(current_ids)]
