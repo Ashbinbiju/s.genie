@@ -105,20 +105,22 @@ class FPLClient:
             
         return available_ft
 
-    def get_team_picks(self, team_id, gw, freehit_gw=None):
+    def get_team_picks(self, team_id, gw, freehit_gws=None):
         """
         Fetches a specific team's picks for a gameweek. Tries gw-1, then gw-2...
         
-        Skips `freehit_gw` when searching backwards, because the FPL API returns
-        the temporary Free Hit squad for that GW rather than the permanent squad.
+        Skips any GW in `freehit_gws` when searching backwards, because the FPL API
+        returns the temporary Free Hit squad for that GW rather than the permanent squad.
         Without skipping, the Free Hit squad leaks into the next week's UI.
+        A user can play two FH chips per season, so we accept a set.
         """
+        freehit_gws = freehit_gws or set()
         start_gw = gw - 1
         for g in range(start_gw, max(0, start_gw - 6), -1):
             if g < 1:
                 break
-            # Skip the Free Hit GW - it contains the FH squad, not the permanent team.
-            if freehit_gw is not None and g == freehit_gw:
+            # Skip any Free Hit GW – it contains the FH squad, not the permanent team.
+            if g in freehit_gws:
                 print(f"Skipping GW{g} (Free Hit was played) — fetching permanent squad from earlier GW.")
                 continue
             data = self._get(f"entry/{team_id}/event/{g}/picks/")
