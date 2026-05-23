@@ -7,4 +7,10 @@ venv/
 reports/
 data/raw/
 data/processed/
+data/cache/
+data/models/
+data/reports/
 *.parquet
+*.pkl
+*.csv
+*.json

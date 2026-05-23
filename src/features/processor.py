@@ -99,21 +99,80 @@ class FeatureProcessor:
              # Map difficulty to player's team
              merged['fixture_difficulty'] = merged['team'].map(lambda x: match_data.get(x, {}).get('fixture_difficulty', 3))
              merged['next_opponent'] = merged['team'].map(lambda x: match_data.get(x, {}).get('next_opponent', "-"))
+             merged['opponent_team'] = merged['team'].map(lambda x: match_data.get(x, {}).get('opponent_team_id', "0")).astype(str)
+             merged['was_home'] = merged['team'].map(lambda x: match_data.get(x, {}).get('is_home', True)).astype(str)
         else:
              merged['fixture_difficulty'] = 3
              merged['next_opponent'] = "-"
+             merged['opponent_team'] = "0"
+             merged['was_home'] = "True"
 
         # Add team_code for shirt images
         team_code_map = fpl_teams.set_index('id')['code'].to_dict()
         merged['team_code'] = merged['team'].map(team_code_map)
 
+        # Map element_type to position string
+        type_map = {1: 'GK', 2: 'DEF', 3: 'MID', 4: 'FWD'}
+        merged['position'] = merged['element_type'].map(type_map).astype(str)
+
+        # ---------------------------------------------------------------
+        # Bookmaker Odds (optional, fallback-safe)
+        # ---------------------------------------------------------------
+        try:
+            import sys
+            _proj = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..'))
+            if _proj not in sys.path: sys.path.insert(0, _proj)
+            from src.api.odds import OddsClient, LEAGUE_DEFAULTS, TEAM_NAME_NORMALIZE
+            
+            odds_client = OddsClient()
+            live_odds = odds_client.get_current_odds()
+            
+            # Map FPL team id → team name
+            team_name_map = fpl_teams.set_index('id')['name'].to_dict()
+            
+            odds_cols = ['win_prob', 'draw_prob', 'loss_prob', 
+                         'team_implied_goals', 'opponent_implied_goals', 'clean_sheet_prob']
+            
+            for col in odds_cols:
+                merged[col] = LEAGUE_DEFAULTS[col]  # defaults
+                
+            if live_odds:
+                for idx, row in merged.iterrows():
+                    team_name = team_name_map.get(row['team'], '')
+                    # Try exact match, then normalized
+                    odds_data = live_odds.get(team_name) or live_odds.get(
+                        TEAM_NAME_NORMALIZE.get(team_name, team_name))
+                    if odds_data:
+                        for col in odds_cols:
+                            merged.at[idx, col] = odds_data.get(col, LEAGUE_DEFAULTS[col])
+                            
+            # Derive anytime_goal_scorer_prob
+            merged['anytime_goal_scorer_prob'] = merged.apply(
+                lambda r: OddsClient.compute_anytime_scorer_prob(
+                    r['team_implied_goals'], r['position']), axis=1)
+                    
+            print(f"Odds features added (live={'Yes' if live_odds else 'No, using defaults'})")
+        except Exception as e:
+            print(f"Odds integration skipped: {e}")
+            merged['win_prob'] = 0.33
+            merged['draw_prob'] = 0.33
+            merged['loss_prob'] = 0.33
+            merged['team_implied_goals'] = 1.35
+            merged['opponent_implied_goals'] = 1.35
+            merged['clean_sheet_prob'] = 0.30
+            merged['anytime_goal_scorer_prob'] = 0.10
+
         # Select columns for model
         features = [
-            'id', 'web_name', 'team', 'team_code', 'element_type', 'price', 
+            'id', 'web_name', 'team', 'team_code', 'element_type', 'position', 'price', 
             'form', 'points_per_game', 'ict_index', 'ep_next',
             'xG', 'xA', 'xG_per_90', 'xA_per_90', 'minutes_prob', 
             'total_points', 'fixture_difficulty',
             'news', 'chance_of_playing_next_round', 'next_opponent',
+            'opponent_team', 'was_home',
+            'win_prob', 'draw_prob', 'loss_prob',
+            'team_implied_goals', 'opponent_implied_goals', 
+            'clean_sheet_prob', 'anytime_goal_scorer_prob',
             'photo'
         ]
         
@@ -181,12 +240,19 @@ class FeatureProcessor:
                 if i == 0:
                     venue = "(H)" if is_home else "(A)"
                     next_opp_str = f"{opp_name} {venue}"
+                    next_opp_id = opp_id
+                    next_is_home = is_home
 
                 diff_sum += difficulty
                 count += 1
             
             avg_diff = diff_sum / count if count > 0 else 3
-            team_data[team_id] = {'fixture_difficulty': avg_diff, 'next_opponent': next_opp_str}
+            team_data[team_id] = {
+                'fixture_difficulty': avg_diff, 
+                'next_opponent': next_opp_str,
+                'opponent_team_id': next_opp_id if count > 0 else 0,
+                'is_home': next_is_home if count > 0 else True
+            }
             
         return team_data
 
