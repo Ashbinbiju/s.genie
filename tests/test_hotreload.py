@@ -109,13 +109,21 @@ def test_marker_is_recorded_on_the_sys_module(fake_pkg):
 
 
 def test_real_src_package_round_trip():
-    """Against the real tree: evicting src.* must leave it importable."""
+    """
+    Against the real tree: evicting src.* must leave it importable.
+
+    sys.modules is snapshotted and restored. Without that this test inflicts the very
+    problem it covers on the rest of the suite: later test modules already hold
+    references bound from the ORIGINAL module objects, so a fresh import would hand
+    them a different `src.model.predictor` and monkeypatches would land on the wrong one.
+    """
     import src.api.fpl  # noqa: F401
     root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
 
-    future = time.time() + 5
+    snapshot = {n: m for n, m in sys.modules.items() if n == 'src' or n.startswith('src.')}
     marker = os.path.join(root, 'src', 'utils', 'season.py')
     original = os.path.getmtime(marker)
+    future = time.time() + 5
     try:
         os.utime(marker, (future, future))
         evicted = drop_stale_modules(root, package='src')
@@ -127,4 +135,7 @@ def test_real_src_package_round_trip():
         assert hasattr(FPLClient, 'get_entry')
     finally:
         os.utime(marker, (original, original))
+        for name in [n for n in sys.modules if n == 'src' or n.startswith('src.')]:
+            del sys.modules[name]
+        sys.modules.update(snapshot)
         reset_marker()

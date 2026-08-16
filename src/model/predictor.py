@@ -13,7 +13,17 @@ _project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '.
 if _project_root not in sys.path:
     sys.path.insert(0, _project_root)
 
-from src.utils.season import load_bootstrap, get_season_label, get_current_gw
+from src.utils.season import (
+    load_bootstrap, get_season_label, get_current_gw, is_preseason,
+)
+
+
+def season_label_or_unknown():
+    """Season label for user-facing messages, without exploding if data is missing."""
+    try:
+        return get_season_label(load_bootstrap())
+    except Exception:
+        return "This season"
 
 # Categorical model features. Club NAMES — never the integer team ids, which FPL
 # reassigns every season — are the canonical keys for both team and opponent.
@@ -536,14 +546,103 @@ class PointsPredictor:
 
         return pd.DataFrame(rolling_data)
 
+    # ------------------------------------------------------------------
+    # Pre-season
+    # ------------------------------------------------------------------
+    @staticmethod
+    def _previous_season_prior(summaries, season_weights=(0.7, 0.3)):
+        """
+        {player_id: expected points per gameweek} from previous-season totals.
+
+        Before a ball is kicked there are no rolling features, so the ML model has
+        nothing to read. FPL's own `ep_next` is near-useless at this point — it is
+        capped at 4.0 and heavily tied (88 players share exactly 1.0) — which made the
+        drafted squad essentially arbitrary.
+
+        `history_past` is populated pre-season and carries real signal. Points per
+        gameweek over a 38-game season already discounts missed matches, so a player
+        who was injured half the year is correctly ranked below an ever-present.
+        Recent seasons are weighted more heavily.
+        """
+        prior = {}
+        for pid_str, data in (summaries or {}).items():
+            past = data.get('history_past') or []
+            if not past:
+                continue
+            recent = past[-len(season_weights):][::-1]      # newest first
+            num = den = 0.0
+            for weight, season in zip(season_weights, recent):
+                points = float(season.get('total_points', 0) or 0)
+                num += weight * (points / 38.0)
+                den += weight
+            if den:
+                prior[int(pid_str)] = max(num / den, 0.0)
+        return prior
+
+    def _preseason_prediction(self, df_features, summaries):
+        """
+        Cold-start predictions for a season that has not begun.
+
+        This is a legitimate operating mode, not a failure: no match history exists
+        yet, so it is reported as `preseason` rather than `fallback` and callers should
+        present it as information rather than an error.
+        """
+        self.prediction_mode = "preseason"
+        df_features = df_features.copy()
+
+        prior = self._previous_season_prior(summaries)
+        ep_next = pd.to_numeric(df_features.get('ep_next'), errors='coerce').fillna(0.0)
+
+        if prior:
+            mapped = df_features['id'].map(prior)
+            covered = int(mapped.notna().sum())
+            # Players new to the Premier League have no history; FPL's own estimate is
+            # the only thing available for them.
+            preds = mapped.fillna(ep_next)
+            self.prediction_warnings.append(
+                f"{season_label_or_unknown()} has not started. Using last season's "
+                f"points per gameweek for {covered}/{len(df_features)} players; the "
+                f"remainder (new to the league) fall back to FPL's own estimate. "
+                f"The ML model takes over once GW1 has been played."
+            )
+        else:
+            preds = ep_next
+            self.prediction_warnings.append(
+                "Season has not started and no previous-season data is cached. Using "
+                "FPL's own expected points, which is heavily tied at this stage. "
+                "Run `python src/api/async_fpl.py` for a better draft ranking."
+            )
+
+        if 'minutes_prob' in df_features.columns:
+            preds = preds * df_features['minutes_prob'].fillna(1.0)
+
+        df_features['predicted_points'] = preds.clip(lower=0)
+        df_features['projected_minutes'] = 0.0
+        df_features['start_probability'] = 0.0
+        df_features['captaincy_score'] = df_features['predicted_points']
+        df_features['odds_confidence'] = self.odds_confidence
+        df_features['prediction_mode'] = "preseason"
+        return df_features
+
     def predict(self, df_features):
         """Two-stage prediction: Minutes Model → Points Model.
 
         Sets self.prediction_mode / .prediction_warnings / .odds_confidence for callers.
+        `prediction_mode` is one of:
+          "ml"        - the trained two-stage model ran
+          "preseason" - season not started; previous-season prior (expected, not an error)
+          "fallback"  - something is wrong; heuristic in use
         """
         self.prediction_mode = "ml"
         self.prediction_warnings = []
         self.odds_confidence = "UNKNOWN"
+
+        # Pre-season short-circuit: rolling features would all be zero, so the model
+        # would read a constant row for every player and rank them arbitrarily.
+        static = load_bootstrap()
+        if is_preseason(static):
+            summaries, _ = load_summary_cache(static=static)
+            return self._preseason_prediction(df_features, summaries)
 
         if not self.load_model():
             return self._emergency_heuristic(

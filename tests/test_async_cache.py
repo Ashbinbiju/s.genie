@@ -62,11 +62,33 @@ def test_large_failure_rate_raises_instead_of_writing_a_partial_cache(tmp_path):
     assert not (tmp_path / cache_filename('2026-27', 4)).exists()
 
 
-def test_refresh_cache_is_a_noop_in_preseason(preseason_bootstrap, capsys):
-    """No gameweek has been played, so there is no history to fetch."""
-    assert refresh_cache(preseason_bootstrap) is None
-    assert 'pre-season' in capsys.readouterr().out
+def test_refresh_cache_fetches_in_preseason(preseason_bootstrap, tmp_path, monkeypatch):
+    """
+    Pre-season IS fetched: `history` is empty but `history_past` carries previous-season
+    totals, which is the only real signal available for a GW1 draft.
+    """
+    calls = {}
+
+    def fake_run(coro):
+        calls['ran'] = True
+        coro.close()
+        return {}
+
+    monkeypatch.setattr('src.api.async_fpl.asyncio.run', fake_run)
+    path = refresh_cache(preseason_bootstrap, cache_dir=str(tmp_path))
+
+    assert calls.get('ran'), "pre-season must still fetch history_past"
+    assert path.endswith(cache_filename('2026-27', 0))
 
 
-def test_refresh_cache_without_bootstrap_is_safe():
+def test_refresh_cache_reuses_an_existing_file_without_fetching(preseason_bootstrap, tmp_path,
+                                                                monkeypatch):
+    (tmp_path / cache_filename('2026-27', 0)).write_text('{}', encoding='utf-8')
+    monkeypatch.setattr('src.api.async_fpl.asyncio.run',
+                        lambda c: pytest.fail("must not fetch when cached"))
+    assert refresh_cache(preseason_bootstrap, cache_dir=str(tmp_path)) is not None
+
+
+def test_refresh_cache_without_bootstrap_is_safe(monkeypatch):
+    monkeypatch.setattr('src.api.async_fpl.load_bootstrap', lambda *a, **k: None)
     assert refresh_cache(None) is None

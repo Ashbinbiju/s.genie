@@ -286,6 +286,44 @@ WITHOUT guard: AttributeError: 'FPLClient' object has no attribute 'get_league_m
 WITH guard:    evicted ['src', 'src.api', 'src.api.fpl'] -> method present, call succeeds
 ```
 
+---
+
+## Sixth pass — pre-season was reported as a failure, and drafted an arbitrary squad
+
+The app showed a red *"emergency heuristic"* error and told the user to run
+`python src/api/async_fpl.py` — advice that did nothing, because the fetch deliberately
+no-op'd pre-season. Two problems behind one banner.
+
+**1. The messaging was wrong.** Pre-season is an expected operating mode, not a failure: no match
+history exists, so nothing is broken. `prediction_mode` now has three values — `ml`, `preseason`
+and `fallback` — and the dashboard renders `preseason` as calm information rather than a red alert.
+Only a genuine mid-season problem is escalated.
+
+**2. The drafted squad was effectively arbitrary**, which matters because drafting the GW1 squad is
+the single most valuable thing this tool does. The cold-start fallback used FPL's `ep_next`, which
+pre-season is capped at 4.0 and heavily tied — 88 players share exactly 1.0, 77 share 1.5. Everything
+in the XI read "4.0 XP" and the captain pick was a coin flip among ties.
+
+`history_past` **is** populated pre-season and carries previous-season totals. The new prior uses
+points per gameweek over a 38-game season (which already discounts missed matches, so an
+ever-present outranks someone who was injured half the year), weighted 0.7/0.3 toward the more
+recent season, with `ep_next` covering players new to the league.
+
+| | before | after |
+|---|---|---|
+| distinct XP values | ~12 (heavily tied) | **363** |
+| max XP | 4.0 (capped) | 5.83 |
+| players with real data | 0 | **504 / 587** |
+| top of the ranking | arbitrary tie | Haaland, B.Fernandes, Semenyo, Gabriel |
+
+`refresh_cache` now fetches pre-season too (~3s for 587 players) since `history_past` is the payload
+that matters. Squad drafted from it: £100.0m exactly, legal 2/5/5/3, max 3 per club, Semenyo captain.
+
+Found while fixing: `tests/test_hotreload.py` evicted `src.*` from `sys.modules` mid-suite without
+restoring it, so later test modules re-imported a *different* module object than their top-level
+imports had bound and monkeypatches landed on the wrong one — the exact stale-module problem that
+test exists to cover, inflicted on the suite. It now snapshots and restores `sys.modules`.
+
 ## Verification performed
 
 - All modules compile; all import cleanly.

@@ -43,6 +43,14 @@ def model():
     return p
 
 
+@pytest.fixture
+def mid_season(monkeypatch, bootstrap):
+    """predict() diverts to the pre-season prior unless a gameweek has started."""
+    import src.model.predictor as predictor_mod
+    monkeypatch.setattr(predictor_mod, 'load_bootstrap', lambda *a, **k: bootstrap)
+    return bootstrap
+
+
 # ------------------------------------------------------------ anti-leakage
 @requires_artifacts
 def test_rolling_features_never_contain_the_current_gameweek(train_df):
@@ -194,7 +202,7 @@ def test_every_player_has_a_shirt_code(infer_df):
 
 # ------------------------------------------------------------ prediction behaviour
 @requires_artifacts
-def test_predictions_are_non_negative_and_bounded(model, infer_df):
+def test_predictions_are_non_negative_and_bounded(model, infer_df, mid_season):
     scored = model.predict(infer_df.copy())
     assert (scored['predicted_points'] >= 0).all()
     assert scored['predicted_points'].max() < 25, "expected points, not a season total"
@@ -203,7 +211,7 @@ def test_predictions_are_non_negative_and_bounded(model, infer_df):
 
 
 @requires_artifacts
-def test_predict_reports_its_mode_and_never_silently_degrades(model, infer_df):
+def test_predict_reports_its_mode_and_never_silently_degrades(model, infer_df, mid_season):
     scored = model.predict(infer_df.copy())
     assert model.prediction_mode in {'ml', 'fallback'}
     if model.prediction_mode == 'fallback':
@@ -213,7 +221,7 @@ def test_predict_reports_its_mode_and_never_silently_degrades(model, infer_df):
 
 
 @requires_artifacts
-def test_predict_does_not_mutate_its_input(model, infer_df):
+def test_predict_does_not_mutate_its_input(model, infer_df, mid_season):
     before = infer_df.copy()
     model.predict(infer_df.copy())
     pd.testing.assert_frame_equal(infer_df, before)

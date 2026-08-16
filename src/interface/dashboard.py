@@ -250,13 +250,25 @@ if df is None:
     st.stop()
 
 # Surface model health rather than letting a degraded run look identical to a good one.
+# Pre-season is an expected operating mode, not a failure, and must not be dressed up
+# as one — there is genuinely no match history to model yet.
 if prediction_mode == "fallback":
     st.error(
         "**Predictions are running on the emergency heuristic, not the ML model.** "
         "They are significantly less accurate. See the warnings below."
     )
-for warning in prediction_warnings:
-    st.warning(warning)
+    for warning in prediction_warnings:
+        st.warning(warning)
+elif prediction_mode == "preseason":
+    st.info(
+        f"**Draft mode — {season_label} hasn't kicked off.** Rankings come from last "
+        f"season's points per gameweek, since no {season_label} match data exists yet."
+    )
+    for warning in prediction_warnings:
+        st.caption(warning)
+else:
+    for warning in prediction_warnings:
+        st.warning(warning)
 if odds_confidence == "LOW":
     st.sidebar.caption("⚠️ Odds confidence: LOW (league-average defaults)")
 elif odds_confidence == "HIGH":

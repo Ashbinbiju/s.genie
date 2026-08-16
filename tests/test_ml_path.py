@@ -62,6 +62,19 @@ def infer_df():
     return pd.read_parquet(INFER_PARQUET)
 
 
+@pytest.fixture(autouse=True)
+def mid_season(monkeypatch, bootstrap):
+    """
+    Force a mid-season view of the world.
+
+    predict() short-circuits to the pre-season prior when no gameweek has started, so
+    without this every test here would quietly stop exercising the ML path — which is
+    exactly the kind of silent skip these tests exist to prevent.
+    """
+    monkeypatch.setattr(predictor_mod, 'load_bootstrap', lambda *a, **k: bootstrap)
+    return bootstrap
+
+
 @pytest.fixture
 def with_valid_cache(monkeypatch, infer_df):
     summaries = synth_summaries(infer_df['id'].tolist())

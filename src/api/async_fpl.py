@@ -98,12 +98,17 @@ def fetch_summaries_sync(player_ids, current_gw, season):
     return asyncio.run(client.get_all_summaries(player_ids, current_gw, season))
 
 
-def refresh_cache(static=None):
+def refresh_cache(static=None, cache_dir="data/cache"):
     """
     Ensure the element-summary cache for the CURRENT season+gameweek exists.
 
     Safe and cheap to call on every dashboard run: if the correct cache file is
     already on disk this returns immediately without touching the network.
+
+    Pre-season (gw == 0) is fetched too. `history` is empty then, but `history_past`
+    carries each player's PREVIOUS-SEASON totals — by far the best signal available
+    before a ball is kicked, and the difference between a meaningful draft ranking and
+    an arbitrary one.
     """
     static = static or load_bootstrap()
     if not static:
@@ -112,17 +117,16 @@ def refresh_cache(static=None):
 
     season = get_season_label(static)
     gw = get_current_gw(static)
-
-    if gw < 1:
-        print(f"refresh_cache: pre-season ({season}), no gameweek history exists yet.")
+    if gw < 0:
         return None
 
-    cache_file = os.path.join("data", "cache", cache_filename(season, gw))
+    cache_file = os.path.join(cache_dir, cache_filename(season, gw))
     if os.path.exists(cache_file):
         return cache_file
 
     player_ids = [p['id'] for p in static['elements']]
-    fetch_summaries_sync(player_ids, gw, season)
+    AsyncFPLClient(cache_dir=cache_dir)  # ensure the directory exists
+    asyncio.run(AsyncFPLClient(cache_dir=cache_dir).get_all_summaries(player_ids, gw, season))
     return cache_file
 
 
@@ -135,9 +139,8 @@ if __name__ == "__main__":
     season = get_season_label(static)
     gw = get_current_gw(static)
     print(f"Season: {season} | current GW: {gw}")
-
     if gw < 1:
-        print("Pre-season — no gameweek history to fetch yet.")
-    else:
-        player_ids = [p['id'] for p in static['elements']]
-        fetch_summaries_sync(player_ids, gw, season)
+        print("Pre-season: fetching previous-season totals (history_past) as a prior.")
+
+    player_ids = [p['id'] for p in static['elements']]
+    fetch_summaries_sync(player_ids, gw, season)
