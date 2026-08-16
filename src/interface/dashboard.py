@@ -25,8 +25,11 @@ st.title("⚽ FPL AI Engine v2.3")
 
 # 2026/27 season league. Leagues are per-season — the previous id (1311994) 404s.
 DEFAULT_LEAGUE_ID = 1019782
-DEFAULT_TEAM_ID = 5989967
 CACHE_TTL = 900  # 15 minutes
+
+# NOTE: there is deliberately no hardcoded default TEAM id. Entry ids are issued fresh
+# every season, so any pinned value goes stale each August and silently 404s. The
+# default is taken from the league's own membership instead.
 
 
 # ---------------------------------------------------------------------------
@@ -47,11 +50,17 @@ def fetch_static():
 @st.cache_data(ttl=CACHE_TTL, show_spinner=False)
 def get_league_members(league_id):
     """{'Manager (Team)': entry_id}. Empty dict when the league is missing or empty."""
-    standings = FPLClient().get_league_standings(league_id)
-    if not standings or 'standings' not in standings:
-        return {}
-    return {f"{r['player_name']} ({r['entry_name']})": r['entry']
-            for r in standings['standings']['results']}
+    return FPLClient().get_league_members(league_id)
+
+
+@st.cache_data(ttl=CACHE_TTL, show_spinner=False)
+def describe_entry(team_id):
+    """('Manager Name', 'Team Name') for a team id, or None if it does not exist."""
+    entry = FPLClient().get_entry(team_id)
+    if not entry:
+        return None
+    name = f"{entry.get('player_first_name', '')} {entry.get('player_last_name', '')}".strip()
+    return name, entry.get('name', '')
 
 
 @st.cache_data(ttl=CACHE_TTL, show_spinner=False)
@@ -176,14 +185,35 @@ league_id = st.sidebar.number_input("League ID", value=DEFAULT_LEAGUE_ID, step=1
 members_map = get_league_members(int(league_id))
 
 if members_map:
-    id_list = list(members_map.values())
-    default_index = id_list.index(DEFAULT_TEAM_ID) if DEFAULT_TEAM_ID in id_list else 0
-    selected_name = st.sidebar.selectbox("Select Manager", list(members_map.keys()),
-                                         index=default_index)
+    selected_name = st.sidebar.selectbox(
+        "Select Manager", list(members_map.keys()),
+        help="Read from the league. Before GW1 is scored, members appear as recent "
+             "joiners rather than in the ranked standings.")
     team_id = members_map[selected_name]
+    if preseason:
+        st.sidebar.caption(f"{len(members_map)} manager(s) in this league "
+                           f"(standings start after GW{next_gw}).")
 else:
-    st.sidebar.caption("League empty or unavailable — enter a team id directly.")
-    team_id = st.sidebar.number_input("Team ID", value=DEFAULT_TEAM_ID, step=1)
+    st.sidebar.caption(
+        "No members found for this league — check the ID, or enter a team ID directly.")
+    team_id = st.sidebar.number_input(
+        "Team ID", min_value=1, step=1,
+        help="Find it in the URL when viewing your team on the FPL site: "
+             "/entry/<TEAM ID>/event/1. Team IDs are issued fresh each season, so last "
+             "season's ID will not work.")
+
+# Validate whatever id we ended up with. A stale id from a previous season returns 404
+# on every subsequent call, which previously surfaced only as console noise.
+entry_info = describe_entry(int(team_id))
+if entry_info:
+    manager, entry_team = entry_info
+    st.sidebar.caption(f"✅ **{entry_team}** — {manager}")
+else:
+    st.sidebar.error(
+        f"Team ID {int(team_id)} does not exist in {season_label}. FPL issues a new "
+        f"team ID every season, so an ID from a previous season will not work."
+    )
+    st.stop()
 
 gw = st.sidebar.number_input("Gameweek", value=next_gw, min_value=1, max_value=38, step=1)
 budget_override = st.sidebar.number_input("Budget (£m)", value=100.0, step=0.1)

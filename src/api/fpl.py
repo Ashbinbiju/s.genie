@@ -67,6 +67,16 @@ class FPLClient:
         """Fetches history including past performance and chips used."""
         return self._get(f"entry/{team_id}/history/")
 
+    def get_entry(self, team_id):
+        """
+        Fetches a manager's entry (team) record, or None if it does not exist.
+
+        Entry ids are issued PER SEASON — last season's id returns HTTP 404 — so this
+        doubles as a validity check for a team id the user typed or that was saved from
+        a previous season.
+        """
+        return self._get(f"entry/{team_id}/")
+
     def get_league_standings(self, league_id):
         """
         Fetches standings for a classic league.
@@ -77,6 +87,35 @@ class FPLClient:
         return self._get(
             f"leagues-classic/{league_id}/standings/?page_new_entries=1&page_standings=1&phase=1"
         )
+
+    def get_league_members(self, league_id):
+        """
+        Returns {"Manager Name (Team Name)": entry_id} for every member of a league.
+
+        Reads BOTH collections in the payload. `standings.results` is empty until the
+        first gameweek has been scored; until then every member sits in
+        `new_entries.results` under a different schema (split first/last name). Reading
+        only standings — as this used to — makes a populated league look empty for the
+        whole of pre-season.
+        """
+        payload = self.get_league_standings(league_id)
+        if not payload:
+            return {}
+
+        members = {}
+
+        # Ranked members first, so the dropdown keeps league order once it exists.
+        for r in (payload.get('standings') or {}).get('results', []):
+            members[f"{r['player_name']} ({r['entry_name']})"] = r['entry']
+
+        for r in (payload.get('new_entries') or {}).get('results', []):
+            name = f"{r.get('player_first_name', '')} {r.get('player_last_name', '')}".strip()
+            label = f"{name} ({r['entry_name']})" if name else r['entry_name']
+            # setdefault: a member appearing in both collections keeps the ranked entry.
+            if r['entry'] not in members.values():
+                members.setdefault(label, r['entry'])
+
+        return members
 
     # ------------------------------------------------------------------
     # Chips

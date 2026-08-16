@@ -77,6 +77,79 @@ def test_chip_gws_collects_both_uses(client, monkeypatch):
     assert client.get_chip_gws(1)['wildcard'] == [3]
 
 
+def test_league_members_read_new_entries_before_gw1(monkeypatch):
+    """
+    Regression: `standings.results` is empty until the first gameweek is scored, so a
+    league with members looked completely empty for the whole of pre-season.
+    """
+    payload = {
+        'league': {'id': 1019782, 'name': 'RCFC League'},
+        'standings': {'results': []},
+        'new_entries': {'results': [
+            {'entry': 4772552, 'entry_name': 'Alpha XI',
+             'player_first_name': 'Ashbin', 'player_last_name': 'Biju'},
+            {'entry': 4767294, 'entry_name': 'ASD66',
+             'player_first_name': 'ASWIN', 'player_last_name': 'DEV D R'},
+        ]},
+    }
+    c = FPLClient(data_dir='.')
+    monkeypatch.setattr(c, 'get_league_standings', lambda lid: payload)
+
+    members = c.get_league_members(1019782)
+    assert members == {'Ashbin Biju (Alpha XI)': 4772552, 'ASWIN DEV D R (ASD66)': 4767294}
+
+
+def test_league_members_prefer_ranked_standings(monkeypatch):
+    """Once scoring starts, standings order wins and members are not duplicated."""
+    payload = {
+        'standings': {'results': [
+            {'entry': 1, 'entry_name': 'Alpha XI', 'player_name': 'Ashbin Biju'},
+        ]},
+        'new_entries': {'results': [
+            {'entry': 1, 'entry_name': 'Alpha XI',
+             'player_first_name': 'Ashbin', 'player_last_name': 'Biju'},
+            {'entry': 2, 'entry_name': 'Late Joiner',
+             'player_first_name': 'New', 'player_last_name': 'Manager'},
+        ]},
+    }
+    c = FPLClient(data_dir='.')
+    monkeypatch.setattr(c, 'get_league_standings', lambda lid: payload)
+
+    members = c.get_league_members(9)
+    assert list(members.values()) == [1, 2], "no duplicates, standings first"
+    assert 'Ashbin Biju (Alpha XI)' in members
+
+
+def test_league_members_handle_missing_collections(monkeypatch):
+    c = FPLClient(data_dir='.')
+    monkeypatch.setattr(c, 'get_league_standings', lambda lid: None)
+    assert c.get_league_members(1) == {}
+
+    monkeypatch.setattr(c, 'get_league_standings', lambda lid: {'league': {}})
+    assert c.get_league_members(1) == {}
+
+    monkeypatch.setattr(c, 'get_league_standings',
+                        lambda lid: {'standings': None, 'new_entries': None})
+    assert c.get_league_members(1) == {}
+
+
+def test_league_member_without_a_name_falls_back_to_team_name(monkeypatch):
+    payload = {'standings': {'results': []},
+               'new_entries': {'results': [{'entry': 5, 'entry_name': 'Anon FC'}]}}
+    c = FPLClient(data_dir='.')
+    monkeypatch.setattr(c, 'get_league_standings', lambda lid: payload)
+    assert c.get_league_members(1) == {'Anon FC': 5}
+
+
+def test_get_entry_validates_a_team_id(monkeypatch):
+    """A stale id from a previous season 404s; get_entry surfaces that as None."""
+    c = FPLClient(data_dir='.')
+    monkeypatch.setattr(c, '_get', lambda ep, timeout=None:
+                        {'name': 'Alpha XI'} if 'entry/4772552/' in ep else None)
+    assert c.get_entry(4772552)['name'] == 'Alpha XI'
+    assert c.get_entry(5989967) is None
+
+
 def test_get_team_picks_returns_none_before_gw1(client):
     """Regression: gw=1 produced an empty range and dead-ended the whole app."""
     assert client.get_team_picks(1, 1) is None

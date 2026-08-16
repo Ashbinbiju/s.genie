@@ -223,6 +223,36 @@ must be the portable format, must carry a feature list and provenance, and both 
 resolve them. A path rename can no longer silently turn the ML path back into a fallback — which is
 how the ML-path tests came to be skipping rather than running when I first changed the format.
 
+---
+
+## Fourth pass — league membership and team-id staleness
+
+Reported symptom: *"League empty or unavailable"* with a stale team id of 5989967.
+
+**Two separate bugs.**
+
+**1. A populated league looked empty for all of pre-season.** `get_league_members` read only
+`standings.results`, which stays empty until the first gameweek has been scored. Until then every
+member sits in `new_entries.results` under a different schema (`player_first_name` /
+`player_last_name` rather than `player_name`). The live league had **8 members** while the payload's
+standings array had 0:
+
+```
+standings.results  : 0   <- all the old code read
+new_entries.results: 8   <- where members actually are pre-season
+```
+
+Membership is now merged from both collections, ranked standings first, de-duplicated by entry id.
+
+**2. The default team id was a previous season's.** FPL issues a **new entry id every season**, so
+the hardcoded `5989967` returns HTTP 404 on every call — visible only as console noise while the UI
+silently produced nothing. There is now no hardcoded team id at all: the default comes from the
+league's own membership. A manually entered id is validated via `entry/{id}/` and either confirmed
+with the manager and team name, or rejected with an explanation that ids are per-season.
+
+Verified against the live league: all 8 members resolve, `5989967` confirmed dead, and the correct
+2026-27 entry (`4772552`, "Alpha XI") validates.
+
 ## Verification performed
 
 - All modules compile; all import cleanly.
