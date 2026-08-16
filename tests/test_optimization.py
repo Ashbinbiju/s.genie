@@ -255,3 +255,84 @@ def test_chip_advice_survives_an_all_zero_squad():
     recs = ChipStrategy(1, {}).analyze(starters, bench, 1, current_xi_xp=0.0)
     assert len(recs) == 4
     assert all(r['recommendation'] in {'Recommended', 'Consider', 'Save', 'Used'} for r in recs)
+
+
+# ---------------------------------------------------------------- objective shape
+def premium_pool():
+    """A cheap-but-decent field plus one expensive standout."""
+    rows = []
+    pid = 1
+    for team in range(1, 21):
+        for etype, n in ((1, 3), (2, 6), (3, 6), (4, 4)):
+            for _ in range(n):
+                rows.append({'id': pid, 'web_name': f'P{pid}', 'element_type': etype,
+                             'team': team, 'price': 4.5, 'predicted_points': 3.0})
+                pid += 1
+    df = pd.DataFrame(rows)
+    # One clear premium: double the points, but expensive.
+    df.loc[df.index[-1], ['web_name', 'price', 'predicted_points']] = ['Star', 13.0, 8.0]
+    return df
+
+
+def test_optimizer_annotates_starters_and_captain(player_pool):
+    squad = TransferOptimizer(budget=100.0).solve_team(player_pool)
+    assert 'is_starter' in squad.columns and 'is_captain' in squad.columns
+    assert squad['is_starter'].sum() == XI_SIZE
+    assert squad['is_captain'].sum() == 1
+    captain = squad[squad['is_captain']].iloc[0]
+    assert captain['is_starter'], "the captain must be in the starting XI"
+
+
+def test_starting_xi_chosen_by_the_optimizer_is_formation_legal(player_pool):
+    squad = TransferOptimizer(budget=100.0).solve_team(player_pool)
+    counts = squad[squad['is_starter']]['element_type'].value_counts().to_dict()
+    for pos in (1, 2, 3, 4):
+        assert FORMATION_MIN[pos] <= counts.get(pos, 0) <= FORMATION_MAX[pos]
+
+
+def test_captain_is_the_highest_scoring_starter(player_pool):
+    """The armband doubles, so it belongs on the best starter."""
+    squad = TransferOptimizer(budget=100.0).solve_team(player_pool)
+    starters = squad[squad['is_starter']]
+    captain = squad[squad['is_captain']].iloc[0]
+    assert captain['predicted_points'] == pytest.approx(starters['predicted_points'].max())
+
+
+def test_bench_is_cheaper_than_the_starting_xi(player_pool):
+    """
+    Regression: the objective summed all 15 equally, so bench points counted as if
+    they were scored and the optimizer bought fifteen mid-price players instead of a
+    strong XI with cheap cover.
+    """
+    squad = TransferOptimizer(budget=100.0).solve_team(player_pool)
+    bench_cost = squad[~squad['is_starter']]['price'].mean()
+    xi_cost = squad[squad['is_starter']]['price'].mean()
+    assert bench_cost < xi_cost
+
+
+def test_premium_is_bought_when_the_armband_justifies_it():
+    """
+    Regression: with the captain's doubling missing from the objective, a premium was
+    valued at face and priced out. Here the standout is worth 8.0 -> 16.0 captained,
+    against a field of 3.0, so it must be selected and given the armband.
+    """
+    squad = TransferOptimizer(budget=100.0).solve_team(premium_pool())
+    assert 'Star' in set(squad['web_name']), "premium priced out despite doubling"
+    star = squad[squad['web_name'] == 'Star'].iloc[0]
+    assert star['is_starter'] and star['is_captain']
+
+
+def test_select_starting_xi_honours_the_optimizer_decision(player_pool):
+    """The UI must display the XI the objective was actually maximised over."""
+    squad = TransferOptimizer(budget=100.0).solve_team(player_pool)
+    starters, bench = select_starting_xi(squad)
+    assert set(starters['id']) == set(squad[squad['is_starter']]['id'])
+    assert set(bench['id']) == set(squad[~squad['is_starter']]['id'])
+
+
+def test_pick_captain_honours_the_optimizer_decision(player_pool):
+    squad = TransferOptimizer(budget=100.0).solve_team(player_pool)
+    starters, _ = select_starting_xi(squad)
+    captain, vice = pick_captain(starters)
+    assert captain['id'] == squad[squad['is_captain']].iloc[0]['id']
+    assert vice is not None and vice['id'] != captain['id']

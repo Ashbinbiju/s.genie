@@ -6,12 +6,25 @@ FORMATION_MAX = {1: 1, 2: 5, 3: 5, 4: 3}
 XI_SIZE = 11
 
 
+def _order_bench(df_bench):
+    """Reserve keeper first — auto-subs can only use the GK for the GK."""
+    if df_bench.empty:
+        return df_bench
+    df_bench = df_bench.assign(_is_gk=(df_bench['element_type'] == 1).astype(int))
+    return df_bench.sort_values(
+        ['_is_gk', 'predicted_points'], ascending=[False, False]).drop(columns='_is_gk')
+
+
 def select_starting_xi(team_df):
     """
     Split a squad into the best legal starting XI and its bench.
 
-    Takes the top player at each position to satisfy the minimums, then fills the
-    remaining slots greedily by predicted points subject to the per-position maxima.
+    If the frame carries `is_starter` — set by the optimizer, which chooses the squad
+    and the XI jointly — that decision is honoured. Re-deriving it here would risk
+    displaying a different XI from the one the objective was actually maximised over.
+
+    Otherwise: take the top player at each position to satisfy the minimums, then fill
+    the remaining slots greedily by predicted points subject to the per-position maxima.
 
     Tolerates an incomplete squad (fewer than 15 players, or a position with no
     players at all) rather than raising — squads assembled from API picks can be short
@@ -20,6 +33,12 @@ def select_starting_xi(team_df):
     if team_df is None or team_df.empty:
         empty = pd.DataFrame(columns=getattr(team_df, 'columns', []))
         return empty, empty
+
+    if 'is_starter' in team_df.columns and team_df['is_starter'].any():
+        starters = team_df[team_df['is_starter'].astype(bool)].sort_values(
+            'predicted_points', ascending=False)
+        bench = _order_bench(team_df[~team_df['is_starter'].astype(bool)])
+        return starters, bench
 
     team_df = team_df.copy().sort_values('predicted_points', ascending=False)
 
@@ -48,18 +67,7 @@ def select_starting_xi(team_df):
         else:
             bench_idxs.append(idx)
 
-    df_starters = team_df.loc[starter_idxs]
-    df_bench = team_df.loc[bench_idxs]
-
-    if not df_bench.empty:
-        # Reserve keeper first (it can only substitute for the keeper), then outfield
-        # players in the order they would be auto-subbed.
-        df_bench = df_bench.assign(_is_gk=(df_bench['element_type'] == 1).astype(int))
-        df_bench = df_bench.sort_values(
-            ['_is_gk', 'predicted_points'], ascending=[False, False]
-        ).drop(columns='_is_gk')
-
-    return df_starters, df_bench
+    return team_df.loc[starter_idxs], _order_bench(team_df.loc[bench_idxs])
 
 
 def squad_expected_points(starters, captain_id=None):
@@ -100,6 +108,13 @@ def pick_captain(starters):
     outfield = ranked[ranked['element_type'] != 1]
     if not outfield.empty:
         ranked = outfield
+
+    # Honour the optimizer's captain: it priced the armband into the objective, so the
+    # squad was built around that player doubling.
+    if 'is_captain' in starters.columns and starters['is_captain'].astype(bool).any():
+        chosen = starters[starters['is_captain'].astype(bool)].iloc[0]
+        rest = ranked[ranked['id'] != chosen['id']]
+        return chosen, (rest.iloc[0] if not rest.empty else None)
 
     captain = ranked.iloc[0]
     vice = ranked.iloc[1] if len(ranked) > 1 else None

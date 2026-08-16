@@ -348,6 +348,53 @@ stale within a single build (odds move, injury news lands, the squad is edited o
 Verified by clicking the button under `AppTest`: cache cleared, pipeline re-ran, correct
 draft-mode banner, no error.
 
+---
+
+## Eighth pass — the optimizer was maximising the wrong quantity
+
+Prompted by "no Haaland?". He tops the pre-season ranking at 5.83 XP yet was absent from the
+drafted squad. The reason turned out to be a defect in the objective function, not in the ranking.
+
+```python
+prob += pulp.lpSum([lk['points'][i] * x[i] for i in players])   # all 15, weighted equally
+```
+
+Two errors, both of which systematically price out premiums:
+
+1. **Bench points counted as if they were scored.** You do not score your bench — it pays out only
+   through auto-subs or Bench Boost. Valuing all fifteen equally makes the optimizer buy fifteen
+   good-value players rather than a strong XI with cheap cover.
+2. **The captain's doubling was not modelled at all.** A premium's real contribution is 2x when he
+   wears the armband, so the objective consistently undervalued exactly the players you build around.
+
+This was a partial fix of my own P2-5: I corrected the 15-vs-15 comparison in the *displayed* gain
+and never touched the objective the solver optimises.
+
+**Corrected formulation** — three sets of binaries instead of one: `x` (in the 15), `y` (in the XI),
+`c` (captain), with `y <= x`, `c <= y`, exactly one captain, and formation bounds on `y`. The
+objective is what actually scores:
+
+```
+maximise  sum( points[i] * ( y[i] + c[i] + BENCH_WEIGHT * (x[i] - y[i]) ) )
+```
+
+`BENCH_WEIGHT = 0.15`. `solve_team` now returns `is_starter` / `is_captain`, and the UI honours
+them, so the XI displayed is the XI the objective was maximised over rather than one re-derived
+afterwards.
+
+| | before | after |
+|---|---|---|
+| XI + captain | 54.10 | **55.99** |
+| bench | Welbeck £6.0m, Le Fée £6.0m | £4.0–4.5m fillers |
+| captain | Semenyo £8.5m | B.Fernandes £12.0m (a premium, correctly valued) |
+
+**And the answer on Haaland:** he stays out, but now for a defensible reason rather than an
+artifact. £15.5m for 5.83 XP is 11.66 captained; B.Fernandes is £12.0m for 5.70 XP, or 11.41
+captained — £3.5m more for +0.26 XP. Forcing Haaland into the squad and re-solving costs **1.15 XP**
+on the XI+captain total. Worth knowing that the prior weights the last two seasons 0.7/0.3, and his
+2024/25 (181 pts) drags him from 6.29 to 5.83 pts/GW; this is a pre-season prior from previous-season
+totals, with no fixture, form or minutes modelling until GW1 is played.
+
 ## Verification performed
 
 - All modules compile; all import cleanly.
