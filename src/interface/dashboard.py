@@ -14,10 +14,15 @@ if _project_root not in sys.path:
 # function OBJECTS, so reloading afterwards would leave this module holding stale
 # references. See src/utils/hotreload.py for why this is necessary on Streamlit Cloud.
 try:
-    from src.utils.hotreload import drop_stale_modules
+    from src.utils.hotreload import drop_stale_modules, newest_source_mtime
     drop_stale_modules(_project_root)
+    # Cache keys are versioned by source mtime, so a deploy invalidates them. Without
+    # this, @st.cache_data replays results computed by the PREVIOUS build for the whole
+    # TTL — a code fix appears to have no effect until the cache happens to expire.
+    CODE_VERSION = newest_source_mtime(_project_root)
 except Exception as _e:  # never let a reload guard take the app down
     print(f"hot-reload guard skipped: {_e}")
+    CODE_VERSION = 0.0
 
 from src.api.fpl import FPLClient
 from src.api.async_fpl import refresh_cache
@@ -50,7 +55,7 @@ CACHE_TTL = 900  # 15 minutes
 # rebuild, a model inference pass and two CBC integer-program solves.
 # ---------------------------------------------------------------------------
 @st.cache_data(ttl=CACHE_TTL, show_spinner=False)
-def fetch_static():
+def fetch_static(code_version):
     fpl = FPLClient()
     static = fpl.get_bootstrap_static()
     fpl.get_fixtures()
@@ -58,13 +63,13 @@ def fetch_static():
 
 
 @st.cache_data(ttl=CACHE_TTL, show_spinner=False)
-def get_league_members(league_id):
+def get_league_members(code_version, league_id):
     """{'Manager (Team)': entry_id}. Empty dict when the league is missing or empty."""
     return FPLClient().get_league_members(league_id)
 
 
 @st.cache_data(ttl=CACHE_TTL, show_spinner=False)
-def describe_entry(team_id):
+def describe_entry(code_version, team_id):
     """('Manager Name', 'Team Name') for a team id, or None if it does not exist."""
     entry = FPLClient().get_entry(team_id)
     if not entry:
@@ -74,9 +79,9 @@ def describe_entry(team_id):
 
 
 @st.cache_data(ttl=CACHE_TTL, show_spinner=False)
-def get_predictions():
+def get_predictions(code_version):
     """Features + model predictions. Returns (df, mode, warnings, odds_confidence)."""
-    fetch_static()
+    fetch_static(CODE_VERSION)
     try:
         refresh_cache()
     except Exception as e:
@@ -92,7 +97,7 @@ def get_predictions():
 
 
 @st.cache_data(ttl=CACHE_TTL, show_spinner=False)
-def get_squad_context(team_id, gw):
+def get_squad_context(code_version, team_id, gw):
     """History, Free Hit GWs, current picks and free-transfer count for a manager."""
     fpl = FPLClient()
     history = fpl.get_history(team_id) or {}
@@ -103,17 +108,17 @@ def get_squad_context(team_id, gw):
 
 
 @st.cache_data(ttl=CACHE_TTL, show_spinner=False)
-def build_optimal_squad(budget):
+def build_optimal_squad(code_version, budget):
     """Best possible 15 from scratch — the Wildcard / Free Hit / pre-season squad."""
-    df, _, _, _ = get_predictions()
+    df, _, _, _ = get_predictions(CODE_VERSION)
     if df is None:
         return None
     return TransferOptimizer(budget=budget).solve_team(df)
 
 
 @st.cache_data(ttl=CACHE_TTL, show_spinner=False)
-def build_transfer_plan(current_ids, budget, free_transfers):
-    df, _, _, _ = get_predictions()
+def build_transfer_plan(code_version, current_ids, budget, free_transfers):
+    df, _, _, _ = get_predictions(CODE_VERSION)
     if df is None:
         return None
     return TransferOptimizer(budget=budget).recommend_transfers(
@@ -184,7 +189,7 @@ def build_rationale(player_in, player_out, gain):
 # ---------------------------------------------------------------------------
 st.sidebar.header("Configuration")
 
-static = fetch_static()
+static = fetch_static(CODE_VERSION)
 season_label = get_season_label(static)
 preseason = is_preseason(static)
 next_gw = get_next_gw(static)
@@ -192,7 +197,7 @@ next_gw = get_next_gw(static)
 st.sidebar.caption(f"Season **{season_label}** · next deadline **GW{next_gw}**")
 
 league_id = st.sidebar.number_input("League ID", value=DEFAULT_LEAGUE_ID, step=1)
-members_map = get_league_members(int(league_id))
+members_map = get_league_members(CODE_VERSION, int(league_id))
 
 if members_map:
     selected_name = st.sidebar.selectbox(
@@ -214,7 +219,7 @@ else:
 
 # Validate whatever id we ended up with. A stale id from a previous season returns 404
 # on every subsequent call, which previously surfaced only as console noise.
-entry_info = describe_entry(int(team_id))
+entry_info = describe_entry(CODE_VERSION, int(team_id))
 if entry_info:
     manager, entry_team = entry_info
     st.sidebar.caption(f"✅ **{entry_team}** — {manager}")
@@ -232,8 +237,17 @@ bank = st.sidebar.number_input(
     help="Money not tied up in players. Spending power is squad value + bank; without "
          "this the optimizer systematically under-budgets.")
 
-if st.sidebar.button("Run Analysis"):
+if st.sidebar.button("Run Analysis", use_container_width=True):
     st.session_state['has_run'] = True
+
+# Escape hatch. Cache keys are versioned by source mtime so a deploy invalidates them,
+# but data can go stale within a single build too — odds move, injury news lands, or the
+# squad is edited on the FPL site.
+if st.sidebar.button("Clear cache & refetch", use_container_width=True,
+                     help="Discard everything cached and pull fresh data from the FPL API"):
+    st.cache_data.clear()
+    st.session_state['has_run'] = True
+    st.rerun()
 
 if not st.session_state.get('has_run', False):
     st.info("Configure the sidebar and press **Run Analysis**.")
@@ -243,7 +257,7 @@ if not st.session_state.get('has_run', False):
 # Pipeline
 # ---------------------------------------------------------------------------
 with st.spinner("Fetching data & optimizing..."):
-    df, prediction_mode, prediction_warnings, odds_confidence = get_predictions()
+    df, prediction_mode, prediction_warnings, odds_confidence = get_predictions(CODE_VERSION)
 
 if df is None:
     st.error("Feature processing failed — no data to work with.")
@@ -274,7 +288,7 @@ if odds_confidence == "LOW":
 elif odds_confidence == "HIGH":
     st.sidebar.caption("✅ Odds confidence: HIGH (live bookmaker odds)")
 
-history, freehit_gws, picks, fts = get_squad_context(int(team_id), int(gw))
+history, freehit_gws, picks, fts = get_squad_context(CODE_VERSION, int(team_id), int(gw))
 
 if freehit_gws:
     st.sidebar.info(f"🔁 Free Hit played in GW(s) {freehit_gws} — permanent squad loaded "
@@ -292,7 +306,7 @@ if not picks:
                    "from scratch instead.")
 
     draft_budget = float(budget_override)
-    squad = build_optimal_squad(draft_budget)
+    squad = build_optimal_squad(CODE_VERSION, draft_budget)
     if squad is None:
         st.error("Optimization failed to find a valid squad.")
         st.stop()
@@ -338,7 +352,7 @@ col_c.metric("Current XI (capt. doubled)", f"{current_xi_xp:.1f} XP")
 
 st.sidebar.info(f"ℹ️ Detected **{fts}** Free Transfer(s)")
 
-best_team = build_transfer_plan(tuple(current_ids), spending_power, int(fts))
+best_team = build_transfer_plan(CODE_VERSION, tuple(current_ids), spending_power, int(fts))
 if best_team is None:
     st.error("Optimization failed to find a valid team.")
     st.stop()
@@ -360,7 +374,7 @@ with tab1:
     # post-transfer squad — advice about a bench you don't have is useless.
     active_count = int((current_team_df['predicted_points'] > 0.5).sum())
 
-    wc_squad = build_optimal_squad(spending_power)
+    wc_squad = build_optimal_squad(CODE_VERSION, spending_power)
     wc_diff = 0.0
     wc_xi_xp = 0.0
     if wc_squad is not None:
@@ -528,7 +542,7 @@ with tab4:
     st.subheader("🕵️‍♂️ Rival Scout")
     spy_league_id = st.text_input("League ID", value=str(int(league_id)))
 
-    rival_members = get_league_members(int(spy_league_id)) if spy_league_id.isdigit() else {}
+    rival_members = get_league_members(CODE_VERSION, int(spy_league_id)) if spy_league_id.isdigit() else {}
     rival_map = {name: entry for name, entry in rival_members.items() if entry != team_id}
 
     if not rival_map:

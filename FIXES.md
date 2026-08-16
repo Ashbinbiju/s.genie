@@ -324,6 +324,30 @@ restoring it, so later test modules re-imported a *different* module object than
 imports had bound and monkeypatches landed on the wrong one — the exact stale-module problem that
 test exists to cover, inflicted on the suite. It now snapshots and restores `sys.modules`.
 
+---
+
+## Seventh pass — cached results outlived the code that produced them
+
+The fixed build deployed, but the app still showed the old
+`[FALLBACK] No element-summary cache` banner — a message the new code cannot emit
+pre-season, since it takes the `preseason` path instead. Two compounding causes:
+
+1. **`@st.cache_data` survives a code update.** The cache key is derived from the function
+   ARGS, and `get_predictions()` took none — so the stale `(df, "fallback", warnings)` tuple
+   was replayed for the full 900s TTL even once fresh code loaded. This was self-inflicted:
+   the caching added in P2-8 made every subsequent deploy sticky.
+2. **The hot-reload guard cannot fix a process older than itself.** It landed in `58e1ac2`;
+   a worker started before that commit has no guard to run. One manual reboot breaks the cycle.
+
+**Fix:** every cached function now takes a leading `code_version` argument, fed from
+`newest_source_mtime()` — the same mtime the reload guard already computes. A deploy changes
+the value, which changes every cache key, which invalidates every cached result. Plus a
+**"Clear cache & refetch"** sidebar button as a manual escape hatch, since data can also go
+stale within a single build (odds move, injury news lands, the squad is edited on the FPL site).
+
+Verified by clicking the button under `AppTest`: cache cleared, pipeline re-ran, correct
+draft-mode banner, no error.
+
 ## Verification performed
 
 - All modules compile; all import cleanly.
