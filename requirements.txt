@@ -1,11 +1,13 @@
 pandas
 numpy
 requests
+aiohttp
+pyarrow
 lightgbm
 scikit-learn
-pulp
-streamlit
-tqdm
-fpl
+joblib
+# PuLP 4.0 removes LpVariable.dicts and PULP_CBC_CMD, both of which solver.py uses.
+pulp<4
 streamlit
 altair<5
+tqdm

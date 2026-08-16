@@ -1,24 +1,33 @@
 import requests
-import pandas as pd
 import json
 import os
-from datetime import datetime
+
+# Every outbound call is bounded. Without a timeout a hung upstream socket blocks the
+# Streamlit worker forever with no way to recover.
+DEFAULT_TIMEOUT = 20
+
+# Transfers made while these chips are active do not consume free transfers, and your
+# banked FT count carries across them untouched.
+FREE_TRANSFER_CHIPS = {"wildcard", "freehit"}
+
+MAX_FREE_TRANSFERS = 5
+
 
 class FPLClient:
     BASE_URL = "https://fantasy.premierleague.com/api"
-    
+
     def __init__(self, data_dir="data/raw"):
         self.data_dir = data_dir
         os.makedirs(self.data_dir, exist_ok=True)
         self.headers = {
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"
         }
-        
-    def _get(self, endpoint):
+
+    def _get(self, endpoint, timeout=DEFAULT_TIMEOUT):
         """Helper to make GET requests."""
         url = f"{self.BASE_URL}/{endpoint}"
         try:
-            response = requests.get(url, headers=self.headers)
+            response = requests.get(url, headers=self.headers, timeout=timeout)
             response.raise_for_status()
             return response.json()
         except requests.exceptions.RequestException as e:
@@ -48,78 +57,115 @@ class FPLClient:
 
     def get_player_summary(self, player_id):
         """Fetches detailed history and fixtures for a player."""
-        data = self._get(f"element-summary/{player_id}/")
-        # We don't save every single player summary individually to disk by default 
-        # to avoid file clutter, but we could if needed.
-        return data
+        return self._get(f"element-summary/{player_id}/")
 
     def get_transfers(self, team_id):
         """Fetches transfer history."""
         return self._get(f"entry/{team_id}/transfers/")
-        
+
     def get_history(self, team_id):
         """Fetches history including past performance and chips used."""
         return self._get(f"entry/{team_id}/history/")
 
     def get_league_standings(self, league_id):
-        """Fetches listings for a classic league."""
-        # Using ?page_new_entries=1&page_standings=1 is standard for this endpoint
-        return self._get(f"leagues-classic/{league_id}/standings/?page_new_entries=1&page_standings=1&phase=1")
-    
-    # Method to calculate free transfers
+        """
+        Fetches standings for a classic league.
 
-    def calculate_free_transfers(self, team_id, current_gw):
+        Returns None on failure — note that leagues are per-season, so an id from a
+        previous season returns HTTP 404 rather than an empty league.
+        """
+        return self._get(
+            f"leagues-classic/{league_id}/standings/?page_new_entries=1&page_standings=1&phase=1"
+        )
+
+    # ------------------------------------------------------------------
+    # Chips
+    # ------------------------------------------------------------------
+    def get_chip_gws(self, team_id, history=None):
+        """
+        Returns {chip_name: [gw, ...]} for every chip the manager has played.
+
+        A manager may play each chip twice per season (once either side of the GW20
+        restoration boundary), so every value is a list.
+        """
+        history = history if history is not None else self.get_history(team_id)
+        chips = {}
+        if history and 'chips' in history:
+            for chip in history['chips']:
+                chips.setdefault(chip['name'], []).append(chip['event'])
+        return chips
+
+    def get_freehit_gws(self, team_id, history=None):
+        """Set of GWs in which Free Hit was played. See get_team_picks."""
+        return set(self.get_chip_gws(team_id, history).get('freehit', []))
+
+    # ------------------------------------------------------------------
+    # Free transfers
+    # ------------------------------------------------------------------
+    def calculate_free_transfers(self, team_id, current_gw, history=None):
         """
         Calculates available free transfers for the upcoming current_gw.
-        Based on 2024/25 Rules:
+
+        Rules (2024/25 onward):
         - Start with 1 FT.
         - Accumulate up to 5 FTs.
         - Deduct transfers made. If < 0, reset to 0 (hits taken), then add 1 for next week.
+        - Transfers made under Wildcard or Free Hit are FREE: they neither consume
+          nor reset your banked FTs. Counting them (as this used to) drives the
+          balance to 0 after any wildcard and produces wrong hit-cost advice.
         """
         transfers = self.get_transfers(team_id)
         if transfers is None:
-            return 1 # Default fallback
-            
-        # Count transfers per gameweek
+            return 1  # Default fallback
+
+        chip_gws = self.get_chip_gws(team_id, history)
+        exempt_gws = set()
+        for chip_name in FREE_TRANSFER_CHIPS:
+            exempt_gws.update(chip_gws.get(chip_name, []))
+
         tx_counts = {}
         for t in transfers:
             ev = t['event']
             tx_counts[ev] = tx_counts.get(ev, 0) + 1
-            
-        # Replay history
-        available_ft = 1 # Start of season (GW1)
-        
-        # Iterate from GW1 up to the GW BEFORE the current one
-        # Because we want to know what we have FOR current_gw
+
+        available_ft = 1  # Start of season (GW1)
+
         for g in range(1, current_gw):
-            used = tx_counts.get(g, 0)
-            available_ft -= used
-            
-            # If we went negative (hits), we start next week with 1 (0 carried + 1 new)
-            # If we stayed positive, we carry over + 1 new
-            if available_ft < 0:
-                available_ft = 0
-                
-            available_ft += 1
-            available_ft = min(5, available_ft) # Cap at 5
-            
+            # A chip week costs nothing and leaves the bank untouched.
+            if g not in exempt_gws:
+                available_ft -= tx_counts.get(g, 0)
+                if available_ft < 0:
+                    available_ft = 0
+
+            available_ft = min(MAX_FREE_TRANSFERS, available_ft + 1)
+
         return available_ft
 
+    # ------------------------------------------------------------------
+    # Squad picks
+    # ------------------------------------------------------------------
     def get_team_picks(self, team_id, gw, freehit_gws=None):
         """
-        Fetches a specific team's picks for a gameweek. Tries gw-1, then gw-2...
-        
-        Skips any GW in `freehit_gws` when searching backwards, because the FPL API
-        returns the temporary Free Hit squad for that GW rather than the permanent squad.
-        Without skipping, the Free Hit squad leaks into the next week's UI.
-        A user can play two FH chips per season, so we accept a set.
+        Fetches a team's most recent permanent squad, searching backwards from gw-1.
+
+        Skips any GW in `freehit_gws`, because for those the API returns the temporary
+        Free Hit squad rather than the permanent one — which would otherwise leak into
+        the next week's recommendations. A manager can play two FH chips per season,
+        so this accepts a set.
+
+        Returns None before the first gameweek has been played (no squad exists yet);
+        callers must handle that by building a squad from scratch rather than erroring.
         """
         freehit_gws = freehit_gws or set()
         start_gw = gw - 1
+
+        if start_gw < 1:
+            print(f"No completed gameweek before GW{gw} — no squad history exists yet.")
+            return None
+
         for g in range(start_gw, max(0, start_gw - 6), -1):
             if g < 1:
                 break
-            # Skip any Free Hit GW – it contains the FH squad, not the permanent team.
             if g in freehit_gws:
                 print(f"Skipping GW{g} (Free Hit was played) — fetching permanent squad from earlier GW.")
                 continue
@@ -127,6 +173,7 @@ class FPLClient:
             if data:
                 print(f"Loaded picks from GW{g}")
                 return data
+
         print(f"Could not find any picks history (checked GW{start_gw} backwards)")
         return None
 
@@ -137,11 +184,19 @@ class FPLClient:
             json.dump(data, f, ensure_ascii=False, indent=4)
         print(f"Saved {filename}")
 
+
 if __name__ == "__main__":
+    import sys
+    _root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..'))
+    if _root not in sys.path:
+        sys.path.insert(0, _root)
+    from src.utils.season import get_season_label, get_current_gw, get_next_gw
+
     client = FPLClient()
     print("Fetching static data...")
     static = client.get_bootstrap_static()
     print(f"Fetched {len(static['elements'])} players.")
+    print(f"Season: {get_season_label(static)} | current GW: {get_current_gw(static)} | next GW: {get_next_gw(static)}")
     print("Fetching fixtures...")
     fixtures = client.get_fixtures()
     print(f"Fetched {len(fixtures)} fixtures.")

@@ -1,10 +1,20 @@
+import os
+import sys
+
 import streamlit as st
-import pandas as pd
 import requests
 
-# Cache for image validation checks to avoid repeated network calls
-# Key: photo_id, Value: bool (True if valid, False if 404)
-IMAGE_CACHE = {}
+_project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..'))
+if _project_root not in sys.path:
+    sys.path.insert(0, _project_root)
+
+from src.utils.season import shirt_url, player_photo_url
+
+# Known-bad photo ids: the PL server returns a placeholder rather than a 404 for these.
+MANUAL_MISSING = {'714', '541065', '4470313', 'default', '219847', '4444565'}
+
+IMAGE_CACHE_KEY = 'img_valid_cache_v4'
+
 
 def get_pitch_style():
     return """
@@ -13,10 +23,10 @@ def get_pitch_style():
         display: flex;
         justify-content: space-evenly;
         gap: 10px;
-        z-index: 1; /* Above lines */
+        z-index: 1;
         flex: 1;
         align-items: center;
-        width: 100%; /* Ensure it spans full width */
+        width: 100%;
     }
     .pitch-container {
         position: relative;
@@ -28,16 +38,15 @@ def get_pitch_style():
         display: flex;
         flex-direction: column;
         justify-content: space-around;
-        height: auto; /* Allow dynamic expansion */
+        height: auto;
         min-height: 850px;
-        align-items: center; /* Center rows horizontally */
-        padding-bottom: 40px; /* Extra space at bottom */
+        align-items: center;
+        padding-bottom: 40px;
     }
-    /* Rest of CSS remains similar but minified/cleaned */
     .player-card {
         background-color: rgba(255, 255, 255, 0.95);
         border-radius: 8px;
-        width: 110px; /* Wider to fit details */
+        width: 110px;
         padding: 6px;
         text-align: center;
         box-shadow: 0 4px 6px rgba(0,0,0,0.1);
@@ -48,22 +57,14 @@ def get_pitch_style():
         flex-direction: column;
         align-items: center;
         gap: 2px;
-        height: 160px; /* Increased height for name wrapping */
+        height: 160px;
         justify-content: space-between;
     }
-    
     .player-card:hover {
         transform: scale(1.05);
         z-index: 10;
-        border-color: #3b82f6; 
+        border-color: #3b82f6;
     }
-
-    .player-shirt {
-        font-size: 28px;
-        margin-bottom: 2px;
-        line-height: 1;
-    }
-    
     .player-name {
         font-weight: bold;
         font-size: 13px;
@@ -73,15 +74,13 @@ def get_pitch_style():
         text-overflow: ellipsis;
         width: 100%;
     }
-
     .player-info {
         font-size: 11px;
         color: #555;
         white-space: nowrap;
     }
-    
     .player-points {
-        background-color: #38003c; /* FPL Purpleish */
+        background-color: #38003c;
         color: white;
         font-size: 12px;
         font-weight: bold;
@@ -91,7 +90,6 @@ def get_pitch_style():
         display: inline-block;
         width: 100%;
     }
-    
     .bench-container {
         background-color: #f0f2f6;
         border-radius: 8px;
@@ -100,132 +98,87 @@ def get_pitch_style():
         display: flex;
         justify-content: center;
         gap: 15px;
-        flex-wrap: wrap; /* Allow wrapping if bench is full */
+        flex-wrap: wrap;
     }
     </style>
     """
 
-# Known missing photos or special overrides
-# 714/4470313: Woltemade, 541065: Manual check, 219847/4444565: Alderete
-MANUAL_MISSING = {'714', '541065', '4470313', 'default', '219847', '4444565'}
-
-# Manual Shirt Mapping for 2024/25 Season (Team ID -> Shirt Code)
-# Based on 2024/25 Team List:
-# 1: Arsenal (3), 2: Villa (7), 3: Bournemouth (91), 4: Brentford (94), 5: Brighton (36)
-# 6: Chelsea (8), 7: Palace (31), 8: Everton (11), 9: Fulham (54), 10: Ipswich (40)
-# 11: Leicester (13), 12: Liverpool (14), 13: Man City (43), 14: Man Utd (1), 15: Newcastle (4)
-# 16: Forest (17), 17: Southampton (20), 18: Spurs (6), 19: West Ham (21), 20: Wolves (39)
-TEAM_SHIRT_MAP = {
-    1: 3, 2: 7, 3: 91, 4: 94, 5: 36,
-    6: 8, 7: 31, 8: 11, 9: 54, 10: 40,
-    11: 13, 12: 14, 13: 43, 14: 1, 15: 4,
-    16: 17, 17: 20, 18: 6, 19: 21, 20: 39
-}
 
 def check_image_exists(photo_id):
     """
-    Checks if a player photo exists on the Premier League server.
-    Uses caching to minimize latency.
+    Check whether a player headshot exists on the Premier League server.
+
+    Results are memoised in session state; without that this issues one blocking HTTP
+    HEAD per player per render.
     """
-    if photo_id == 'default' or not photo_id or photo_id in MANUAL_MISSING:
+    if not photo_id or photo_id == 'default' or photo_id in MANUAL_MISSING:
         return False
-        
-    CACHE_KEY = 'img_valid_cache_v3'
-    if CACHE_KEY not in st.session_state:
-        st.session_state[CACHE_KEY] = {}
-        
-    if photo_id in st.session_state[CACHE_KEY]:
-        return st.session_state[CACHE_KEY][photo_id]
-    
+
+    if IMAGE_CACHE_KEY not in st.session_state:
+        st.session_state[IMAGE_CACHE_KEY] = {}
+    cache = st.session_state[IMAGE_CACHE_KEY]
+
+    if photo_id in cache:
+        return cache[photo_id]
+
     url = f"https://resources.premierleague.com/premierleague/photos/players/110x140/p{photo_id}.png"
     try:
         response = requests.head(url, timeout=2.0)
-        # Check status and ensure content isn't empty (placeholder images are often small)
-        is_valid = response.status_code == 200 and int(response.headers.get('content-length', 0)) > 2000
-    except:
+        # Placeholder images are tiny, so require a realistic payload size too.
+        is_valid = (response.status_code == 200
+                    and int(response.headers.get('content-length', 0)) > 2000)
+    except requests.RequestException:
         is_valid = False
-        
-    st.session_state[CACHE_KEY][photo_id] = is_valid
+
+    cache[photo_id] = is_valid
     return is_valid
 
-# Manual Shirt Mapping for 2024/25 Season (Team ID -> Shirt Code)
-# Source: Empirical observation of dist/img/shirts/standard/shirt_{code}-110.webp
-TEAM_SHIRT_MAP = {
-    1: 3,    # Arsenal
-    2: 7,    # Aston Villa
-    3: 91,   # Bournemouth
-    4: 94,   # Brentford
-    5: 36,   # Brighton
-    6: 8,    # Chelsea
-    7: 31,   # Crystal Palace
-    8: 11,   # Everton
-    9: 54,   # Fulham
-    10: 40,  # Ipswich (Guestimate/Standard) - check
-    11: 13,  # Leicester
-    12: 14,  # Liverpool
-    13: 43,  # Man City
-    14: 1,   # Man Utd
-    15: 4,   # Newcastle
-    16: 17,  # Nott'm Forest (ID 16/17 -> Code 17?) Forest code is often 17 in older data, but 100 in new. 
-             # Let's trust the 'code' from API usually, but if 100 fails...
-             # Actually, Forest shirt is usually shirt_17-110.webp or 100? 
-             # Let's stick to using the map if we are unsure.
-             # Re-verifying Forest: Code is 17 usually.
-    17: 17,  # Nott'm Forest (Assuming ID 17)
-    18: 20,  # Southampton (New)
-    19: 6,   # Spurs
-    20: 21,  # West Ham
-    21: 39   # Wolves (ID shift?)
-}
 
-# Actually, simply using the API 'code' is best if we trust it, but user says it fails.
-# Let's explicitly define standard codes we KNOW work.
-# Arsenal: 3, Villa: 7, BOU: 91, BRE: 94, BHA: 36, CHE: 8, CRY: 31, EVE: 11, FUL: 54, IPS: 40?
-# LEI: 13, LIV: 14, MCI: 43, MUN: 1, NEW: 4, NFO: 15? NO, NFO code is 17.
-# SOU: 20, TOT: 6, WHU: 21, WOL: 39.
+def resolve_player_image(player):
+    """
+    Best available image for a player: headshot if it exists, else the club shirt,
+    else the generic blank shirt.
+
+    Shirt codes come from bootstrap_static's `teams[].code`, which resolves for every
+    club including newly promoted ones. This replaces three separate hardcoded
+    TEAM_SHIRT_MAP tables (two of which disagreed with each other) that went stale
+    every time the league composition changed.
+    """
+    fallback = shirt_url(player.get('team_code', 0))
+
+    photo_raw = str(player.get('photo', '')).replace('.jpg', '').replace('.png', '').lstrip('p')
+    if photo_raw.isdigit() and check_image_exists(photo_raw):
+        return player_photo_url(player.get('photo')) or fallback
+    return fallback
+
 
 def get_player_card_html(player, is_new=False, is_captain=False, is_vice=False):
-    p_type = player['element_type']
-    
-    photo_raw = str(player.get('photo', 'default')).replace('.jpg', '').replace('.png', '').replace('p', '')
-    
-    # Use Team Shirt as fallback
-    # Strategy: Use known map based on Team ID first, then fallback to Data's team_code
-    team_id = player.get('team', 0)
-    team_code = player.get('team_code', 0)
-    
-    # Override map
-    # Note: Keys are ints. 
-    override_code = TEAM_SHIRT_MAP.get(int(team_id), 0)
-    
-    if override_code:
-        shirt_code = override_code
-    else:
-        shirt_code = int(team_code) if team_code else 0
-        
-    team_shirt_url = f"https://fantasy.premierleague.com/dist/img/shirts/standard/shirt_{shirt_code}-110.webp" if shirt_code else "https://fantasy.premierleague.com/img/shirts/standard/shirt_0.png"
-    
-    img_url = team_shirt_url
-    
-    if photo_raw.isdigit():
-        if check_image_exists(photo_raw):
-            img_url = f"https://resources.premierleague.com/premierleague/photos/players/110x140/p{photo_raw}.png"
-    
-    # Badges
+    img_url = resolve_player_image(player)
+
     badges_html = ""
     if is_new:
-        badges_html += '<div style="position: absolute; top: -5px; right: -5px; background: #28a745; color: white; border-radius: 50%; width: 20px; height: 20px; font-size: 10px; display: flex; align-items: center; justify-content: center; border: 1px solid white; z-index: 5;">IN</div>'
-    
+        badges_html += ('<div style="position:absolute;top:-5px;right:-5px;background:#28a745;'
+                        'color:white;border-radius:50%;width:20px;height:20px;font-size:10px;'
+                        'display:flex;align-items:center;justify-content:center;'
+                        'border:1px solid white;z-index:5;">IN</div>')
     if is_captain:
-        badges_html += '<div style="position: absolute; top: -5px; left: -5px; background: #000; color: white; border-radius: 50%; width: 22px; height: 22px; font-size: 12px; font-weight: bold; display: flex; align-items: center; justify-content: center; border: 1px solid white; z-index: 5;">C</div>'
+        badges_html += ('<div style="position:absolute;top:-5px;left:-5px;background:#000;'
+                        'color:white;border-radius:50%;width:22px;height:22px;font-size:12px;'
+                        'font-weight:bold;display:flex;align-items:center;justify-content:center;'
+                        'border:1px solid white;z-index:5;">C</div>')
     elif is_vice:
-        badges_html += '<div style="position: absolute; top: -5px; left: -5px; background: #6c757d; color: white; border-radius: 50%; width: 22px; height: 22px; font-size: 12px; font-weight: bold; display: flex; align-items: center; justify-content: center; border: 1px solid white; z-index: 5;">V</div>'
-    
+        badges_html += ('<div style="position:absolute;top:-5px;left:-5px;background:#6c757d;'
+                        'color:white;border-radius:50%;width:22px;height:22px;font-size:12px;'
+                        'font-weight:bold;display:flex;align-items:center;justify-content:center;'
+                        'border:1px solid white;z-index:5;">V</div>')
+
     next_opp = player.get('next_opponent', '-')
     if next_opp != '-':
         next_opp = f"vs {next_opp}"
 
-    # 3. Clean HTML (No onerror needed since we validated the URL)
+    minutes_prob = player.get('minutes_prob', 1.0)
+    points_bg = '#e02424' if minutes_prob < 0.6 else '#38003c'
+
     return f"""<div class="player-card" style="position: relative;">{badges_html}
 <div style="display: flex; justify-content: center; margin-bottom: 4px; height: 60px; align-items: flex-end;">
 <img src="{img_url}" style="width: auto; height: 60px; object-fit: contain;">
@@ -235,57 +188,39 @@ def get_player_card_html(player, is_new=False, is_captain=False, is_vice=False):
 {next_opp} <br/>
 £{player['price']:.1f}
 </div>
-<div class="player-points" style="background-color: {'#e02424' if player['minutes_prob'] < 0.6 else '#38003c'}">
+<div class="player-points" style="background-color: {points_bg}">
 {player['predicted_points']:.1f} XP
 </div>
 </div>"""
 
+
 def render_pitch_view(starters, bench, new_transfers=None, captain_id=None, vice_id=None):
-    if new_transfers is None: new_transfers = []
-    
-    # CSS
+    if new_transfers is None:
+        new_transfers = []
+
     st.markdown(get_pitch_style(), unsafe_allow_html=True)
-    
-    # Rows
-    gks = starters[starters['element_type'] == 1]
-    defs = starters[starters['element_type'] == 2]
-    mids = starters[starters['element_type'] == 3]
-    fwds = starters[starters['element_type'] == 4]
-    
-    # Helper to clean up loop
+
     def add_row(players):
         html_row = '<div class="pitch-row">'
         for _, p in players.iterrows():
-            is_new = p['id'] in new_transfers
-            is_cap = (p['id'] == captain_id)
-            is_vc = (p['id'] == vice_id)
-            html_row += get_player_card_html(p, is_new, is_captain=is_cap, is_vice=is_vc)
-        html_row += '</div>'
-        return html_row
+            html_row += get_player_card_html(
+                p,
+                is_new=p['id'] in new_transfers,
+                is_captain=(p['id'] == captain_id),
+                is_vice=(p['id'] == vice_id),
+            )
+        return html_row + '</div>'
 
-    # Build Pitch HTML
     html = '<div class="pitch-container">'
-    html += '<div class="pitch-line"></div>'
-    html += '<div class="pitch-circle"></div>'
-    
-    # Rows
-    html += add_row(gks)
-    html += add_row(defs)
-    html += add_row(mids)
-    html += add_row(fwds)
-    
-    html += '</div>' # End pitch container
-    
+    for element_type in (1, 2, 3, 4):
+        html += add_row(starters[starters['element_type'] == element_type])
+    html += '</div>'
+
     st.markdown(html, unsafe_allow_html=True)
-    
-    # Bench
+
     st.subheader(f"Bench (XP: {bench['predicted_points'].sum():.1f})")
-    
     bench_html = '<div class="bench-container">'
     for _, p in bench.iterrows():
-        is_new = p['id'] in new_transfers
-        bench_html += get_player_card_html(p, is_new)
+        bench_html += get_player_card_html(p, is_new=p['id'] in new_transfers)
     bench_html += '</div>'
-    
     st.markdown(bench_html, unsafe_allow_html=True)
-

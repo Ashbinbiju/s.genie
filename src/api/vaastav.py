@@ -14,7 +14,7 @@ class VaastavClient:
         url = f"{self.BASE_URL}/{season}/gws/merged_gw.csv"
         print(f"Downloading {season} data from {url}...")
         try:
-            response = requests.get(url)
+            response = requests.get(url, timeout=60)
             response.raise_for_status()
             
             output_path = os.path.join(self.data_dir, f"merged_gw_{season}.csv")

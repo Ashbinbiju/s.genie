@@ -21,19 +21,22 @@ class UnderstatClient:
         """Scrapes player data from the main league page."""
         url = f"{self.BASE_URL}/{self.year}"
         try:
-            response = requests.get(url)
+            response = requests.get(url, timeout=20)
             response.raise_for_status()
             content = response.text
-            
+
             # Find the JSON data inside script tags
             match = re.search(r"var playersData\s*=\s*JSON\.parse\('(.*?)'\);", content)
             if match:
-                # The data is hex (or unicode) encoded in the string sometimes, 
-                # but usually simplest is json.loads of the captured group decoding unicode escapes
+                # The payload is a JS string literal using \xNN escapes.
+                #
+                # Decode via latin-1 -> unicode_escape: 'unicode_escape' interprets bytes
+                # as latin-1, so encoding to utf-8 first (as this used to) mangles every
+                # accented character into mojibake -- 'Ødegaard' became 'Ã˜degaard', which
+                # then failed to match the FPL name.
                 raw_data = match.group(1)
-                # Decode unicode escape sequences if necessary, but requests.text usually handles encoding.
-                # The string inside is often like "\x7B\x22id..."
-                decoded_data = raw_data.encode('utf-8').decode('unicode_escape')
+                decoded_data = raw_data.encode('latin-1', 'backslashreplace').decode('unicode_escape')
+                decoded_data = decoded_data.encode('latin-1', 'ignore').decode('utf-8', 'replace')
                 data = json.loads(decoded_data)
                 
                 df = pd.DataFrame(data)
