@@ -29,6 +29,19 @@ def season_label_or_unknown():
 # reassigns every season — are the canonical keys for both team and opponent.
 CATEGORICAL_FEATURES = ['position', 'team_name', 'opponent_name', 'was_home']
 
+# --- Pre-season prior tuning -------------------------------------------------
+# FDR runs 1 (easiest) to 5 (hardest); 3 is a neutral fixture.
+NEUTRAL_FDR = 3.0
+# How much the opening fixture moves the projection. At 0.15 a dream opener (FDR 1) is
+# worth +15% and a nightmare (FDR 5) -15% — enough to separate otherwise equal players
+# without letting one fixture dominate a season-long prior.
+FIXTURE_SENSITIVITY = 0.15
+# Weight on the price-implied estimate for players with no PL history; the remainder
+# goes to FPL's own ep_next.
+NEWCOMER_PRICE_WEIGHT = 0.7
+# Newcomers carry adaptation and rotation risk an established player does not.
+NEW_PLAYER_DISCOUNT = 0.85
+
 
 def _get_current_gw():
     """The most recently started GW, from bootstrap_static. 0 before the season begins."""
@@ -579,6 +592,40 @@ class PointsPredictor:
                 prior[int(pid_str)] = max(num / den, 0.0)
         return prior
 
+    @staticmethod
+    def _price_based_estimate(df_features, prior):
+        """
+        Expected points per gameweek inferred from PRICE, for players with no PL history.
+
+        FPL prices a new signing according to what it expects them to return, so price
+        is a real signal — and the only one available for them. `ep_next` is not a
+        substitute: pre-season it is flat and frequently 0.0 even for £6.0m starters,
+        which renders them invisible to the optimizer.
+
+        The rate is calibrated per position from the players who DO have history, so it
+        adapts to the model's own scale instead of hardcoding a points-per-million.
+        """
+        # Both columns are required to infer anything from price; without them there is
+        # simply no price signal to use, and the caller falls back to ep_next.
+        if not {'position', 'price'} <= set(df_features.columns):
+            return pd.Series(np.nan, index=df_features.index)
+
+        known = df_features['id'].map(prior)
+        rate = {}
+        for position, group in df_features.assign(_prior=known).groupby('position'):
+            valid = group[group['_prior'].notna() & (group['price'] > 0)]
+            if len(valid) >= 10:
+                rate[position] = float((valid['_prior'] / valid['price']).median())
+
+        if not rate:
+            return pd.Series(np.nan, index=df_features.index)
+
+        overall = float(np.median(list(rate.values())))
+        per_million = df_features['position'].map(rate).fillna(overall)
+        # New arrivals carry adaptation and rotation risk that an established player
+        # does not, so the price-implied estimate is discounted rather than taken flat.
+        return per_million * df_features['price'] * NEW_PLAYER_DISCOUNT
+
     def _preseason_prediction(self, df_features, summaries):
         """
         Cold-start predictions for a season that has not begun.
@@ -596,14 +643,20 @@ class PointsPredictor:
         if prior:
             mapped = df_features['id'].map(prior)
             covered = int(mapped.notna().sum())
-            # Players new to the Premier League have no history; FPL's own estimate is
-            # the only thing available for them.
-            preds = mapped.fillna(ep_next)
+
+            # Players new to the Premier League: infer from price, blended with FPL's
+            # own estimate rather than trusting either alone.
+            price_est = self._price_based_estimate(df_features, prior)
+            newcomer = (NEWCOMER_PRICE_WEIGHT * price_est
+                        + (1 - NEWCOMER_PRICE_WEIGHT) * ep_next)
+            preds = mapped.fillna(newcomer).fillna(ep_next)
+
             self.prediction_warnings.append(
-                f"{season_label_or_unknown()} has not started. Using last season's "
-                f"points per gameweek for {covered}/{len(df_features)} players; the "
-                f"remainder (new to the league) fall back to FPL's own estimate. "
-                f"The ML model takes over once GW1 has been played."
+                f"{season_label_or_unknown()} has not started. Ranking uses last "
+                f"season's points per gameweek for {covered}/{len(df_features)} "
+                f"players; the other {len(df_features) - covered} are new to the league "
+                f"and estimated from price. Adjusted for the GW1 fixture. The ML model "
+                f"takes over once GW1 has been played."
             )
         else:
             preds = ep_next
@@ -612,6 +665,14 @@ class PointsPredictor:
                 "FPL's own expected points, which is heavily tied at this stage. "
                 "Run `python src/api/async_fpl.py` for a better draft ranking."
             )
+
+        # The opening fixture matters and the prior is otherwise blind to it. Use the
+        # difficulty of the IMMEDIATE next match, not the 5-fixture mean: a favourable
+        # opener would otherwise be averaged away by the run behind it.
+        if 'next_fixture_difficulty' in df_features.columns:
+            fdr = pd.to_numeric(df_features['next_fixture_difficulty'],
+                                errors='coerce').fillna(NEUTRAL_FDR)
+            preds = preds * (1 + FIXTURE_SENSITIVITY * (NEUTRAL_FDR - fdr) / 2.0)
 
         if 'minutes_prob' in df_features.columns:
             preds = preds * df_features['minutes_prob'].fillna(1.0)

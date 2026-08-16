@@ -110,28 +110,103 @@ class TransferOptimizer:
         squad['is_captain'] = [c[i].value() == 1.0 for i in chosen]
         return squad
 
-    def solve_team(self, df, current_team_ids=None):
+    def solve_team(self, df, current_team_ids=None, must_include=None, verbose=True):
         """
         Selects the best 15 (11 starters + 4 bench) to maximize points actually scored.
 
         Constraints: budget, GK=2 DEF=5 MID=5 FWD=3, max 3 players per club, and a
         legal starting XI with a captain.
+
+        `must_include` is a collection of FPL player ids to force into the squad — used
+        to answer "what would picking X actually cost me?".
         """
         df = df[df['price'] > 0]
         if df.empty:
-            print("No priced players available.")
+            if verbose:
+                print("No priced players available.")
             return None
 
         players = df.index.tolist()
         lk = self._lookups(df)
         prob, x, y, c = self._build(players, lk, self.budget, "squad")
 
+        for pid in (must_include or []):
+            forced = [i for i in players if lk['id'][i] == pid]
+            if not forced:
+                if verbose:
+                    print(f"Cannot force player id {pid}: not in the pool.")
+                return None
+            prob += x[forced[0]] == 1
+
         prob.solve(pulp.PULP_CBC_CMD(msg=0))
         if pulp.LpStatus[prob.status] != 'Optimal':
-            print(f"No optimal solution found (status: {pulp.LpStatus[prob.status]}).")
+            if verbose:
+                print(f"No optimal solution found (status: {pulp.LpStatus[prob.status]}).")
             return None
 
         return self._extract(df, players, x, y, c)
+
+    @staticmethod
+    def squad_score(squad):
+        """Points a squad actually scores: the XI, with the captain counted twice."""
+        if squad is None or squad.empty:
+            return 0.0
+        starters = squad[squad['is_starter']] if 'is_starter' in squad.columns else squad
+        total = float(starters['predicted_points'].sum())
+        if 'is_captain' in squad.columns and squad['is_captain'].any():
+            total += float(squad[squad['is_captain']].iloc[0]['predicted_points'])
+        return total
+
+    def explain_exclusion(self, df, player_id, baseline=None):
+        """
+        Why a given player is (or is not) in the optimal squad.
+
+        Returns a dict with the squad built around them, what it costs versus the
+        unconstrained optimum, and who makes way. A player being left out is usually a
+        VALUE judgement rather than a low rating, and that distinction is invisible from
+        the team sheet alone.
+        """
+        row = df[df['id'] == player_id]
+        if row.empty:
+            return None
+        player = row.iloc[0]
+
+        if baseline is None:
+            baseline = self.solve_team(df, verbose=False)
+        if baseline is None:
+            return None
+
+        in_squad = player_id in set(baseline['id'])
+        result = {
+            'player': player,
+            'in_squad': in_squad,
+            'baseline_score': self.squad_score(baseline),
+            'forced_score': None,
+            'cost': 0.0,
+            'forced_squad': None,
+            'displaced': [],
+            'is_captain': False,
+        }
+
+        if in_squad:
+            picked = baseline[baseline['id'] == player_id].iloc[0]
+            result['is_captain'] = bool(picked.get('is_captain', False))
+            result['forced_score'] = result['baseline_score']
+            return result
+
+        forced = self.solve_team(df, must_include=[player_id], verbose=False)
+        if forced is None:
+            result['cost'] = float('inf')
+            return result
+
+        result['forced_squad'] = forced
+        result['forced_score'] = self.squad_score(forced)
+        result['cost'] = result['baseline_score'] - result['forced_score']
+        result['displaced'] = (
+            baseline[~baseline['id'].isin(set(forced['id']))]
+            .sort_values('predicted_points', ascending=False)
+        )
+        return result
 
     def recommend_transfers(self, df_all, current_team_ids, free_transfers=1, cost_per_hit=4):
         """

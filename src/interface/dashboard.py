@@ -125,6 +125,83 @@ def build_transfer_plan(code_version, current_ids, budget, free_transfers):
         df, list(current_ids), free_transfers=free_transfers)
 
 
+@st.cache_data(ttl=CACHE_TTL, show_spinner=False)
+def explain_player(code_version, player_id, budget):
+    """Why a given player is in, or out of, the optimal squad."""
+    df, _, _, _ = get_predictions(CODE_VERSION)
+    if df is None:
+        return None
+    optimizer = TransferOptimizer(budget=budget)
+    result = optimizer.explain_exclusion(df, int(player_id))
+    if result is None:
+        return None
+    # Return plain data: Series/DataFrames cache fine, but keep it small and explicit.
+    return {
+        'name': result['player']['web_name'],
+        'price': float(result['player']['price']),
+        'position': result['player']['position'],
+        'team_name': result['player']['team_name'],
+        'points': float(result['player']['predicted_points']),
+        'next_opponent': result['player'].get('next_opponent', '-'),
+        'in_squad': bool(result['in_squad']),
+        'is_captain': bool(result['is_captain']),
+        'cost': float(result['cost']),
+        'baseline_score': float(result['baseline_score']),
+        'displaced': list(result['displaced']['web_name']) if len(result['displaced']) else [],
+    }
+
+
+def render_player_inspector(df, budget, key):
+    """
+    "Why isn't X in my squad?" — the question a team sheet cannot answer.
+
+    A player being left out is usually a VALUE judgement, not a low rating. This
+    re-solves with them forced in and reports what that actually costs.
+    """
+    with st.expander("🔍 Why isn't a player in my squad?", expanded=False):
+        options = df.sort_values('predicted_points', ascending=False)
+        labels = {
+            f"{r.web_name} ({r.position}, £{r.price:.1f}m) — {r.predicted_points:.2f} XP": int(r.id)
+            for r in options.itertuples()
+        }
+        chosen = st.selectbox("Player", list(labels.keys()), key=f"inspect_{key}")
+
+        info = explain_player(CODE_VERSION, labels[chosen], budget)
+        if not info:
+            st.warning("Could not evaluate that player.")
+            return
+
+        if info['in_squad']:
+            role = "captain" if info['is_captain'] else "selected"
+            st.success(
+                f"**{info['name']}** is already in the squad ({role}) — "
+                f"£{info['price']:.1f}m, {info['points']:.2f} XP vs {info['next_opponent']}."
+            )
+            return
+
+        if info['cost'] == float('inf'):
+            st.error(f"**{info['name']}** cannot fit any legal squad within "
+                     f"£{budget:.1f}m.")
+            return
+
+        st.warning(
+            f"**{info['name']}** is left out — £{info['price']:.1f}m for "
+            f"{info['points']:.2f} XP vs {info['next_opponent']}."
+        )
+        c1, c2 = st.columns(2)
+        c1.metric("Cost of picking them", f"−{info['cost']:.2f} XP",
+                  help="Drop in the starting XI total (captain doubled) once the rest "
+                       "of the squad is rebuilt around them.")
+        c2.metric("Optimal XI total", f"{info['baseline_score']:.2f} XP")
+
+        if info['displaced']:
+            st.caption("Picking them would mean dropping: "
+                       + ", ".join(f"**{n}**" for n in info['displaced']))
+        if info['cost'] < 1.0:
+            st.info("That is well within the model's own margin of error — a defensible "
+                    "pick if you rate them above the model does.")
+
+
 def player_image(row, width=50):
     st.image(resolve_player_image(row), width=width)
 
@@ -324,6 +401,8 @@ if not picks:
     render_pitch_view(starters, bench,
                       captain_id=captain['id'] if captain is not None else None,
                       vice_id=vice['id'] if vice is not None else None)
+
+    render_player_inspector(df, draft_budget, key="draft")
     st.stop()
 
 # ---------------------------------------------------------------------------
@@ -458,6 +537,8 @@ with tab1:
             st.caption(f"📈 Projected XI gain: {gain:+.1f} XP")
             if hits > 0:
                 st.caption(f"📉 Net after hit: {gain - cost:+.1f} XP")
+
+    render_player_inspector(df, spending_power, key="squad")
 
 # ---------------------------------------------------------------------------
 # TAB 2 — Transfer analysis

@@ -17,7 +17,8 @@ from src.utils.names import normalize_name_series
 # the feature set below must be added here too, or a stale cache will be served and the
 # missing columns will be silently zero-filled downstream.
 REQUIRED_CACHE_COLS = [
-    'next_opponent', 'news', 'fixture_difficulty', 'photo', 'team_name', 'opponent_name',
+    'next_opponent', 'news', 'fixture_difficulty', 'next_fixture_difficulty',
+    'photo', 'team_name', 'opponent_name',
     'win_prob', 'team_implied_goals', 'clean_sheet_prob',
     'anytime_goal_scorer_prob', 'next_kickoff_time',
 ]
@@ -151,6 +152,8 @@ class FeatureProcessor:
             match_data = self.calculate_fixture_difficulty(fixtures, fpl_teams)
             merged['fixture_difficulty'] = merged['team'].map(
                 lambda x: match_data.get(x, {}).get('fixture_difficulty', 3))
+            merged['next_fixture_difficulty'] = merged['team'].map(
+                lambda x: match_data.get(x, {}).get('next_fixture_difficulty', 3.0))
             merged['next_opponent'] = merged['team'].map(
                 lambda x: match_data.get(x, {}).get('next_opponent', "-"))
             # Opponent as a NAME, not the per-season integer id — ids mean different
@@ -166,6 +169,7 @@ class FeatureProcessor:
                 lambda x: match_data.get(x, {}).get('next_kickoff_time', None))
         else:
             merged['fixture_difficulty'] = 3
+            merged['next_fixture_difficulty'] = 3.0
             merged['next_opponent'] = "-"
             merged['opponent_name'] = "UNKNOWN"
             merged['was_home'] = "True"
@@ -215,7 +219,7 @@ class FeatureProcessor:
             'id', 'web_name', 'team', 'team_name', 'team_code', 'element_type', 'position',
             'price', 'form', 'points_per_game', 'ict_index', 'ep_next',
             'xG', 'xA', 'xG_per_90', 'xA_per_90', 'minutes_prob',
-            'total_points', 'fixture_difficulty',
+            'total_points', 'fixture_difficulty', 'next_fixture_difficulty',
             'news', 'chance_of_playing_next_round', 'next_opponent', 'next_kickoff_time',
             'opponent_name', 'was_home',
             'win_prob', 'draw_prob', 'loss_prob',
@@ -230,7 +234,8 @@ class FeatureProcessor:
 
         final_df = merged[features].copy()
 
-        cols_to_float = ['points_per_game', 'ict_index', 'ep_next', 'fixture_difficulty']
+        cols_to_float = ['points_per_game', 'ict_index', 'ep_next',
+                         'fixture_difficulty', 'next_fixture_difficulty']
         for c in cols_to_float:
             final_df[c] = pd.to_numeric(final_df[c], errors='coerce').fillna(0)
 
@@ -278,12 +283,18 @@ class FeatureProcessor:
                     next_opp_id = opp_id
                     next_is_home = is_home
                     next_kickoff = match.get('kickoff_time')
+                    next_difficulty = float(difficulty)
 
                 diff_sum += difficulty
                 count += 1
 
             team_data[team_id] = {
+                # Mean over the next N fixtures — the run ahead, used for display.
                 'fixture_difficulty': diff_sum / count if count > 0 else 3,
+                # Difficulty of the IMMEDIATE next fixture. The 5-fixture mean is the
+                # wrong quantity for a single-gameweek projection: a great next match
+                # gets averaged away by four bad ones behind it.
+                'next_fixture_difficulty': next_difficulty if count > 0 else 3.0,
                 'next_opponent': next_opp_str,
                 'opponent_team_id': next_opp_id,
                 'is_home': next_is_home,

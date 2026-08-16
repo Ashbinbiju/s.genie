@@ -146,3 +146,77 @@ def test_mid_season_does_not_take_the_preseason_path(monkeypatch, bootstrap):
     p = PointsPredictor()
     p.predict(frame([1]))
     assert p.prediction_mode == 'fallback'
+
+
+# ---------------------------------------------------------------- fixture + price
+def rich_frame(ids, prices, positions, fdr, ep_next=None):
+    return pd.DataFrame({
+        'id': ids,
+        'web_name': [f'P{i}' for i in ids],
+        'price': prices,
+        'position': positions,
+        'next_fixture_difficulty': fdr,
+        'ep_next': ep_next if ep_next is not None else ['2.0'] * len(ids),
+        'minutes_prob': [1.0] * len(ids),
+    })
+
+
+def test_easy_opening_fixture_outranks_a_hard_one(preseason, monkeypatch):
+    """
+    Two identical players, different GW1 opponents. The prior was blind to this, so a
+    dream opener and a nightmare scored the same.
+    """
+    monkeypatch.setattr(predictor_mod, 'load_summary_cache',
+                        lambda *a, **k: (summaries({1: [190], 2: [190]}), None))
+    out = PointsPredictor().predict(
+        rich_frame([1, 2], [7.0, 7.0], ['MID', 'MID'], [2.0, 5.0]))
+    easy = out.loc[out['id'] == 1, 'predicted_points'].iloc[0]
+    hard = out.loc[out['id'] == 2, 'predicted_points'].iloc[0]
+    assert easy > hard
+
+
+def test_neutral_fixture_leaves_the_prior_unchanged(preseason, monkeypatch):
+    monkeypatch.setattr(predictor_mod, 'load_summary_cache',
+                        lambda *a, **k: (summaries({1: [190]}), None))
+    out = PointsPredictor().predict(rich_frame([1], [7.0], ['MID'], [3.0]))
+    assert out['predicted_points'].iloc[0] == pytest.approx(190 / 38)
+
+
+def test_fixture_adjustment_is_bounded(preseason, monkeypatch):
+    """A single fixture must nudge a season-long prior, not dominate it."""
+    monkeypatch.setattr(predictor_mod, 'load_summary_cache',
+                        lambda *a, **k: (summaries({1: [190], 2: [190]}), None))
+    out = PointsPredictor().predict(
+        rich_frame([1, 2], [7.0, 7.0], ['MID', 'MID'], [1.0, 5.0]))
+    best, worst = out['predicted_points'].max(), out['predicted_points'].min()
+    assert 1.0 < best / worst < 1.5, "fixture swing should stay modest"
+
+
+def test_newcomers_are_estimated_from_price_not_a_flat_zero(preseason, monkeypatch):
+    """
+    Regression: 83 players had no PL history and several were priced £6.0m with
+    ep_next = 0.0, making them invisible to the optimizer.
+    """
+    known = {i: [150] for i in range(1, 21)}
+    monkeypatch.setattr(predictor_mod, 'load_summary_cache',
+                        lambda *a, **k: (summaries(known), None))
+
+    ids = list(range(1, 21)) + [500, 501]
+    prices = [7.0] * 20 + [9.0, 4.5]
+    positions = ['MID'] * 22
+    out = PointsPredictor().predict(
+        rich_frame(ids, prices, positions, [3.0] * 22,
+                   ep_next=['3.0'] * 20 + ['0.0', '0.0']))
+
+    expensive = out.loc[out['id'] == 500, 'predicted_points'].iloc[0]
+    cheap = out.loc[out['id'] == 501, 'predicted_points'].iloc[0]
+    assert expensive > 0, "a £9.0m newcomer must not score zero"
+    assert expensive > cheap, "price must order newcomers"
+
+
+def test_price_estimate_needs_both_columns(preseason, monkeypatch):
+    """Without position/price there is no price signal; fall back cleanly."""
+    monkeypatch.setattr(predictor_mod, 'load_summary_cache',
+                        lambda *a, **k: (summaries({1: [190]}), None))
+    out = PointsPredictor().predict(frame([1, 99], ep_next=['0.0', '3.5']))
+    assert out.loc[out['id'] == 99, 'predicted_points'].iloc[0] == pytest.approx(3.5)

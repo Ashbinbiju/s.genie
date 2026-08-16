@@ -336,3 +336,61 @@ def test_pick_captain_honours_the_optimizer_decision(player_pool):
     captain, vice = pick_captain(starters)
     assert captain['id'] == squad[squad['is_captain']].iloc[0]['id']
     assert vice is not None and vice['id'] != captain['id']
+
+
+# ---------------------------------------------------------------- exclusion explainer
+def test_must_include_forces_a_player_into_the_squad(player_pool):
+    opt = TransferOptimizer(budget=100.0)
+    baseline = opt.solve_team(player_pool)
+    outside = player_pool[~player_pool['id'].isin(baseline['id'])]
+    target = int(outside.nlargest(1, 'price').iloc[0]['id'])
+
+    forced = opt.solve_team(player_pool, must_include=[target])
+    assert forced is not None
+    assert target in set(forced['id'])
+    assert_legal_squad(forced)
+
+
+def test_must_include_rejects_an_unknown_player(player_pool):
+    assert TransferOptimizer(budget=100.0).solve_team(
+        player_pool, must_include=[999999], verbose=False) is None
+
+
+def test_squad_score_is_xi_plus_captain(player_pool):
+    opt = TransferOptimizer(budget=100.0)
+    squad = opt.solve_team(player_pool)
+    starters = squad[squad['is_starter']]
+    captain = squad[squad['is_captain']].iloc[0]
+    assert opt.squad_score(squad) == pytest.approx(
+        starters['predicted_points'].sum() + captain['predicted_points'])
+
+
+def test_explainer_reports_a_selected_player_as_selected(player_pool):
+    opt = TransferOptimizer(budget=100.0)
+    baseline = opt.solve_team(player_pool)
+    picked = int(baseline.iloc[0]['id'])
+    info = opt.explain_exclusion(player_pool, picked, baseline=baseline)
+    assert info['in_squad'] is True
+    assert info['cost'] == 0.0
+
+
+def test_explainer_quantifies_the_cost_of_an_omitted_player(player_pool):
+    """
+    The question 'why isn't X in my squad?' — answered as a number rather than a shrug.
+    Omission is a value judgement, so forcing them in must never IMPROVE the squad.
+    """
+    opt = TransferOptimizer(budget=100.0)
+    baseline = opt.solve_team(player_pool)
+    outside = player_pool[~player_pool['id'].isin(baseline['id'])]
+    target = int(outside.nlargest(1, 'predicted_points').iloc[0]['id'])
+
+    info = opt.explain_exclusion(player_pool, target, baseline=baseline)
+    assert info['in_squad'] is False
+    assert info['cost'] >= -1e-6, "forcing a player in cannot beat the free optimum"
+    assert info['forced_score'] <= info['baseline_score'] + 1e-6
+    assert target in set(info['forced_squad']['id'])
+    assert len(info['displaced']) > 0
+
+
+def test_explainer_handles_an_unknown_player(player_pool):
+    assert TransferOptimizer(budget=100.0).explain_exclusion(player_pool, 999999) is None

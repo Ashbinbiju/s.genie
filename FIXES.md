@@ -395,6 +395,40 @@ on the XI+captain total. Worth knowing that the prior weights the last two seaso
 2024/25 (181 pts) drags him from 6.29 to 5.83 pts/GW; this is a pre-season prior from previous-season
 totals, with no fixture, form or minutes modelling until GW1 is played.
 
+---
+
+## Ninth pass — making the GW1 draft as good as it can be
+
+With the GW1 deadline five days out, the draft is the thing that matters. Two gaps in the
+pre-season prior, plus a feature to answer the question that prompted all this.
+
+**1. The prior ignored who you play in GW1.** It was pure last-season points. GW1 difficulty
+actually spans the full 2–5 range, so a dream opener and a nightmare scored identically.
+Now adjusted by the difficulty of the **immediate next fixture** — not the 5-fixture mean,
+which averages a favourable opener away behind the run following it. Sensitivity 0.15, so a
+fixture nudges a season-long prior rather than dominating it.
+
+**2. 83 players had no PL history and were effectively invisible.** They fell back to
+`ep_next`, which pre-season is flat and frequently **0.0 even for £6.0m starters**. FPL prices a
+new signing by what it expects them to return, so price is real signal — and the only one
+available. The estimate is calibrated per position from players who DO have history (so it tracks
+the model's own scale rather than a hardcoded points-per-million), discounted 0.85 for adaptation
+and rotation risk, and blended 70/30 with `ep_next`.
+
+| | before | after |
+|---|---|---|
+| XI + captain | 54.10 → 55.99 | **57.72** |
+| top of ranking | Haaland (fixture-blind) | B.Fernandes (FDR 2) ahead of Haaland (FDR 3) |
+| newcomers | 0.0 XP, unpickable | ranked by price |
+
+**3. "Why isn't X in my squad?"** — a player inspector in the app. Pick anyone; it re-solves with
+them forced in and reports what that costs, and who makes way. A player being left out is almost
+always a VALUE judgement rather than a low rating, and the team sheet alone cannot show that.
+
+For Haaland it reports: *left out — £15.5m for 5.83 XP vs BOU (H)*, **cost of picking him −1.48 XP**,
+would drop B.Fernandes, Watkins, Tarkowski, Verbruggen. Below 1.0 XP it says so explicitly — that is
+inside the model's own margin, so it is a defensible manual override.
+
 ## Verification performed
 
 - All modules compile; all import cleanly.
