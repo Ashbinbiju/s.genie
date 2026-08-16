@@ -253,6 +253,39 @@ with the manager and team name, or rejected with an explanation that ids are per
 Verified against the live league: all 8 members resolve, `5989967` confirmed dead, and the correct
 2026-27 entry (`4772552`, "Alpha XI") validates.
 
+---
+
+## Fifth pass — Streamlit's stale module cache
+
+The deploy raised:
+
+```
+AttributeError: 'FPLClient' object has no attribute 'get_league_members'
+```
+
+despite the method being present in the pushed file. Streamlit re-executes the **entry script**
+on every rerun, but `import` returns whatever is already in `sys.modules`. After a hot code update
+the platform reported "Updated app!" and reran the NEW `dashboard.py` while `src.api.fpl` stayed
+pinned at the OLD version — so a method added in the same commit did not exist at runtime.
+
+This is a long-standing trap in this repo, visible in its history: *"Force redeploy: ensure fpl.py
+freehit_gws fix is live"*, *"Fix: Force reload chips module to prevent stale cache in Streamlit"*,
+and an `importlib.reload(src.optimization.chips)` call in the dashboard. **I removed that hack in
+the first pass as leftover cruft — that was wrong. It was working around real behaviour.**
+
+`src/utils/hotreload.py` replaces the ad-hoc reloads with a general guard: evict cached `src.*`
+modules when any source file's mtime exceeds the last check. Free when nothing changed (a few dozen
+stat calls); a clean re-import when it did. It must run **before** the `from src... import name`
+statements, because those bind class and function *objects* — reloading afterwards leaves the caller
+holding stale references.
+
+Reproduced end to end in a scratch project — import old module, rewrite the source, re-import:
+
+```
+WITHOUT guard: AttributeError: 'FPLClient' object has no attribute 'get_league_members'
+WITH guard:    evicted ['src', 'src.api', 'src.api.fpl'] -> method present, call succeeds
+```
+
 ## Verification performed
 
 - All modules compile; all import cleanly.

@@ -9,6 +9,16 @@ _project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '.
 if _project_root not in sys.path:
     sys.path.insert(0, _project_root)
 
+
+# Must run BEFORE the `from src... import ...` statements below: those bind class and
+# function OBJECTS, so reloading afterwards would leave this module holding stale
+# references. See src/utils/hotreload.py for why this is necessary on Streamlit Cloud.
+try:
+    from src.utils.hotreload import drop_stale_modules
+    drop_stale_modules(_project_root)
+except Exception as _e:  # never let a reload guard take the app down
+    print(f"hot-reload guard skipped: {_e}")
+
 from src.api.fpl import FPLClient
 from src.api.async_fpl import refresh_cache
 from src.features.processor import FeatureProcessor
