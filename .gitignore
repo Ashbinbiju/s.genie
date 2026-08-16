@@ -5,12 +5,30 @@ __pycache__/
 .env
 venv/
 reports/
+.pytest_cache/
 data/raw/
 data/processed/
 data/cache/
-data/models/
 data/reports/
 *.parquet
 *.pkl
 *.csv
 *.json
+
+# ---------------------------------------------------------------------------
+# Trained model artifacts.
+#
+# These SHIP WITH THE REPO. A deployed instance (Streamlit Cloud) has no artifact
+# store and cannot retrain itself — training needs multi-season history that is not
+# deployed — so without the model in git the app permanently runs the emergency
+# heuristic. They are ~400KB each, in LightGBM's portable text format.
+#
+# Everything else under data/models/ (versioned per-GW snapshots) stays local.
+# Note: this must be `data/models/*`, not `data/models/`; git cannot re-include a
+# file whose parent directory is excluded.
+# ---------------------------------------------------------------------------
+data/models/*
+!data/models/lgb_ts_points.txt
+!data/models/lgb_ts_points.meta.json
+!data/models/lgb_ts_minutes.txt
+!data/models/lgb_ts_minutes.meta.json

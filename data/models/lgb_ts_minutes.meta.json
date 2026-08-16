@@ -1,0 +1,19 @@
+{
+  "trained_at": "2026-08-16T13:39:21.626629",
+  "season": "2026-27",
+  "gw": 0,
+  "features": [
+    "minutes_last_1",
+    "minutes_mean_last_3",
+    "minutes_mean_last_5",
+    "starts_last_1",
+    "starts_mean_last_3",
+    "starts_mean_last_5",
+    "benched_sum_last_3",
+    "benched_sum_last_5",
+    "days_rest",
+    "position",
+    "price",
+    "team_name"
+  ]
+}

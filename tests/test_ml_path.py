@@ -16,13 +16,17 @@ from src.model.predictor import PointsPredictor
 from src.api.understat import UnderstatClient
 from src.optimization.solver import TransferOptimizer
 
-INFER_PARQUET = 'data/processed/player_features.parquet'
-POINTS_MODEL = 'data/models/lgb_ts_points.pkl'
-MINUTES_MODEL = 'data/models/lgb_ts_minutes.pkl'
+from src.model.predictor import model_bundle_exists
 
+INFER_PARQUET = 'data/processed/player_features.parquet'
+POINTS_MODEL = 'data/models/lgb_ts_points'
+MINUTES_MODEL = 'data/models/lgb_ts_minutes'
+
+# Resolved through model_bundle_exists so a rename of the on-disk format cannot turn
+# these into silent skips again.
 requires_model = pytest.mark.skipif(
-    not (os.path.exists(INFER_PARQUET) and os.path.exists(POINTS_MODEL)
-         and os.path.exists(MINUTES_MODEL)),
+    not (os.path.exists(INFER_PARQUET) and model_bundle_exists(POINTS_MODEL)
+         and model_bundle_exists(MINUTES_MODEL)),
     reason="trained model + inference frame required",
 )
 

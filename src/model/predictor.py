@@ -33,6 +33,54 @@ def _safe_print(text):
         print(text.encode('ascii', 'ignore').decode('ascii'))
 
 
+# ---------------------------------------------------------------------------
+# Model persistence
+#
+# Models are stored in LightGBM's NATIVE TEXT format plus a JSON sidecar, not as a
+# pickle. Pickles carry the Python and library version that wrote them, and these
+# artifacts are trained locally but loaded on Streamlit Cloud under a different Python
+# (runtime.txt pins 3.11). The text format is version-independent, diffable, and
+# round-trips `pandas_categorical` — the category ordering the categorical features
+# depend on — byte for byte.
+#
+# Legacy .pkl bundles are still readable so an existing checkout keeps working.
+# ---------------------------------------------------------------------------
+def save_booster(booster, features, metadata, base_path):
+    """Write {base}.txt (native model) and {base}.meta.json (features + metadata)."""
+    os.makedirs(os.path.dirname(base_path) or '.', exist_ok=True)
+    booster.save_model(f"{base_path}.txt")
+    payload = dict(metadata or {})
+    payload['features'] = list(features)
+    with open(f"{base_path}.meta.json", 'w', encoding='utf-8') as f:
+        json.dump(payload, f, indent=2)
+
+
+def load_booster(base_path):
+    """
+    Load a model bundle. Returns (booster, meta_dict) or (None, None).
+
+    Prefers the portable text bundle; falls back to a legacy joblib pickle.
+    """
+    txt, meta_path = f"{base_path}.txt", f"{base_path}.meta.json"
+    if os.path.exists(txt) and os.path.exists(meta_path):
+        with open(meta_path, 'r', encoding='utf-8') as f:
+            meta = json.load(f)
+        return lgb.Booster(model_file=txt), meta
+
+    legacy = f"{base_path}.pkl"
+    if os.path.exists(legacy):
+        data = joblib.load(legacy)
+        meta = {k: v for k, v in data.items() if k != 'model'}
+        return data['model'], meta
+
+    return None, None
+
+
+def model_bundle_exists(base_path):
+    return (os.path.exists(f"{base_path}.txt") and os.path.exists(f"{base_path}.meta.json")) \
+        or os.path.exists(f"{base_path}.pkl")
+
+
 def load_summary_cache(cache_dir="data/cache", static=None):
     """
     Load the element-summary cache for the CURRENT season, with an integrity check.
@@ -96,7 +144,8 @@ class MinutesPredictor:
     def __init__(self, model_dir="data/models"):
         self.model_dir = model_dir
         os.makedirs(self.model_dir, exist_ok=True)
-        self.model_path = os.path.join(self.model_dir, "lgb_ts_minutes.pkl")
+        self.model_base = os.path.join(self.model_dir, "lgb_ts_minutes")
+        self.model_path = f"{self.model_base}.txt"
         self.model = None
         self.features_list = [
             'minutes_last_1', 'minutes_mean_last_3', 'minutes_mean_last_5',
@@ -131,24 +180,26 @@ class MinutesPredictor:
         self.model = lgb.train(self.PARAMS, train_data, num_boost_round=100)
 
         if persist:
-            joblib.dump({'model': self.model, 'features': self.features_list}, self.model_path)
-            print(f"Minutes Model saved to {self.model_path}")
+            meta = {'trained_at': datetime.now().isoformat(),
+                    'season': get_season_label(load_bootstrap()), 'gw': gw}
+            save_booster(self.model, self.features_list, meta, self.model_base)
+            print(f"Minutes Model saved to {self.model_base}.txt")
             if gw:
-                versioned = os.path.join(self.model_dir, f"minutes_model_gw{gw}.pkl")
-                joblib.dump({'model': self.model, 'features': self.features_list}, versioned)
-                print(f"  Versioned copy: {versioned}")
+                versioned = os.path.join(self.model_dir, f"minutes_model_gw{gw}")
+                save_booster(self.model, self.features_list, meta, versioned)
+                print(f"  Versioned copy: {versioned}.txt")
 
         return self.model
 
     def load_model(self):
         if self.model is not None:
             return True
-        if os.path.exists(self.model_path):
-            data = joblib.load(self.model_path)
-            self.model = data['model']
-            self.features_list = data['features']
-            return True
-        return False
+        booster, meta = load_booster(self.model_base)
+        if booster is None:
+            return False
+        self.model = booster
+        self.features_list = meta.get('features', self.features_list)
+        return True
 
     def predict(self, df_features):
         if not self.load_model():
@@ -190,7 +241,8 @@ class PointsPredictor:
     def __init__(self, model_dir="data/models"):
         self.model_dir = model_dir
         os.makedirs(self.model_dir, exist_ok=True)
-        self.model_path = os.path.join(self.model_dir, "lgb_ts_points.pkl")
+        self.model_base = os.path.join(self.model_dir, "lgb_ts_points")
+        self.model_path = f"{self.model_base}.txt"
         self.model = None
         self.features_list = None
         self.prediction_mode = "ml"
@@ -318,22 +370,22 @@ class PointsPredictor:
         num_features = [f for f in self.features_list if df_train[f].dtype.name != 'category']
         self._train_feature_means = df_train[num_features].mean().to_dict()
 
-        payload = {
-            'model': self.model,
-            'features': self.features_list,
+        meta = {
             'train_feature_means': self._train_feature_means,
             'trained_at': datetime.now().isoformat(),
             'season': get_season_label(load_bootstrap()),
             'gw': gw,
             'cv_rmse': self._cv_rmse,
+            'n_train_rows': int(len(df_train)),
+            'train_seasons': sorted(df_train['season'].astype(str).unique().tolist()),
         }
-        joblib.dump(payload, self.model_path)
-        print(f"Points Model saved to {self.model_path}")
+        save_booster(self.model, self.features_list, meta, self.model_base)
+        print(f"Points Model saved to {self.model_base}.txt")
 
         if gw:
-            versioned = os.path.join(self.model_dir, f"points_model_gw{gw}.pkl")
-            joblib.dump(payload, versioned)
-            print(f"  Versioned copy: {versioned}")
+            versioned = os.path.join(self.model_dir, f"points_model_gw{gw}")
+            save_booster(self.model, self.features_list, meta, versioned)
+            print(f"  Versioned copy: {versioned}.txt")
 
         return True
 
@@ -367,14 +419,14 @@ class PointsPredictor:
         return sum(rmse_list) / len(rmse_list) if rmse_list else 999.0
 
     def load_model(self):
-        if os.path.exists(self.model_path):
-            data = joblib.load(self.model_path)
-            self.model = data['model']
-            self.features_list = data['features']
-            self._train_feature_means = data.get('train_feature_means', {})
-            self._cv_rmse = data.get('cv_rmse')
-            return True
-        return False
+        booster, meta = load_booster(self.model_base)
+        if booster is None:
+            return False
+        self.model = booster
+        self.features_list = meta['features']
+        self._train_feature_means = meta.get('train_feature_means', {})
+        self._cv_rmse = meta.get('cv_rmse')
+        return True
 
     # ------------------------------------------------------------------
     # Rolling features at inference time
@@ -495,7 +547,10 @@ class PointsPredictor:
 
         if not self.load_model():
             return self._emergency_heuristic(
-                df_features, reason=f"ML Points Model file not found at {self.model_path}")
+                df_features,
+                reason=f"ML Points Model not found at {self.model_base}.txt — "
+                       f"the trained model must be committed to the repo, since a "
+                       f"deployed instance cannot retrain itself")
 
         summaries, err = load_summary_cache()
         if summaries is None:

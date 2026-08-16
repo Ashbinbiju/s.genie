@@ -11,15 +11,17 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from src.model.predictor import PointsPredictor, MinutesPredictor, CATEGORICAL_FEATURES
+from src.model.predictor import (
+    PointsPredictor, MinutesPredictor, CATEGORICAL_FEATURES, model_bundle_exists,
+)
 
 TRAIN_PARQUET = 'data/processed/historical_features.parquet'
 INFER_PARQUET = 'data/processed/player_features.parquet'
-POINTS_MODEL = 'data/models/lgb_ts_points.pkl'
+POINTS_MODEL = 'data/models/lgb_ts_points'
 
 requires_artifacts = pytest.mark.skipif(
     not (os.path.exists(TRAIN_PARQUET) and os.path.exists(INFER_PARQUET)
-         and os.path.exists(POINTS_MODEL)),
+         and model_bundle_exists(POINTS_MODEL)),
     reason="built artifacts required; run history_builder.py, processor.py, predictor.py",
 )
 

@@ -180,6 +180,49 @@ training and the JSON loop used at inference — and asserts they agree value-fo
 12 features. `test_pipeline_integrity.py` proves anti-leakage structurally: on a player's
 first gameweek every shifted feature must be 0 no matter how many points they scored.
 
+---
+
+## Third pass — the deployment gap
+
+The deployed app reported:
+
+```
+[FALLBACK] ML Points Model file not found at data/models/lgb_ts_points.pkl
+```
+
+**Cause:** `data/models/` was gitignored, so the trained model never reached Streamlit Cloud. A
+deployed instance can refetch everything else it needs (bootstrap, fixtures, the element-summary
+cache, the processed feature frame) but it *cannot* retrain — training needs multi-season history
+that is not deployed. So the app was permanently stuck on the heuristic.
+
+**Fixes**
+
+1. **Models now ship with the repo.** `.gitignore` re-includes exactly the two live artifacts and
+   keeps everything else (per-GW snapshots, raw data, caches) local. Note the rule must be
+   `data/models/*`, not `data/models/` — git cannot re-include a file whose parent directory is
+   excluded.
+2. **Switched from pickle to LightGBM's native text format** plus a JSON metadata sidecar. Models
+   are trained locally on Python 3.14 but loaded on Streamlit Cloud under Python 3.11
+   (`runtime.txt`), and a pickle carries its writer's Python and library versions. The text format
+   is version-independent and diffable. Verified it round-trips `pandas_categorical` — the category
+   ordering the team/opponent/position features are encoded against — with byte-identical
+   predictions. Legacy `.pkl` bundles still load.
+3. **Metadata now records provenance**: `trained_at`, `season`, `cv_rmse`, `train_seasons`,
+   `n_train_rows`.
+
+**Verified by simulating a fresh checkout** — copying only git-tracked files into a clean directory
+and running the pipeline there:
+
+| scenario | before | after |
+|---|---|---|
+| fresh checkout, pre-season | `fallback` — *model not found* | `fallback` — *no element-summary cache* (correct: no matches played yet) |
+| fresh checkout, GW1-3 played | `fallback` — *model not found* | **`ml`** — valid squad, 2/5/5/3, max 3/club, outfield captain |
+
+`tests/test_deployment.py` locks this in: the artifacts must not be gitignored, must be stageable,
+must be the portable format, must carry a feature list and provenance, and both predictors must
+resolve them. A path rename can no longer silently turn the ML path back into a fallback — which is
+how the ML-path tests came to be skipping rather than running when I first changed the format.
+
 ## Verification performed
 
 - All modules compile; all import cleanly.
