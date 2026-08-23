@@ -8,7 +8,8 @@ _project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '.
 if _project_root not in sys.path:
     sys.path.insert(0, _project_root)
 
-from src.utils.season import shirt_url, player_photo_url
+from src.utils.season import (shirt_url, player_photo_url, canon_position,
+                              ELEMENT_TYPE_TO_POSITION)
 
 # Known-bad photo ids: the PL server returns a placeholder rather than a 404 for these.
 MANUAL_MISSING = {'714', '541065', '4470313', 'default', '219847', '4444565'}
@@ -90,6 +91,22 @@ def get_pitch_style():
         display: inline-block;
         width: 100%;
     }
+    .pos-badge {
+        display: inline-block;
+        font-size: 9px;
+        font-weight: 700;
+        line-height: 1.4;
+        letter-spacing: 0.3px;
+        border-radius: 3px;
+        padding: 0 4px;
+        margin-right: 3px;
+        color: #fff;
+        vertical-align: middle;
+    }
+    .pos-GK  { background-color: #eab308; color: #1a1a1a; }
+    .pos-DEF { background-color: #0d9488; }
+    .pos-MID { background-color: #2563eb; }
+    .pos-FWD { background-color: #7c3aed; }
     .bench-container {
         background-color: #f0f2f6;
         border-radius: 8px;
@@ -152,6 +169,21 @@ def resolve_player_image(player):
     return fallback
 
 
+def position_badge_html(player):
+    """
+    Colour-coded GK/DEF/MID/FWD pill.
+
+    Pitch rows imply position by their vertical order, but the bench is a single flat
+    row where it is otherwise unreadable — and the bench order decides who gets
+    autosubbed in.
+    """
+    raw = player.get('position') or ELEMENT_TYPE_TO_POSITION.get(player.get('element_type'))
+    pos = canon_position(raw) if raw else ''
+    if pos not in ('GK', 'DEF', 'MID', 'FWD'):
+        return ''
+    return f'<span class="pos-badge pos-{pos}">{pos}</span>'
+
+
 def get_player_card_html(player, is_new=False, is_captain=False, is_vice=False):
     img_url = resolve_player_image(player)
 
@@ -185,7 +217,7 @@ def get_player_card_html(player, is_new=False, is_captain=False, is_vice=False):
 </div>
 <div class="player-name" style="white-space: normal; line-height: 1.2; height: 32px; display: flex; align-items: center; justify-content: center;">{player['web_name']}</div>
 <div class="player-info">
-{next_opp} <br/>
+{position_badge_html(player)}{next_opp} <br/>
 £{player['price']:.1f}
 </div>
 <div class="player-points" style="background-color: {points_bg}">

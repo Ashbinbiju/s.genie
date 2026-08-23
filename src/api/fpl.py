@@ -11,6 +11,10 @@ DEFAULT_TIMEOUT = 20
 FREE_TRANSFER_CHIPS = {"wildcard", "freehit"}
 
 MAX_FREE_TRANSFERS = 5
+# GW1 has no free-transfer bank at all — transfers are unlimited until the GW1 deadline.
+# A full squad is the real ceiling on transfers in a single gameweek, so reporting 15
+# prices every GW1 transfer as free, which is exactly right.
+GW1_UNLIMITED_TRANSFERS = 15
 
 
 class FPLClient:
@@ -146,13 +150,17 @@ class FPLClient:
         Calculates available free transfers for the upcoming current_gw.
 
         Rules (2024/25 onward):
-        - Start with 1 FT.
+        - GW1 is unlimited; the first free transfer is credited for GW2.
         - Accumulate up to 5 FTs.
         - Deduct transfers made. If < 0, reset to 0 (hits taken), then add 1 for next week.
         - Transfers made under Wildcard or Free Hit are FREE: they neither consume
           nor reset your banked FTs. Counting them (as this used to) drives the
           balance to 0 after any wildcard and produces wrong hit-cost advice.
         """
+        # Unlimited until the GW1 deadline, so there is nothing to count or bank yet.
+        if current_gw <= 1:
+            return GW1_UNLIMITED_TRANSFERS
+
         transfers = self.get_transfers(team_id)
         if transfers is None:
             return 1  # Default fallback
@@ -167,7 +175,12 @@ class FPLClient:
             ev = t['event']
             tx_counts[ev] = tx_counts.get(ev, 0) + 1
 
-        available_ft = 1  # Start of season (GW1)
+        # GW1 grants no bankable FT and consumes none, because its transfers are
+        # unlimited and free. Seeding the bank at 1 here (as this used to) inflated the
+        # count by one every week of the season -- it reported 2 FTs going into GW2 when
+        # FPL gives 1 -- so the optimizer priced a real -4 hit as free.
+        exempt_gws.add(1)
+        available_ft = 0
 
         for g in range(1, current_gw):
             # A chip week costs nothing and leaves the bank untouched.

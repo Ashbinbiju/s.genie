@@ -323,13 +323,13 @@ bank = st.sidebar.number_input(
     help="Money not tied up in players. Spending power is squad value + bank; without "
          "this the optimizer systematically under-budgets.")
 
-if st.sidebar.button("Run Analysis", use_container_width=True):
+if st.sidebar.button("Run Analysis", width='stretch'):
     st.session_state['has_run'] = True
 
 # Escape hatch. Cache keys are versioned by source mtime so a deploy invalidates them,
 # but data can go stale within a single build too — odds move, injury news lands, or the
 # squad is edited on the FPL site.
-if st.sidebar.button("Clear cache & refetch", use_container_width=True,
+if st.sidebar.button("Clear cache & refetch", width='stretch',
                      help="Discard everything cached and pull fresh data from the FPL API"):
     st.cache_data.clear()
     st.session_state['has_run'] = True
@@ -610,19 +610,20 @@ with tab3:
             st.write(f"📉 Minutes probability applied: {p['minutes_prob']:.2f}")
 
     st.subheader("Fixture Analysis")
-    fixture_df = best_team[['web_name', 'next_opponent', 'fixture_difficulty']].copy()
+    fixture_df = best_team[['web_name', 'position', 'next_opponent', 'fixture_difficulty']].copy()
     fixture_df = fixture_df.sort_values('fixture_difficulty')
     fixture_df['Rating'] = fixture_df['fixture_difficulty'].apply(
         lambda d: "🟩 Good" if d <= 2.8 else ("🟥 Tough" if d >= 3.5 else "🟨 Avg"))
-    fixture_df = fixture_df.rename(columns={'web_name': 'Player', 'next_opponent': 'Next Match'})
+    fixture_df = fixture_df.rename(columns={'web_name': 'Player', 'position': 'Pos',
+                                            'next_opponent': 'Next Match'})
     st.caption("Difficulty is the mean FDR of the next 5 fixtures, so it reflects the run "
                "ahead rather than this gameweek alone.")
     st.dataframe(
-        fixture_df[['Player', 'Next Match', 'Rating', 'fixture_difficulty']],
+        fixture_df[['Player', 'Pos', 'Next Match', 'Rating', 'fixture_difficulty']],
         column_config={"fixture_difficulty": st.column_config.NumberColumn("Diff (1-5)",
                                                                            format="%.1f")},
         hide_index=True,
-        use_container_width=True,
+        width='stretch',
     )
 
 # ---------------------------------------------------------------------------

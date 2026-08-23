@@ -1,7 +1,7 @@
 """Free-transfer accounting, chip parsing and the GW1 picks guard."""
 import pytest
 
-from src.api.fpl import FPLClient, MAX_FREE_TRANSFERS
+from src.api.fpl import FPLClient, MAX_FREE_TRANSFERS, GW1_UNLIMITED_TRANSFERS
 
 
 @pytest.fixture
@@ -17,22 +17,40 @@ def stub(client, monkeypatch, transfers, history):
     monkeypatch.setattr(client, 'get_history', lambda team_id: history)
 
 
-def test_ft_starts_at_one(client, monkeypatch):
+def test_gw1_transfers_are_unlimited(client, monkeypatch):
+    """GW1 has no FT bank — transfers are free and unlimited until its deadline."""
     stub(client, monkeypatch, [], {})
-    assert client.calculate_free_transfers(1, 1) == 1
+    assert client.calculate_free_transfers(1, 1) == GW1_UNLIMITED_TRANSFERS
+
+
+def test_gw2_grants_exactly_one_free_transfer(client, monkeypatch):
+    """
+    Regression: the bank was seeded with a phantom GW1 free transfer, so this reported
+    2 going into GW2 when FPL gives 1. Every week was inflated by one, and the solver
+    priced the resulting -4 hit as free.
+    """
+    stub(client, monkeypatch, [], {})
+    assert client.calculate_free_transfers(1, 2) == 1
+
+
+def test_gw1_transfers_do_not_consume_the_bank(client, monkeypatch):
+    """Unlimited GW1 transfers cost nothing, so GW2 still opens with its one FT."""
+    stub(client, monkeypatch, [{'event': 1}] * 8, {})
+    assert client.calculate_free_transfers(1, 2) == 1
 
 
 def test_ft_accumulates_and_caps_at_five(client, monkeypatch):
     stub(client, monkeypatch, [], {})
-    assert client.calculate_free_transfers(1, 2) == 2
-    assert client.calculate_free_transfers(1, 5) == 5
+    # One credited per gameweek from GW2, so the cap is first reached at GW6.
+    assert client.calculate_free_transfers(1, 5) == 4
+    assert client.calculate_free_transfers(1, 6) == MAX_FREE_TRANSFERS
     assert client.calculate_free_transfers(1, 20) == MAX_FREE_TRANSFERS
 
 
 def test_ft_deducted_for_normal_transfers(client, monkeypatch):
     stub(client, monkeypatch, [{'event': 2}], {})
-    # GW1: 0 used -> 2 banked. GW2: 1 used -> 1, +1 = 2 going into GW3.
-    assert client.calculate_free_transfers(1, 3) == 2
+    # GW2 opens with 1, spends it -> 0, +1 = 1 going into GW3.
+    assert client.calculate_free_transfers(1, 3) == 1
 
 
 def test_hits_floor_at_zero_then_regain_one(client, monkeypatch):
@@ -54,7 +72,8 @@ def test_freehit_transfers_do_not_consume_free_transfers(client, monkeypatch):
     transfers = [{'event': 3}] * 9
     history = {'chips': [{'name': 'freehit', 'event': 3}]}
     stub(client, monkeypatch, transfers, history)
-    assert client.calculate_free_transfers(1, 4) == 4
+    # GW2 and GW3 each credit one; the Free Hit week spends none of it.
+    assert client.calculate_free_transfers(1, 4) == 3
 
 
 def test_same_transfers_without_chip_are_punished(client, monkeypatch):
