@@ -40,6 +40,10 @@ st.title("⚽ FPL AI Engine v2.3")
 
 # 2026/27 season league. Leagues are per-season — the previous id (1311994) 404s.
 DEFAULT_LEAGUE_ID = 1019782
+# Manager preselected in the sidebar dropdown. A NAME is safe to pin where a team id is
+# not: FPL reissues entry ids every season, but the manager's name survives. Matched
+# case-insensitively; falls back to the first league member when absent.
+DEFAULT_MANAGER = "Ashbin Biju"
 CACHE_TTL = 900  # 15 minutes
 
 # NOTE: there is deliberately no hardcoded default TEAM id. Entry ids are issued fresh
@@ -277,8 +281,13 @@ league_id = st.sidebar.number_input("League ID", value=DEFAULT_LEAGUE_ID, step=1
 members_map = get_league_members(CODE_VERSION, int(league_id))
 
 if members_map:
+    member_names = list(members_map.keys())
+    # Labels are "Manager (Team)", so match on the manager half only.
+    default_idx = next(
+        (i for i, n in enumerate(member_names)
+         if n.lower().startswith(DEFAULT_MANAGER.lower())), 0)
     selected_name = st.sidebar.selectbox(
-        "Select Manager", list(members_map.keys()),
+        "Select Manager", member_names, index=default_idx,
         help="Read from the league. Before GW1 is scored, members appear as recent "
              "joiners rather than in the ranked standings.")
     team_id = members_map[selected_name]
