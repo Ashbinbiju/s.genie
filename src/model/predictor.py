@@ -42,6 +42,12 @@ NEWCOMER_PRICE_WEIGHT = 0.7
 # Newcomers carry adaptation and rotation risk an established player does not.
 NEW_PLAYER_DISCOUNT = 0.85
 
+# Below this many played gameweeks, every rolling window is reading the same handful of
+# matches -- _last_1, _mean_last_3 and _mean_last_5 are literally the same number -- so
+# one blank is indistinguishable from a permanent benching. Not an error, but the user
+# has to know before acting on a sell signal.
+MIN_SETTLED_HISTORY = 4
+
 
 def _get_current_gw():
     """The most recently started GW, from bootstrap_static. 0 before the season begins."""
@@ -738,6 +744,20 @@ class PointsPredictor:
             self.prediction_warnings.append(
                 f"{len(df_merged) - covered}/{len(df_merged)} players have no history in the "
                 f"cache; their rolling features are missing."
+            )
+
+        # Depth of the squad players' history, not the whole list: the long tail of
+        # never-selected players would drag any average down all season.
+        played = [len(d.get('history', [])) for d in summaries.values()
+                  if d.get('history')]
+        depth = sorted(played)[len(played) // 2] if played else 0
+        if depth < MIN_SETTLED_HISTORY:
+            self.prediction_warnings.append(
+                f"Early season: only {depth} gameweek(s) of history per player. Every "
+                f"rolling window is reading the same {depth} match(es), so the minutes "
+                f"model reacts hard to a single blank -- a nailed starter who missed one "
+                f"game looks the same as a permanent benchwarmer. Check why a player "
+                f"blanked before acting on a sell signal."
             )
 
         # --- Stage 1: Minutes Model ---

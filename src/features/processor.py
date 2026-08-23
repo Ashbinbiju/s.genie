@@ -95,9 +95,14 @@ class FeatureProcessor:
             print(f"  Understat: matched {matched}/{len(fpl_players)} players "
                   f"({matched / max(len(fpl_players), 1) * 100:.0f}%)")
         else:
-            print("  WARNING: Understat data missing (data/raw/understat_players.csv). "
-                  "xG/xA features will be ZERO for every player — run "
-                  "`python src/api/understat.py` to populate them.")
+            # Deliberately not a WARNING: the points model does NOT read these. Its
+            # expected_goals/expected_assists features come from FPL's own
+            # element-summary, so predictions are unaffected — only the xG_per_90 and
+            # xA_per_90 display columns go to zero. The old wording read as though
+            # every projection was broken and sent people debugging a non-problem.
+            print("  Understat data absent (data/raw/understat_players.csv): the "
+                  "xG_per_90 / xA_per_90 display columns will be 0. Predictions are "
+                  "unaffected. Run `python src/api/understat.py` to populate them.")
             merged = fpl_players.copy()
             for col in ['xG', 'xA', 'time']:
                 merged[col] = 0
